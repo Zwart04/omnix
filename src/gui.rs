@@ -637,6 +637,16 @@ pub fn run() -> Result<()> {
                 }
             }
             Event::WindowEvent {
+                event: WindowEvent::Destroyed,
+                ..
+            } => {
+                for (_, mut session) in app.ptys.drain() {
+                    let _ = session.child.kill();
+                }
+                app.content = None;
+                *control_flow = ControlFlow::Exit;
+            }
+            Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
