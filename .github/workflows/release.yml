@@ -49,7 +49,12 @@ jobs:
 
       - name: Package app bundle (macOS)
         if: runner.os == 'macOS'
-        run: sh dist/macos/build-app.sh
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          OMNIX_ARCH=arm64 sh dist/macos/build-app.sh --binary target/aarch64-apple-darwin/release/omnix
+          OMNIX_ARCH=x64 sh dist/macos/build-app.sh --binary target/x86_64-apple-darwin/release/omnix
 
       - name: Upload Debian package
         if: runner.os == 'Linux'
@@ -83,12 +88,12 @@ jobs:
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: omnix-macos-x64
-          path: dist/macos/Omnix-*-macos.tar.gz
+          name: omnix-macos
+          path: dist/macos/Omnix-*-macos*.tar.gz
           if-no-files-found: error
 
       - name: Attach macOS bundle to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/macos/Omnix-*-macos.tar.gz
+          files: dist/macos/Omnix-*-macos*.tar.gz

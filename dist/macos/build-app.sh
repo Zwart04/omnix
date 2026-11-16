@@ -18,6 +18,8 @@ usage: build-app.sh [--binary PATH] [--version VERSION]
 
   --binary PATH      use PATH instead of target/release/omnix
   --version VERSION  override the version read from Cargo.toml
+
+Env: OMNIX_ARCH=arm64|x64 appends the architecture to the tarball name.
 EOF
 }
 
@@ -58,7 +60,8 @@ fi
 
 BUILD_DIR=$SCRIPT_DIR/build
 APP=$BUILD_DIR/$APP_NAME.app
-OUT=$SCRIPT_DIR/$APP_NAME-$VERSION-macos.tar.gz
+SUFFIX=${OMNIX_ARCH:+-$OMNIX_ARCH}
+OUT=$SCRIPT_DIR/$APP_NAME-$VERSION-macos$SUFFIX.tar.gz
 
 rm -rf "$APP"
 install -d "$APP/Contents/MacOS" "$APP/Contents/Resources"

@@ -23,7 +23,8 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 | --- | --- | --- |
 | Linux x86_64 | `omnix_0.1.0_amd64.deb` | `sudo apt install ./omnix_0.1.0_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ | `Omnix-0.1.0-macos.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ arm64 | `Omnix-0.1.0-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.1.0-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 

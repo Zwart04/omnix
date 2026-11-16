@@ -108,7 +108,8 @@ sh dist/macos/build-app.sh
 ```
 
 Hasilnya `Omnix.app` di `dist/macos/build/` dan arsip
-`dist/macos/Omnix-0.1.0-macos.tar.gz`. Bundle memakai
+`dist/macos/Omnix-0.1.0-macos.tar.gz` (atau `...-arm64.tar.gz` / `...-x64.tar.gz`
+kalau `OMNIX_ARCH` diset). Bundle memakai
 `CFBundleIdentifier dev.omnix.app` dan `LSMinimumSystemVersion 11.0`. Skrip
 melakukan ad-hoc codesign kalau `codesign` tersedia; itu bukan notarization.
 Gatekeeper di Mac lain tetap bisa menolak aplikasi yang belum dinotarisasi
