@@ -102,8 +102,8 @@ pub fn create(
         Some(base) => base.to_string(),
         None => git(&repo, &["rev-parse", "--short", "HEAD"])?,
     };
-    let branch = format!("perch/{name}");
-    let worktree = repo.join(".perch").join("worktrees").join(&name);
+    let branch = format!("omnix/{name}");
+    let worktree = repo.join(".omnix").join("worktrees").join(&name);
 
     if worktree.exists() {
         bail!("worktree already exists: {}", worktree.display());
@@ -123,7 +123,7 @@ pub fn create(
     }
 
     let id = format!("{}-{name}", now());
-    let handoff_dir = repo.join(".perch").join("handoffs");
+    let handoff_dir = repo.join(".omnix").join("handoffs");
     fs::create_dir_all(&handoff_dir)?;
     let brief = handoff_dir.join(format!("{id}.md"));
     let brief_body = format!(
@@ -196,7 +196,7 @@ mod tests {
     #[test]
     fn dry_run_creates_worktree_brief_and_record() {
         let dir =
-            std::env::temp_dir().join(format!("perch-handoff-{}-{}", std::process::id(), now()));
+            std::env::temp_dir().join(format!("omnix-handoff-{}-{}", std::process::id(), now()));
         fs::create_dir_all(&dir).unwrap();
         git(&dir, &["init", "-q"]).unwrap();
         fs::write(dir.join("README.md"), "x\n").unwrap();

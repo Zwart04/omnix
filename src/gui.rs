@@ -88,7 +88,7 @@ fn js_escape(value: &str) -> String {
 fn emit(ui: &WebView, event: &str, payload: &Value) {
     let body = payload.to_string();
     let js = format!(
-        "window.__perch&&window.__perch.emit({},{});",
+        "window.__omnix&&window.__omnix.emit({},{});",
         js_escape(event),
         js_escape(&body)
     );
@@ -104,11 +104,11 @@ fn reply(ui: &WebView, id: u64, result: Result<Value>) {
         ),
     };
     let js = format!(
-        "window.__perch&&window.__perch.reply({id},{ok},{});",
+        "window.__omnix&&window.__omnix.reply({id},{ok},{});",
         js_escape(&payload)
     );
     if ui.evaluate_script(&js).is_err() {
-        eprintln!("perch: could not deliver reply {id}");
+        eprintln!("omnix: could not deliver reply {id}");
     }
 }
 
@@ -142,7 +142,7 @@ fn url_allowed(url: &str) -> bool {
 }
 
 fn history_db(root: &PathBuf) -> PathBuf {
-    root.join(".perch").join("history.sqlite")
+    root.join(".omnix").join("history.sqlite")
 }
 
 fn as_str(args: &Value, key: &str) -> Option<String> {
@@ -195,7 +195,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
         "historyIndex" => (|| {
             let dir = as_str(&args, "dir")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| app.root.join(".perch").join("transcripts"));
+                .unwrap_or_else(|| app.root.join(".omnix").join("transcripts"));
             let agent = as_str(&args, "agent");
             let db = history_db(&app.root);
             let mut conn = history::open(&db)?;
@@ -439,7 +439,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             Ok(json!({ "text": text }))
         })(),
         "selftest" => {
-            if std::env::var_os("PERCH_SELFTEST").is_none() {
+            if std::env::var_os("OMNIX_SELFTEST").is_none() {
                 return reply(&app.ui, id, Err(anyhow!("selftest is disabled")));
             }
             let step = as_str(&args, "step").unwrap_or_else(|| "?".into());
@@ -465,11 +465,11 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
 
 /// Debug aid: proves the embedded UI loaded and its JS parsed.
 fn probe(ui: &WebView, url: &str) {
-    if std::env::var_os("PERCH_GUI_PROBE").is_none() {
+    if std::env::var_os("OMNIX_GUI_PROBE").is_none() {
         return;
     }
     let js = "(function(){try{var d=document.documentElement;return JSON.stringify({title:document.title,\
-        nodes:document.querySelectorAll('*').length,bridge:typeof window.__perch,\
+        nodes:document.querySelectorAll('*').length,bridge:typeof window.__omnix,\
         overflowX:d.scrollWidth>d.clientWidth,overflowY:d.scrollHeight>d.clientHeight,\
         vw:d.clientWidth,vh:d.clientHeight,\
         rail:(document.getElementById('rail')||{}).offsetWidth||0,\
@@ -550,7 +550,7 @@ pub fn run() -> Result<()> {
         unsafe { std::env::set_var("GDK_BACKEND", "x11") };
     }
 
-    let root = std::env::var_os("PERCH_HOME")
+    let root = std::env::var_os("OMNIX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
@@ -559,7 +559,7 @@ pub fn run() -> Result<()> {
     let (tx, rx) = channel::<Msg>();
 
     let window = WindowBuilder::new()
-        .with_title("Perch")
+        .with_title("Omnix")
         .with_inner_size(LogicalSize::new(1240.0, 820.0))
         .with_min_inner_size(LogicalSize::new(760.0, 480.0))
         .build(&event_loop)
@@ -576,20 +576,20 @@ pub fn run() -> Result<()> {
     let started = std::cell::Cell::new(false);
     let ui = WebViewBuilder::new()
         .with_bounds(rect(0.0, 0.0, w, h))
-        .with_custom_protocol("perch".into(), |_id, req| serve(req))
+        .with_custom_protocol("omnix".into(), |_id, req| serve(req))
         .with_on_page_load_handler(move |event, url| {
-            if std::env::var_os("PERCH_GUI_PROBE").is_some() {
+            if std::env::var_os("OMNIX_GUI_PROBE").is_some() {
                 println!(
                     "page load loaded={:?} {url}",
                     matches!(event, wry::PageLoadEvent::Finished)
                 );
             }
-            if url.starts_with("perch://") {
+            if url.starts_with("omnix://") {
                 let _ = tx_load.send(Msg::Probe(url.clone()));
                 let _ = proxy_load.send_event(UserEvent::Wake);
             }
             if matches!(event, wry::PageLoadEvent::Finished)
-                && std::env::var_os("PERCH_SELFTEST").is_some()
+                && std::env::var_os("OMNIX_SELFTEST").is_some()
                 && !started.replace(true)
             {
                 let _ = tx_load.send(Msg::StartTest);
@@ -601,7 +601,7 @@ pub fn run() -> Result<()> {
             let _ = proxy_ipc.send_event(UserEvent::Wake);
         })
         .with_devtools(cfg!(debug_assertions))
-        .with_url("perch://localhost/")
+        .with_url("omnix://localhost/")
         .build_as_child(&window)
         .context("create ui webview: is WEBKIT_DISABLE_COMPOSITING_MODE needed?")?;
 

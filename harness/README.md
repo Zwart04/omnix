@@ -3,7 +3,7 @@
 Isi folder ini adalah kontrak dan contoh, bukan library produksi.
 
 - `browser-protocol.md` — request/response JSON Lines untuk agent.
-- `native-bridge.js` — bridge yang di-inject ke WebView native (`window.__perch`).
+- `native-bridge.js` — bridge yang di-inject ke WebView native (`window.__omnix`).
 - `lightpanda-demo.mjs` — contoh Puppeteer ke Lightpanda CDP.
 
 ## Aturan
@@ -23,7 +23,7 @@ Isi folder ini adalah kontrak dan contoh, bukan library produksi.
 ## Contoh native (pseudo)
 
 ```rust
-let js = format!("__perch.click({{ref:{}}})", serde_json::to_string(&ref)?);
+let js = format!("__omnix.click({{ref:{}}})", serde_json::to_string(&ref)?);
 webview.evaluate_script_with_callback(&js, move |result| {
     // result adalah JSON string dari native-bridge.js
 })?;
@@ -32,7 +32,7 @@ webview.evaluate_script_with_callback(&js, move |result| {
 ## Contoh Lightpanda
 
 ```bash
-perch browser serve --port 9222
+omnix browser serve --port 9222
 cd harness && npm init -y && npm install puppeteer-core
 node lightpanda-demo.mjs https://example.com
 ```

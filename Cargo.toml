@@ -1,8 +1,11 @@
 [package]
-name = "perch"
+name = "omnix"
 version = "0.1.0"
 edition = "2024"
-description = "A light Rust workbench for worktrees, agent sessions, and a swappable browser."
+description = "A light Rust desktop workbench for terminals, worktrees, agent sessions, and a swappable browser."
+license = "MIT"
+repository = "https://github.com/Zwart04/omnix"
+rust-version = "1.85"
 
 [features]
 default = ["gui"]
@@ -17,3 +20,9 @@ sha2 = "0.10"
 wry = { version = "0.57", optional = true }
 tao = { version = "0.37", optional = true }
 portable-pty = { version = "0.9", optional = true }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"

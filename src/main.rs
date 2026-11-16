@@ -1,3 +1,5 @@
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod agent;
 mod browser;
 #[cfg(feature = "gui")]
@@ -15,35 +17,35 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
-    env::var_os("PERCH_HOME")
+    env::var_os("OMNIX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
-fn perch_dir() -> PathBuf {
-    root().join(".perch")
+fn omnix_dir() -> PathBuf {
+    root().join(".omnix")
 }
 
-const HELP: &str = r#"perch - a light workbench for worktrees, agents, and browsers
+const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and browsers
 
-  perch history index [dir] [--agent A] [--cwd PATH]
-  perch history search <query...> [--agent A] [--conversation] [--newest] [--limit N] [--json]
-  perch history status
+  omnix history index [dir] [--agent A] [--cwd PATH]
+  omnix history search <query...> [--agent A] [--conversation] [--newest] [--limit N] [--json]
+  omnix history status
 
-  perch agent track --agent A --session ID [--cwd PATH] [--pane KEY] [--workspace PATH]
-  perch sleep [--workspace PATH]
-  perch resume [--workspace PATH] [--run]
-  perch status
+  omnix agent track --agent A --session ID [--cwd PATH] [--pane KEY] [--workspace PATH]
+  omnix sleep [--workspace PATH]
+  omnix resume [--workspace PATH] [--run]
+  omnix status
 
-  perch handoff <name> --prompt TEXT [--agent A] [--base REF] [--run]
+  omnix handoff <name> --prompt TEXT [--agent A] [--base REF] [--run]
 
-  perch browser fetch <url> [--engine native|lightpanda] [--dump markdown|html|semantic_tree_text]
-  perch browser serve [--port 9222]
-  perch browser doctor
+  omnix browser fetch <url> [--engine native|lightpanda] [--dump markdown|html|semantic_tree_text]
+  omnix browser serve [--port 9222]
+  omnix browser doctor
 
-  perch app                      open the desktop app (no arguments does the same)
+  omnix app                      open the desktop app (no arguments does the same)
 
-Defaults: history dir .perch/transcripts; agent codex; browser engine lightpanda.
+Defaults: history dir .omnix/transcripts; agent codex; browser engine lightpanda.
 Docs: README.md, docs/browser.md, docs/orca-evidence.md
 "#;
 
@@ -85,10 +87,10 @@ fn cmd_history(args: &[String]) -> Result<()> {
             let dir = pos
                 .first()
                 .map(PathBuf::from)
-                .unwrap_or_else(|| perch_dir().join("transcripts"));
+                .unwrap_or_else(|| omnix_dir().join("transcripts"));
             let agent = value(args, "--agent");
             let cwd = value(args, "--cwd").unwrap_or_else(|| root().to_string_lossy().to_string());
-            let db = perch_dir().join("history.sqlite");
+            let db = omnix_dir().join("history.sqlite");
             let mut conn = history::open(&db)?;
             let report = history::index_dir(&mut conn, &dir, agent.as_deref(), &cwd)?;
             println!(
@@ -106,7 +108,7 @@ fn cmd_history(args: &[String]) -> Result<()> {
             );
             let query = pos.join(" ");
             if query.trim().is_empty() {
-                bail!("usage: perch history search <query...>");
+                bail!("usage: omnix history search <query...>");
             }
             let limit = value(args, "--limit")
                 .map(|n| n.parse::<usize>())
@@ -117,7 +119,7 @@ fn cmd_history(args: &[String]) -> Result<()> {
                 || value(args, "--scope").as_deref() == Some("conversation");
             let newest =
                 has(args, "--newest") || value(args, "--sort").as_deref() == Some("newest");
-            let db = perch_dir().join("history.sqlite");
+            let db = omnix_dir().join("history.sqlite");
             let conn = history::open(&db)?;
             let hits = history::search(
                 &conn,
@@ -162,7 +164,7 @@ fn cmd_history(args: &[String]) -> Result<()> {
             }
         }
         "status" => {
-            let db = perch_dir().join("history.sqlite");
+            let db = omnix_dir().join("history.sqlite");
             let conn = history::open(&db)?;
             let (sessions, messages, bytes) = history::status(&conn, &db)?;
             println!(
@@ -171,7 +173,7 @@ fn cmd_history(args: &[String]) -> Result<()> {
                 db.display()
             );
         }
-        _ => bail!("usage: perch history index|search|status"),
+        _ => bail!("usage: omnix history index|search|status"),
     }
     Ok(())
 }
@@ -193,7 +195,7 @@ fn cmd_agent(args: &[String]) -> Result<()> {
             );
             println!("resume: {}", record.resume_command);
         }
-        _ => bail!("usage: perch agent track --agent A --session ID"),
+        _ => bail!("usage: omnix agent track --agent A --session ID"),
     }
     Ok(())
 }
@@ -274,7 +276,7 @@ fn cmd_browser(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("fetch") => {
             let pos = positional(&args[1..], &["--engine", "--dump"]);
-            let url = pos.first().context("usage: perch browser fetch <url>")?;
+            let url = pos.first().context("usage: omnix browser fetch <url>")?;
             let engine = value(args, "--engine").unwrap_or_else(|| "lightpanda".into());
             let dump = value(args, "--dump").unwrap_or_else(|| "markdown".into());
             if !matches!(dump.as_str(), "markdown" | "html" | "semantic_tree_text") {
@@ -291,7 +293,7 @@ fn cmd_browser(args: &[String]) -> Result<()> {
             browser::serve(port)?;
         }
         Some("doctor") => browser::doctor()?,
-        _ => bail!("usage: perch browser fetch|serve|doctor"),
+        _ => bail!("usage: omnix browser fetch|serve|doctor"),
     }
     Ok(())
 }
@@ -312,7 +314,7 @@ fn run() -> Result<()> {
             Ok(())
         }
         None => start_app(),
-        Some(other) => bail!("unknown command '{other}'. Try: perch --help"),
+        Some(other) => bail!("unknown command '{other}'. Try: omnix --help"),
     }
 }
 
@@ -329,9 +331,24 @@ fn start_app() -> Result<()> {
     }
 }
 
+/// A GUI-subsystem binary has no console; attach to the caller's one so CLI output still works.
+#[cfg(windows)]
+fn attach_console() {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn AttachConsole(process_id: u32) -> i32;
+    }
+    // ATTACH_PARENT_PROCESS = (DWORD)-1
+    unsafe { AttachConsole(u32::MAX) };
+}
+
+#[cfg(not(windows))]
+fn attach_console() {}
+
 fn main() {
+    attach_console();
     if let Err(e) = run() {
-        eprintln!("perch: {e:#}");
+        eprintln!("omnix: {e:#}");
         std::process::exit(1);
     }
 }

@@ -1,8 +1,8 @@
-# Perch
+# Omnix
 
 Tempat bertengger: worktree, sesi agent, dan browser dalam satu workbench Rust yang ringan.
 
-Perch mengambil tiga inti Orca yang paling berguna, lalu membuang sisa bobotnya:
+Omnix mengambil tiga inti Orca yang paling berguna, lalu membuang sisa bobotnya:
 
 1. **Indexed history** — semua transkrip agent masuk SQLite FTS5, bisa dicari per frasa dan langsung memberi `resume` command.
 2. **Sleep / resume worktree** — layout dan sesi agent disimpan per `paneKey`; workspace bisa tidur, lalu bangun dengan sesi agent yang sama.
@@ -13,7 +13,7 @@ Browser dibuat bisa diganti:
 - `native` — WebView bawaan aplikasi (WebKitGTK / WebView2 / WKWebView lewat `wry`). Ini yang menggambar piksel.
 - `lightpanda` — headless CDP untuk agent, crawling, dan automation. Ringan, tapi **tidak menggambar layar**; `Page.captureScreenshot` hanya placeholder.
 
-Alasannya sederhana: Lightpanda bukan pengganti browser visual. Ia pengganti *automation browser*. Jadi Perch memisahkan **engine yang dilihat manusia** dari **engine yang dipakai agent**.
+Alasannya sederhana: Lightpanda bukan pengganti browser visual. Ia pengganti *automation browser*. Jadi Omnix memisahkan **engine yang dilihat manusia** dari **engine yang dipakai agent**.
 
 ## Status
 
@@ -44,7 +44,7 @@ sh dist/linux/install.sh
 
 # atau paket Debian
 sh dist/linux/build-deb.sh
-sudo apt install dist/linux/perch_*.deb
+sudo apt install dist/linux/omnix_*.deb
 ```
 
 Windows memakai `dist/windows/build-zip.ps1` (butuh WebView2 Runtime), macOS
@@ -52,11 +52,11 @@ memakai `dist/macos/build-app.sh`. Paket `.deb`, zip, dan `.app` dibangun oleh
 GitHub Actions pada tag `v*`. Panduan lengkap, termasuk state, troubleshooting,
 dan batasan: `docs/app.md`.
 
-Jalankan `perch` tanpa argumen untuk membuka jendela aplikasi. Verifikasi
+Jalankan `omnix` tanpa argumen untuk membuka jendela aplikasi. Verifikasi
 end-to-end tanpa screenshot:
 
 ```bash
-PERCH_HOME=/tmp/perch-selftest PERCH_SELFTEST=1 perch app   # berakhir "selftest: PASS"
+OMNIX_HOME=/tmp/omnix-selftest OMNIX_SELFTEST=1 omnix app   # berakhir "selftest: PASS"
 ```
 
 Hanya jalur Linux yang sudah dibangun dan diuji di mesin ini; Windows dan macOS
@@ -66,32 +66,32 @@ zig), build dengan `CC=/usr/bin/cc RUSTFLAGS="-C linker=/usr/bin/cc"`.
 ## Quickstart
 
 ```bash
-cd perch
+cd omnix
 cargo build --release
-./target/release/perch --help
+./target/release/omnix --help
 
 # 1. Index transkrip JSONL
-./target/release/perch history index .perch/transcripts --agent codex --cwd "$PWD"
+./target/release/omnix history index .omnix/transcripts --agent codex --cwd "$PWD"
 
 # 2. Cari dan dapatkan resume command
-./target/release/perch history search "blank restore" --conversation
+./target/release/omnix history search "blank restore" --conversation
 # codex  abc-123  score 4.21
 #   resume: codex resume abc-123
 
 # 3. Catat sesi agent ke workspace, lalu tidurkan
-./target/release/perch agent track --agent codex --session abc-123 --pane tab:1
-./target/release/perch sleep
+./target/release/omnix agent track --agent codex --session abc-123 --pane tab:1
+./target/release/omnix sleep
 
 # 4. Bangun lagi (cetak perintah; --run untuk spawn)
-./target/release/perch resume
-./target/release/perch resume --run
+./target/release/omnix resume
+./target/release/omnix resume --run
 
 # 5. Handoff ke worktree + agent lain
-./target/release/perch handoff fix-login --agent claude --prompt "Fix the login redirect"
+./target/release/omnix handoff fix-login --agent claude --prompt "Fix the login redirect"
 
 # 6. Browser
-PERCH_LIGHTPANDA=lightpanda ./target/release/perch browser fetch https://example.com
-./target/release/perch browser serve --port 9222
+OMNIX_LIGHTPANDA=lightpanda ./target/release/omnix browser fetch https://example.com
+./target/release/omnix browser serve --port 9222
 ```
 
 Format transkrip yang dibaca (`*.jsonl`):
@@ -102,10 +102,10 @@ Format transkrip yang dibaca (`*.jsonl`):
 {"role":"tool","text":"output...","ts":"2026-01-01T00:00:02Z"}
 ```
 
-Semua state ada di `.perch/` di root project (atau `PERCH_HOME`):
+Semua state ada di `.omnix/` di root project (atau `OMNIX_HOME`):
 
 ```
-.perch/
+.omnix/
   history.sqlite          FTS5 index
   workspaces.json         sleeping sessions, per pane
   handoffs/<id>.json      receipt + brief path
@@ -134,4 +134,4 @@ Test tidak memakai framework tambahan. Satu test membuat git repo, commit, workt
 
 ## Nama
 
-`Perch` = tempat burung bertengger. Pendek, bahasa Inggris, tidak metaforis berlebihan: worktree adalah tempat kerja bertengger, sesi bisa tidur dan kembali ke ranting yang sama.
+`Omnix` = tempat burung bertengger. Pendek, bahasa Inggris, tidak metaforis berlebihan: worktree adalah tempat kerja bertengger, sesi bisa tidur dan kembali ke ranting yang sama.

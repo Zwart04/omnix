@@ -1,8 +1,8 @@
-# Browser Perch: tutorial dan referensi
+# Browser Omnix: tutorial dan referensi
 
 ## Model mental
 
-Perch punya dua engine, dan keduanya tidak saling menggantikan:
+Omnix punya dua engine, dan keduanya tidak saling menggantikan:
 
 | | Native | Lightpanda |
 | --- | --- | --- |
@@ -33,19 +33,19 @@ Ikuti salah satu jalur resmi di `lightpanda.io/docs/run-locally/installation`:
 curl -fsSL https://pkg.lightpanda.io/install.sh | bash
 ```
 
-Perch mencari binary bernama `lightpanda` di `PATH`, atau memakai `PERCH_LIGHTPANDA`:
+Omnix mencari binary bernama `lightpanda` di `PATH`, atau memakai `OMNIX_LIGHTPANDA`:
 
 ```bash
-export PERCH_LIGHTPANDA=/path/to/lightpanda
-perch browser doctor
+export OMNIX_LIGHTPANDA=/path/to/lightpanda
+omnix browser doctor
 ```
 
 ### Fetch satu halaman
 
 ```bash
-perch browser fetch https://example.com
-perch browser fetch https://example.com --dump html
-perch browser fetch https://example.com --dump semantic_tree_text
+omnix browser fetch https://example.com
+omnix browser fetch https://example.com --dump html
+omnix browser fetch https://example.com --dump semantic_tree_text
 ```
 
 Perintah di atas menjalankan:
@@ -59,7 +59,7 @@ Gunakan `markdown` untuk membaca, `html` untuk struktur, dan `semantic_tree_text
 ### CDP server
 
 ```bash
-perch browser serve --port 9222
+omnix browser serve --port 9222
 # lightpanda pid 12345  cdp http://127.0.0.1:9222
 # connect: ws://127.0.0.1:9222
 ```
@@ -108,7 +108,7 @@ Native adalah WebView sistem:
 - Windows: WebView2.
 - macOS: WKWebView.
 
-Perch belum mengirim shell GUI di repo ini karena mesin build saat ini tidak punya `webkit2gtk-4.1`. Kontraknya sudah disiapkan supaya shell bisa ditambahkan tanpa mengubah harness.
+Omnix belum mengirim shell GUI di repo ini karena mesin build saat ini tidak punya `webkit2gtk-4.1`. Kontraknya sudah disiapkan supaya shell bisa ditambahkan tanpa mengubah harness.
 
 ### Dependency build
 
@@ -136,7 +136,7 @@ use wry::WebViewBuilder;
 fn main() -> wry::Result<()> {
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
-        .with_title("Perch")
+        .with_title("Omnix")
         .build(&event_loop)
         .unwrap();
 
@@ -144,7 +144,7 @@ fn main() -> wry::Result<()> {
         .with_url("https://example.com")
         .with_initialization_script(
             r#"
-            window.__perch = {
+            window.__omnix = {
               snapshot: () => document.documentElement.outerHTML,
               read: () => document.body.innerText,
               goto: (url) => { location.href = url; },
@@ -154,7 +154,7 @@ fn main() -> wry::Result<()> {
         .build()?;
 
     // Panggil dari harness / command palette:
-    // webview.evaluate_script("__perch.snapshot()")?;
+    // webview.evaluate_script("__omnix.snapshot()")?;
 
     event_loop.run(move |_event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
@@ -168,7 +168,7 @@ Setup di atas adalah kerangka, bukan kode final: sesuaikan signature `tao`/`wry`
 Bridge yang diekspos ke harness harus allowlist, bukan `eval` bebas:
 
 ```js
-window.__perch = {
+window.__omnix = {
   goto(url) { if (!/^https?:/.test(url)) throw new Error('blocked scheme'); location.href = url; },
   read() { return document.body.innerText; },
   snapshot() { return document.documentElement.outerHTML; },
@@ -177,7 +177,7 @@ window.__perch = {
 
 ### Kenapa native tidak boleh jadi satu-satunya engine
 
-WebView sistem tetap mesin penuh: compositor, font, GPU. Untuk 100 halaman paralel, itu mahal. Lightpanda ada untuk beban yang tidak butuh piksel. Perch memilih engine per tugas, bukan mengganti satu dengan yang lain.
+WebView sistem tetap mesin penuh: compositor, font, GPU. Untuk 100 halaman paralel, itu mahal. Lightpanda ada untuk beban yang tidak butuh piksel. Omnix memilih engine per tugas, bukan mengganti satu dengan yang lain.
 
 ## 3. Harness
 
@@ -225,16 +225,16 @@ Detail kontrak ada di `harness/browser-protocol.md`.
 ### Langkah 1 — pastikan Lightpanda hidup
 
 ```bash
-perch browser doctor
-perch browser fetch https://example.com --dump semantic_tree_text
+omnix browser doctor
+omnix browser fetch https://example.com --dump semantic_tree_text
 ```
 
-Kalau output kosong, cek `PERCH_LIGHTPANDA` dan jalankan binary langsung.
+Kalau output kosong, cek `OMNIX_LIGHTPANDA` dan jalankan binary langsung.
 
 ### Langkah 2 — buka CDP
 
 ```bash
-perch browser serve --port 9222
+omnix browser serve --port 9222
 curl -s http://127.0.0.1:9222/json/version
 ```
 
@@ -255,7 +255,7 @@ Script akan mencetak judul, teks, dan accessibility tree. Ini bentuk data yang a
 
 ```js
 const input = await page.locator('input[name="q"]');
-await input.fill('perch rust');
+await input.fill('omnix rust');
 await input.press('Enter');
 await page.waitForNavigation({ waitUntil: 'networkidle' });
 ```
@@ -293,11 +293,11 @@ Isinya: konsep history, sleep/resume, handoff, cara memakai browser, dan daftar 
 
 | Gejala | Penyebab | Solusi |
 | --- | --- | --- |
-| `could not run 'lightpanda'` | binary tidak ada | pasang Lightpanda atau set `PERCH_LIGHTPANDA` |
+| `could not run 'lightpanda'` | binary tidak ada | pasang Lightpanda atau set `OMNIX_LIGHTPANDA` |
 | `lightpanda fetch exited with ...` | halaman gagal load / JS error | coba `--dump html`, cek URL, naikkan timeout di Lightpanda |
 | Screenshot putih/placeholder | memang tidak ada rendering | pakai native |
 | WebView gagal build | `webkit2gtk-4.1` belum ada | pasang dev package |
-| CDP connect refused | server belum jalan / port beda | `perch browser serve --port ...`; cek `/json/version` |
+| CDP connect refused | server belum jalan / port beda | `omnix browser serve --port ...`; cek `/json/version` |
 | Snapshot kosong | halaman butuh waktu/JS | tunggu `networkidle`, coba `semantic_tree_text` |
 
 ## 7. Referensi

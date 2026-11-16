@@ -19,13 +19,13 @@ impl Engine {
 }
 
 pub fn binary() -> String {
-    env::var("PERCH_LIGHTPANDA").unwrap_or_else(|_| "lightpanda".into())
+    env::var("OMNIX_LIGHTPANDA").unwrap_or_else(|_| "lightpanda".into())
 }
 
 fn lightpanda(args: &[&str]) -> Result<std::process::ExitStatus> {
     Command::new(binary()).args(args).status().with_context(|| {
         format!(
-            "could not run '{}'. Install Lightpanda or set PERCH_LIGHTPANDA. See docs/browser.md",
+            "could not run '{}'. Install Lightpanda or set OMNIX_LIGHTPANDA. See docs/browser.md",
             binary()
         )
     })
@@ -64,7 +64,7 @@ pub fn fetch_text(url: &str, dump: &str) -> Result<String> {
         .output()
         .with_context(|| {
             format!(
-                "could not run '{}'. Install Lightpanda or set PERCH_LIGHTPANDA",
+                "could not run '{}'. Install Lightpanda or set OMNIX_LIGHTPANDA",
                 binary()
             )
         })?;
@@ -112,7 +112,7 @@ pub fn serve(port: u16) -> Result<u16> {
         .spawn()
         .with_context(|| {
             format!(
-                "could not start '{}'. Install Lightpanda or set PERCH_LIGHTPANDA",
+                "could not start '{}'. Install Lightpanda or set OMNIX_LIGHTPANDA",
                 binary()
             )
         })?;

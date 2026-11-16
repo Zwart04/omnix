@@ -1,11 +1,11 @@
 #!/bin/sh
-# Build a Perch.app bundle around the release binary, then tar it up.
+# Build a Omnix.app bundle around the release binary, then tar it up.
 set -eu
 
-APP_NAME=Perch
-BUNDLE_ID=dev.perch.app
+APP_NAME=Omnix
+BUNDLE_ID=dev.omnix.app
 BINARY=
-VERSION=${PERCH_VERSION:-}
+VERSION=${OMNIX_VERSION:-}
 
 die() {
     printf 'build-app: %s\n' "$1" >&2
@@ -16,7 +16,7 @@ usage() {
     cat <<'EOF'
 usage: build-app.sh [--binary PATH] [--version VERSION]
 
-  --binary PATH      use PATH instead of target/release/perch
+  --binary PATH      use PATH instead of target/release/omnix
   --version VERSION  override the version read from Cargo.toml
 EOF
 }
@@ -47,7 +47,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 if [ -z "$BINARY" ]; then
-    BINARY=$ROOT_DIR/target/release/perch
+    BINARY=$ROOT_DIR/target/release/omnix
 fi
 [ -f "$BINARY" ] || die "binary not found: $BINARY (build it with: cargo build --release)"
 
@@ -62,11 +62,11 @@ OUT=$SCRIPT_DIR/$APP_NAME-$VERSION-macos.tar.gz
 
 rm -rf "$APP"
 install -d "$APP/Contents/MacOS" "$APP/Contents/Resources"
-install -m 0755 "$BINARY" "$APP/Contents/MacOS/perch"
+install -m 0755 "$BINARY" "$APP/Contents/MacOS/omnix"
 
-# Icon is optional: drop perch.icns next to this script to include it.
-if [ -f "$SCRIPT_DIR/perch.icns" ]; then
-    install -m 0644 "$SCRIPT_DIR/perch.icns" "$APP/Contents/Resources/Perch.icns"
+# Icon is optional: drop omnix.icns next to this script to include it.
+if [ -f "$SCRIPT_DIR/omnix.icns" ]; then
+    install -m 0644 "$SCRIPT_DIR/omnix.icns" "$APP/Contents/Resources/Omnix.icns"
 fi
 
 cat >"$APP/Contents/Info.plist" <<EOF
@@ -81,11 +81,11 @@ cat >"$APP/Contents/Info.plist" <<EOF
     <key>CFBundleIdentifier</key>
     <string>$BUNDLE_ID</string>
     <key>CFBundleExecutable</key>
-    <string>perch</string>
+    <string>omnix</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
-    <string>Perch</string>
+    <string>Omnix</string>
     <key>CFBundleShortVersionString</key>
     <string>$VERSION</string>
     <key>CFBundleVersion</key>
@@ -110,4 +110,4 @@ rm -f "$OUT"
 (cd "$BUILD_DIR" && tar -czf "$OUT" "$APP_NAME.app")
 
 printf 'Built %s\n' "$OUT"
-printf 'Next: open %s/Contents/MacOS/perch (unsigned; Gatekeeper may block it)\n' "$APP"
+printf 'Next: open %s/Contents/MacOS/omnix (unsigned; Gatekeeper may block it)\n' "$APP"

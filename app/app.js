@@ -1,4 +1,4 @@
-/* Perch app UI. Vanilla JS, no frameworks, no CDN. */
+/* Omnix app UI. Vanilla JS, no frameworks, no CDN. */
 (function () {
   'use strict';
 
@@ -151,7 +151,7 @@
     return err;
   }
 
-  window.__perch = {
+  window.__omnix = {
     reply: function (id, ok, payloadJson) {
       var entry = pending.get(id);
       if (!entry) return;
@@ -740,7 +740,7 @@
       var engine = info.engine || {};
       var version = info.version || '?';
       $('app-version').textContent = 'v' + version;
-      var parts = ['perch ' + version];
+      var parts = ['omnix ' + version];
       if (info.root) parts.push(info.root);
       parts.push('lightpanda ' + (engine.lightpanda ? (engine.version || 'ready') : 'unavailable'));
       $('status-left').textContent = parts.join('   ');

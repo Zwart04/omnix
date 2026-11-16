@@ -1,8 +1,8 @@
 #!/bin/sh
-# Install a built Perch binary for the current user, or system-wide with --system.
+# Install a built Omnix binary for the current user, or system-wide with --system.
 set -eu
 
-APP=perch
+APP=omnix
 MODE=user
 BINARY=
 
@@ -16,9 +16,9 @@ usage() {
 usage: install.sh [--system] [--binary PATH]
 
   --system      install under /usr/local (needs root or sudo)
-  --binary PATH use PATH instead of target/release/perch
+  --binary PATH use PATH instead of target/release/omnix
 
-Without --system the binary goes to ~/.local/bin/perch.
+Without --system the binary goes to ~/.local/bin/omnix.
 EOF
 }
 
@@ -44,12 +44,12 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 if [ -z "$BINARY" ]; then
-    BINARY=$ROOT_DIR/target/release/perch
+    BINARY=$ROOT_DIR/target/release/omnix
 fi
 [ -f "$BINARY" ] || die "binary not found: $BINARY (build it with: cargo build --release)"
 [ -x "$BINARY" ] || die "binary is not executable: $BINARY"
 
-ICON=$SCRIPT_DIR/perch.svg
+ICON=$SCRIPT_DIR/omnix.svg
 [ -f "$ICON" ] || die "icon not found: $ICON"
 
 if [ "$MODE" = system ]; then
@@ -89,13 +89,13 @@ trap 'rm -f "$DESKTOP"' EXIT HUP INT TERM
 cat >"$DESKTOP" <<EOF
 [Desktop Entry]
 Type=Application
-Name=Perch
+Name=Omnix
 Comment=Worktrees, agent sessions, and a browser in one workbench
 Exec="$BINDIR/$APP"
 Icon=$APP
 Terminal=false
 Categories=Development;
-StartupWMClass=perch
+StartupWMClass=omnix
 EOF
 run install -m 0644 "$DESKTOP" "$APPDIR/$APP.desktop"
 

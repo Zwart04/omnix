@@ -65,7 +65,7 @@
     return el;
   };
 
-  globalThis.__perch = {
+  globalThis.__omnix = {
     snapshot,
     read: ({ selector = "body", maxChars = 20000 } = {}) => {
       const el = document.querySelector(selector) ?? document.body;

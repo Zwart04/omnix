@@ -35,7 +35,7 @@ pub struct Session {
 }
 
 fn state_path(root: &Path) -> PathBuf {
-    root.join(".perch").join("workspaces.json")
+    root.join(".omnix").join("workspaces.json")
 }
 
 fn now() -> u64 {
@@ -173,7 +173,7 @@ mod tests {
 
     fn temp_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "perch-ws-{}-{}",
+            "omnix-ws-{}-{}",
             std::process::id(),
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -200,15 +200,15 @@ mod tests {
         assert!(!woke.sleeping);
         assert_eq!(woke.sessions[0].session_id, "sess-9");
 
-        let raw = fs::read_to_string(dir.join(".perch/workspaces.json")).unwrap();
+        let raw = fs::read_to_string(dir.join(".omnix/workspaces.json")).unwrap();
         assert!(raw.contains("sess-9"));
     }
 
     #[test]
     fn state_file_survives_hand_edit_missing_fields() {
         let dir = temp_dir();
-        fs::create_dir_all(dir.join(".perch")).unwrap();
-        let mut f = fs::File::create(dir.join(".perch/workspaces.json")).unwrap();
+        fs::create_dir_all(dir.join(".omnix")).unwrap();
+        let mut f = fs::File::create(dir.join(".omnix/workspaces.json")).unwrap();
         writeln!(f, r#"{{"workspaces":{{"/x":{{"path":"/x"}}}}}}"#).unwrap();
         let state = load(&dir).unwrap();
         assert_eq!(state.workspaces.len(), 1);

@@ -99,7 +99,7 @@ Error: `stale_ref`, `not_found`, `not_clickable`.
 ### `fill`
 
 ```json
-{"method":"fill","params":{"ref":"@e3","value":"perch rust"}}
+{"method":"fill","params":{"ref":"@e3","value":"omnix rust"}}
 ```
 
 ### `press`
@@ -128,7 +128,7 @@ Result: `{"tabs":[{"tabId":"t1","url":"...","title":"...","active":true}]}`.
 {"method":"screenshot","params":{"annotate":false,"fullPage":false}}
 ```
 
-Result native: `{"path":"/tmp/perch/shot.png","width":1280,"height":800}`.
+Result native: `{"path":"/tmp/omnix/shot.png","width":1280,"height":800}`.
 
 Lightpanda: error `unsupported_by_engine` atau placeholder. Jangan pakai untuk review visual.
 
@@ -162,6 +162,6 @@ Lightpanda: error `unsupported_by_engine` atau placeholder. Jangan pakai untuk r
 
 ## Implementasi
 
-- Native: `window.__perch` di WebView, dipanggil Rust lewat `evaluate_script_with_callback`.
+- Native: `window.__omnix` di WebView, dipanggil Rust lewat `evaluate_script_with_callback`.
 - Lightpanda: CDP lewat WebSocket; `snapshot` memakai `Accessibility.getFullAXTree` atau serialisasi DOM.
 - Keduanya wajib mengembalikan bentuk result yang sama.

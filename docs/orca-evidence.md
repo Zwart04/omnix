@@ -138,9 +138,9 @@ Dari `orca skills get orca-cli`:
 - `phase=indexing` berarti hasil bisa belum lengkap; `--fresh` menunggu maksimal 5 detik.
 - `--scope conversation` mengecualikan output tool; `--scope all` tetap hanya user/assistant menurut dokumen.
 
-**Yang ditiru Perch:** skema `sessions/messages/messages_fts/identifiers`, hash berantai, phrase→AND→OR, BM25, snippet, `resumeCommand`, dan cursor yang mengikat generation.
+**Yang ditiru Omnix:** skema `sessions/messages/messages_fts/identifiers`, hash berantai, phrase→AND→OR, BM25, snippet, `resumeCommand`, dan cursor yang mengikat generation.
 
-Catatan implementasi: karena tokenizer menyimpan `.` di dalam token, teks `resolveTerminalPath.` tersimpan sebagai satu term dengan titik. Perch karena itu menambah tingkat terakhir `prefix OR` (`"term"*`) supaya pencarian tanpa titik tetap menemukan token tersebut. Orca mengandalkan jalur typo-repair untuk kasus serupa (`at.correct` di worker).
+Catatan implementasi: karena tokenizer menyimpan `.` di dalam token, teks `resolveTerminalPath.` tersimpan sebagai satu term dengan titik. Omnix karena itu menambah tingkat terakhir `prefix OR` (`"term"*`) supaya pencarian tanpa titik tetap menemukan token tersebut. Orca mengandalkan jalur typo-repair untuk kasus serupa (`at.correct` di worker).
 
 **Yang dibuang:** scanner 20+ format agent, file-offset incremental, koreksi typo, `scopePaths` berbasis rentang string, dan UI Settings. Untuk satu project, reindex penuh jauh lebih murah daripada memelihara scanner semua vendor.
 
@@ -267,7 +267,7 @@ CREATE TABLE agent_session_command_receipts(
 
 Ini yang membuat resume tahan restart: baris journal berurutan per `(session_id, epoch, seq)`, dan setiap command punya receipt idempoten.
 
-**Yang ditiru Perch:** state per workspace, record sesi per `paneKey`, `resume_command` per agent, validasi session id, dan penulisan state atomik.
+**Yang ditiru Omnix:** state per workspace, record sesi per `paneKey`, `resume_command` per agent, validasi session id, dan penulisan state atomik.
 
 **Yang belum ditiru:** fence/lease multi-proses, PTY, dan epoch journal. Itu lapisan yang baru dibutuhkan kalau dua jendela bisa menyentuh sesi yang sama. Untuk satu aplikasi desktop, satu penulis state sudah cukup; tambahkan lease kalau nanti ada remote/daemon.
 
@@ -340,15 +340,15 @@ Aturan penting dari dokumen:
 - `--agent` sudah menjalankan agent; jangan jalankan dua kali.
 - Handle runtime-scoped. Setelah restart, pakai handle pengganti dari `terminal list`; jangan kirim ke handle lama dan baru sekaligus.
 
-**Yang ditiru Perch:** vocabulary outcome yang sama, receipt `mode/preferred/reason/detail`, brief durable, `git worktree` baru, dan "jangan tunggu agent selesai".
+**Yang ditiru Omnix:** vocabulary outcome yang sama, receipt `mode/preferred/reason/detail`, brief durable, `git worktree` baru, dan "jangan tunggu agent selesai".
 
-**Yang belum ditiru:** replay `operationId`, PTY prompt injection, dan structured chat journal. Perch menulis outcome `unconfirmed` saat agent di-spawn tetapi brief belum terbukti masuk ke terminal — lebih jujur daripada mengklaim `handed-to-terminal`.
+**Yang belum ditiru:** replay `operationId`, PTY prompt injection, dan structured chat journal. Omnix menulis outcome `unconfirmed` saat agent di-spawn tetapi brief belum terbukti masuk ke terminal — lebih jujur daripada mengklaim `handed-to-terminal`.
 
 ---
 
 ## 4. Ringkasan desain yang diambil
 
-| Konsep Orca | Keputusan Perch |
+| Konsep Orca | Keputusan Omnix |
 | --- | --- |
 | SQLite FTS5 multi-kolom | Dipakai; skema diperkecil, tanpa scanner semua agent |
 | Chained content hash 8 pesan | Dipakai untuk mendeteksi fork |

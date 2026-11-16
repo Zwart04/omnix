@@ -1,20 +1,20 @@
-# Perch App (GUI) — kontrak internal
+# Omnix App (GUI) — kontrak internal
 
-Satu binary `perch`: tanpa argumen membuka jendela app; subcommand tetap jalan di terminal.
-Shell GUI = satu WebView UI (aset embedded, protokol `perch://`) + N WebView konten untuk browser
+Satu binary `omnix`: tanpa argumen membuka jendela app; subcommand tetap jalan di terminal.
+Shell GUI = satu WebView UI (aset embedded, protokol `omnix://`) + N WebView konten untuk browser
 + terminal asli lewat PTY.
 
 ## Aturan keamanan (tidak boleh dilanggar)
 
 1. WebView konten (halaman web apa pun) **tidak** diberi IPC handler. Hanya WebView UI yang punya.
 2. Hanya `http:` dan `https:` boleh dimuat di WebView konten (`with_navigation_handler`).
-3. Nama file yang dilayani protokol `perch://` berasal dari daftar tetap, bukan path dari request.
+3. Nama file yang dilayani protokol `omnix://` berasal dari daftar tetap, bukan path dari request.
 4. Tidak ada `eval` teks halaman, tidak ada shell string: argumen selalu array.
 5. Session id divalidasi `agent::resume_args` sebelum dipakai.
 
 ## Aset UI
 
-Disajikan `perch://localhost/<path>` dari `include_str!`. Daftar tetap:
+Disajikan `omnix://localhost/<path>` dari `include_str!`. Daftar tetap:
 
 | Path | Isi |
 | --- | --- |
@@ -42,8 +42,8 @@ UI → Rust: `window.ipc.postMessage(JSON.stringify(req))`.
 Rust → UI, dua bentuk:
 
 ```js
-window.__perch.reply(1, true, "{\"hits\":[]}")     // ok / error
-window.__perch.emit("ptyData", "{\"paneKey\":\"p1\"}")
+window.__omnix.reply(1, true, "{\"hits\":[]}")     // ok / error
+window.__omnix.emit("ptyData", "{\"paneKey\":\"p1\"}")
 ```
 
 `reply` id cocok dengan request. `emit` untuk event tanpa id. Payload selalu string JSON

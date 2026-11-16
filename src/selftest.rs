@@ -1,12 +1,12 @@
 //! Headless end-to-end check for the app shell.
 //!
-//! Enabled with `PERCH_SELFTEST=1`. The embedded UI is loaded for real, then driven
+//! Enabled with `OMNIX_SELFTEST=1`. The embedded UI is loaded for real, then driven
 //! through `window.ipc`, so the WebView, the IPC bridge, the assets and every Rust
 //! command run together without needing a screenshot or a human.
 
 pub const JS: &str = r#"
 (async () => {
-  const outer = window.__perch || {};
+  const outer = window.__omnix || {};
   const originalReply = outer.reply || function () {};
   const originalEmit = outer.emit || function () {};
   const waiting = new Map();
@@ -14,7 +14,7 @@ pub const JS: &str = r#"
   const ptyChunks = [];
   let ptyKey = 'selftest-pane';
 
-  window.__perch = Object.assign({}, outer, {
+  window.__omnix = Object.assign({}, outer, {
     reply(id, ok, payload) {
       const entry = waiting.get(id);
       if (entry) {

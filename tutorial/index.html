@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Perch — panduan</title>
+  <title>Omnix — panduan</title>
   <style>
     :root {
       --bg: #0e1116;
@@ -80,7 +80,7 @@
 <main>
   <header>
     <div class="kicker">Panduan bawaan</div>
-    <h1>Perch<span>.</span></h1>
+    <h1>Omnix<span>.</span></h1>
     <p class="lede">Worktree, sesi agent, dan browser dalam satu workbench Rust yang ringan. Tiga kebiasaan yang membuat kerja panjang tidak berantakan.</p>
   </header>
 
@@ -89,26 +89,26 @@
     <div class="card">
       <h3>1. History yang bisa dicari</h3>
       <p>Semua transkrip masuk SQLite FTS5. Cari frasa, bukan mengingat nama file. Setiap hasil membawa perintah resume.</p>
-      <pre><code>perch history search "blank restore" \
+      <pre><code>omnix history search "blank restore" \
   --conversation</code></pre>
     </div>
     <div class="card">
       <h3>2. Tidur, lalu bangun</h3>
       <p>Layout dan sesi agent disimpan per pane. Workspace bisa tidur tanpa kehilangan session id.</p>
-      <pre><code>perch sleep
-perch resume --run</code></pre>
+      <pre><code>omnix sleep
+omnix resume --run</code></pre>
     </div>
     <div class="card">
       <h3>3. Handoff yang jujur</h3>
       <p>Worktree baru, branch, brief, dan outcome. Selesai saat prompt diterima, bukan saat agent penerima selesai.</p>
-      <pre><code>perch handoff fix-login \
+      <pre><code>omnix handoff fix-login \
   --agent claude \
   --prompt "Fix redirect"</code></pre>
     </div>
   </div>
 
   <h2>Dua engine browser</h2>
-  <p>Perch memisahkan browser yang dilihat manusia dari browser yang dipakai agent. Keduanya tidak saling menggantikan.</p>
+  <p>Omnix memisahkan browser yang dilihat manusia dari browser yang dipakai agent. Keduanya tidak saling menggantikan.</p>
   <table>
     <thead>
       <tr><th>Kemampuan</th><th>Native WebView</th><th>Lightpanda</th></tr>
@@ -128,43 +128,43 @@ perch resume --run</code></pre>
   <ol class="steps">
     <li>
       <strong>Index transkrip.</strong>
-      <pre><code>perch history index .perch/transcripts --agent codex</code></pre>
+      <pre><code>omnix history index .omnix/transcripts --agent codex</code></pre>
       <p class="muted">Format: satu JSON per baris, field <code>role</code>, <code>text</code>, <code>ts</code>.</p>
     </li>
     <li>
       <strong>Cari dan resume.</strong>
-      <pre><code>perch history search "resolveTerminalPath" --json</code></pre>
+      <pre><code>omnix history search "resolveTerminalPath" --json</code></pre>
       <p class="muted">Hasil membawa <code>resumeCommand</code>, misalnya <code>codex resume abc-123</code>.</p>
     </li>
     <li>
       <strong>Catat sesi ke workspace.</strong>
-      <pre><code>perch agent track --agent codex --session abc-123 --pane tab:1</code></pre>
+      <pre><code>omnix agent track --agent codex --session abc-123 --pane tab:1</code></pre>
     </li>
     <li>
       <strong>Tidurkan, lalu bangun.</strong>
-      <pre><code>perch sleep
-perch status
-perch resume</code></pre>
+      <pre><code>omnix sleep
+omnix status
+omnix resume</code></pre>
     </li>
     <li>
       <strong>Handoff ke worktree lain.</strong>
-      <pre><code>perch handoff fix-login --agent claude \
+      <pre><code>omnix handoff fix-login --agent claude \
   --prompt "Fix the login redirect and add a test"</code></pre>
       <p class="muted">Outcome <code>not-delivered</code> berarti brief sudah ditulis tetapi belum masuk terminal. Jangan diklaim selesai.</p>
     </li>
     <li>
       <strong>Nyalakan browser agent.</strong>
-      <pre><code>perch browser serve --port 9222
-perch browser fetch https://example.com</code></pre>
+      <pre><code>omnix browser serve --port 9222
+omnix browser fetch https://example.com</code></pre>
     </li>
   </ol>
 
   <h2>Alur handoff</h2>
   <pre><code>worktree baru
    │
-   ├─ branch perch/&lt;nama&gt;
-   ├─ brief .perch/handoffs/&lt;id&gt;.md
-   ├─ record .perch/handoffs/&lt;id&gt;.json
+   ├─ branch omnix/&lt;nama&gt;
+   ├─ brief .omnix/handoffs/&lt;id&gt;.md
+   ├─ record .omnix/handoffs/&lt;id&gt;.json
    │     outcome: not-delivered | unconfirmed | handed-to-terminal
    │
    └─ agent penerima</code></pre>
@@ -192,16 +192,16 @@ perch browser fetch https://example.com</code></pre>
   </ul>
 
   <h2>Berkas penting</h2>
-  <pre><code>.perch/history.sqlite       index FTS5
-.perch/workspaces.json      sesi per pane
-.perch/handoffs/            brief + receipt
-.perch/worktrees/           hasil git worktree
+  <pre><code>.omnix/history.sqlite       index FTS5
+.omnix/workspaces.json      sesi per pane
+.omnix/handoffs/            brief + receipt
+.omnix/worktrees/           hasil git worktree
 harness/browser-protocol.md kontrak tool agent
 docs/browser.md             tutorial lengkap
 docs/orca-evidence.md       bukti desain dari Orca</code></pre>
 
   <footer>
-    Perch 0.1.0 · Rust · SQLite FTS5 · WebView native + Lightpanda.
+    Omnix 0.1.0 · Rust · SQLite FTS5 · WebView native + Lightpanda.
   </footer>
 </main>
 </body>

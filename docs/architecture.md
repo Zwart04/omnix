@@ -1,8 +1,8 @@
-# Arsitektur Perch
+# Arsitektur Omnix
 
 ## Prinsip
 
-1. **Satu direktori, satu state.** Semua yang perlu bertahan hidup ada di `.perch/`. Tidak ada daemon wajib.
+1. **Satu direktori, satu state.** Semua yang perlu bertahan hidup ada di `.omnix/`. Tidak ada daemon wajib.
 2. **Dua engine browser, satu kontrak.** WebView native untuk manusia, Lightpanda untuk agent. Keduanya bicara tool yang sama.
 3. **Outcome jujur.** Kalau prompt belum terbukti masuk terminal, outcome `unconfirmed`. Jangan mengklaim `handed-to-terminal`.
 4. **Tanpa shell string.** Session id, path, dan prompt tidak pernah dirangkai menjadi `sh -c`. Argumen disusun sebagai array.
@@ -12,7 +12,7 @@
 ```
 src/main.rs        CLI parsing + wiring
 src/history.rs     SQLite FTS5: index, search, status
-src/workspace.rs   .perch/workspaces.json: track, sleep, wake
+src/workspace.rs   .omnix/workspaces.json: track, sleep, wake
 src/handoff.rs     git worktree + brief + receipt
 src/agent.rs       tabel launch/resume per agent + spawn aman
 src/browser.rs     backend lightpanda (fetch/serve/doctor)
@@ -65,9 +65,9 @@ sessions 1 ─── n messages 1 ─── 1 messages_fts(rowid)
 ### Handoff
 
 ```
-.perch/handoffs/<epoch>-<name>.json
-.perch/handoffs/<epoch>-<name>.md
-.perch/worktrees/<name>/          # git worktree, branch perch/<name>
+.omnix/handoffs/<epoch>-<name>.json
+.omnix/handoffs/<epoch>-<name>.md
+.omnix/worktrees/<name>/          # git worktree, branch omnix/<name>
 ```
 
 Urutan yang tidak boleh dibalik:
@@ -98,7 +98,7 @@ Kalau langkah 5 mati di tengah, record lama tetap ada dan jujur: `not-delivered`
 | Session id | tidak tepercaya | validasi; argumen array; tanpa shell |
 | Prompt handoff | tidak tepercaya | ditulis ke file; tidak dirangkai ke command |
 | Halaman web | tidak tepercaya | ditampilkan/di-snapshot; jangan pernah dijalankan sebagai perintah |
-| Config env | milik user | `PERCH_HOME`, `PERCH_LIGHTPANDA` |
+| Config env | milik user | `OMNIX_HOME`, `OMNIX_LIGHTPANDA` |
 
 Prompt injection dari halaman web atau transkrip bukan perintah untuk agent. Harness harus menandai konten target sebagai data.
 

@@ -1,11 +1,11 @@
 // Demo: kendalikan Lightpanda lewat CDP dengan Puppeteer.
-// Jalankan dulu: perch browser serve --port 9222
+// Jalankan dulu: omnix browser serve --port 9222
 // Lalu: npm init -y && npm install puppeteer-core && node lightpanda-demo.mjs https://example.com
 
 import puppeteer from "puppeteer-core";
 
 const url = process.argv[2] ?? "https://example.com";
-const endpoint = process.env.PERCH_CDP ?? "ws://127.0.0.1:9222";
+const endpoint = process.env.OMNIX_CDP ?? "ws://127.0.0.1:9222";
 
 const browser = await puppeteer.connect({ browserWSEndpoint: endpoint });
 try {

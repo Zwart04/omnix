@@ -84,7 +84,7 @@ mod tests {
             spawned
                 .pty
                 .writer
-                .write_all(b"printf 'perch-pty-ok'\n")
+                .write_all(b"printf 'omnix-pty-ok'\n")
                 .unwrap();
             spawned.pty.writer.flush().unwrap();
         }
@@ -95,7 +95,7 @@ mod tests {
                 Ok(0) => break,
                 Ok(n) => {
                     seen.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    if seen.contains("perch-pty-ok") {
+                    if seen.contains("omnix-pty-ok") {
                         break;
                     }
                 }
@@ -103,6 +103,6 @@ mod tests {
             }
         }
         let _ = spawned.pty.child.kill();
-        assert!(seen.contains("perch-pty-ok"), "pty output was {seen:?}");
+        assert!(seen.contains("omnix-pty-ok"), "pty output was {seen:?}");
     }
 }

@@ -7,7 +7,7 @@ on:
       - 'v*'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   package:
@@ -55,22 +55,40 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: perch-linux-x64
+          name: omnix-linux-x64
           path: dist/linux/*.deb
           if-no-files-found: error
+
+      - name: Attach Debian package to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/linux/*.deb
 
       - name: Upload Windows zip
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: perch-windows-x64
-          path: dist/windows/perch-windows-x64.zip
+          name: omnix-windows-x64
+          path: dist/windows/omnix-windows-x64.zip
           if-no-files-found: error
+
+      - name: Attach Windows zip to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/windows/omnix-windows-x64.zip
 
       - name: Upload macOS bundle
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: perch-macos-x64
-          path: dist/macos/Perch-*-macos.tar.gz
+          name: omnix-macos-x64
+          path: dist/macos/Omnix-*-macos.tar.gz
           if-no-files-found: error
+
+      - name: Attach macOS bundle to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/macos/Omnix-*-macos.tar.gz

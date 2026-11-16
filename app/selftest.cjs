@@ -87,8 +87,8 @@ global.document = {
 require('./app.js');
 
 (async function () {
-  assert.ok(window.__perch && typeof window.__perch.reply === 'function', 'reply exposed');
-  assert.ok(typeof window.__perch.emit === 'function', 'emit exposed');
+  assert.ok(window.__omnix && typeof window.__omnix.reply === 'function', 'reply exposed');
+  assert.ok(typeof window.__omnix.emit === 'function', 'emit exposed');
 
   assert.strictEqual(posted.length, 3, 'boot sent appInfo, status, ptySpawn');
   posted.forEach((req) => {
@@ -103,24 +103,24 @@ require('./app.js');
 
   const [infoReq, statusReq, spawnReq] = posted;
 
-  window.__perch.reply(infoReq.id, true, '{"version":"0.1.0","root":"/repo","engine":{"lightpanda":true,"version":"9.9"}}');
-  window.__perch.reply(statusReq.id, false, '{"code":"internal","message":"boom"}');
-  window.__perch.reply(spawnReq.id, true, '{"paneKey":"tab:1","pid":42}');
+  window.__omnix.reply(infoReq.id, true, '{"version":"0.1.0","root":"/repo","engine":{"lightpanda":true,"version":"9.9"}}');
+  window.__omnix.reply(statusReq.id, false, '{"code":"internal","message":"boom"}');
+  window.__omnix.reply(spawnReq.id, true, '{"paneKey":"tab:1","pid":42}');
   await new Promise((r) => setImmediate(r));
 
-  assert.match(byId.get('status-left').textContent, /perch 0\.1\.0/, 'version rendered');
+  assert.match(byId.get('status-left').textContent, /omnix 0\.1\.0/, 'version rendered');
   assert.match(byId.get('status-last').textContent, /pid 42/, 'spawn pid recorded');
   assert.ok(byId.get('toasts').children.length >= 1, 'rejected status toasted');
 
   // Defensive paths must never throw.
-  window.__perch.reply(9999, true, '{}');
-  window.__perch.reply(9998, false, 'not json');
-  window.__perch.emit('nope', '{}');
-  window.__perch.emit('ptyData', '{"paneKey":"tab:1","dataBase64":"aGk="}');
-  window.__perch.emit('ptyData', '{"paneKey":"tab:1","dataBase64":"@@@"}');
-  window.__perch.emit('ptyExit', '{"paneKey":"tab:1","code":0}');
-  window.__perch.emit('browserNav', 'not json');
-  window.__perch.emit('toast', '{"level":"warn","message":"host says hi"}');
+  window.__omnix.reply(9999, true, '{}');
+  window.__omnix.reply(9998, false, 'not json');
+  window.__omnix.emit('nope', '{}');
+  window.__omnix.emit('ptyData', '{"paneKey":"tab:1","dataBase64":"aGk="}');
+  window.__omnix.emit('ptyData', '{"paneKey":"tab:1","dataBase64":"@@@"}');
+  window.__omnix.emit('ptyExit', '{"paneKey":"tab:1","code":0}');
+  window.__omnix.emit('browserNav', 'not json');
+  window.__omnix.emit('toast', '{"level":"warn","message":"host says hi"}');
 
   assert.match(byId.get('status-last').textContent, /code 0/, 'ptyExit rendered');
   assert.ok(byId.get('toasts').children.length >= 2, 'toast event rendered');
@@ -135,7 +135,7 @@ require('./app.js');
   assert.deepStrictEqual(searchReq.args, {
     query: 'blank restore', limit: 20, agent: 'codex', conversation: true
   });
-  window.__perch.reply(searchReq.id, true, '{"hits":[{"agent":"codex","sessionId":"s-1","title":"t","cwd":"/r","resumeCommand":"codex resume s-1","snippet":"snip"}]}');
+  window.__omnix.reply(searchReq.id, true, '{"hits":[{"agent":"codex","sessionId":"s-1","title":"t","cwd":"/r","resumeCommand":"codex resume s-1","snippet":"snip"}]}');
   await new Promise((r) => setImmediate(r));
   assert.match(byId.get('search-meta').textContent, /1 hit for "blank restore"/);
 
@@ -149,7 +149,7 @@ require('./app.js');
   assert.deepStrictEqual(handoffReq.args, {
     name: 'auth-fix', prompt: 'fix it', agent: 'codex', base: 'main'
   });
-  window.__perch.reply(handoffReq.id, true, '{"outcome":"unconfirmed","worktree":"/w","branch":"perch/auth-fix","brief":"/b.md"}');
+  window.__omnix.reply(handoffReq.id, true, '{"outcome":"unconfirmed","worktree":"/w","branch":"omnix/auth-fix","brief":"/b.md"}');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(byId.get('handoff-result').hidden, false, 'handoff result shown');
   assert.ok(byId.get('handoff-result').children.length >= 3, 'handoff rows rendered');
@@ -169,7 +169,7 @@ require('./app.js');
   assert.strictEqual(openReq.cmd, 'browserOpen');
   assert.strictEqual(openReq.args.url, 'https://example.com', 'scheme added');
   assert.deepStrictEqual(openReq.args.rect, { x: 10, y: 20, width: 400, height: 300 }, 'content rect sent');
-  window.__perch.reply(openReq.id, true, '{"url":"https://example.com"}');
+  window.__omnix.reply(openReq.id, true, '{"url":"https://example.com"}');
   await new Promise((r) => setImmediate(r));
 
   byId.get('tab-list').children[0].handlers.click({ stopPropagation() {} });
@@ -183,7 +183,7 @@ require('./app.js');
   const fetchReq = posted[posted.length - 1];
   assert.strictEqual(fetchReq.cmd, 'browserFetch');
   assert.deepStrictEqual(fetchReq.args, { url: 'https://example.com', dump: 'markdown' });
-  window.__perch.reply(fetchReq.id, true, '{"text":"# page"}');
+  window.__omnix.reply(fetchReq.id, true, '{"text":"# page"}');
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(byId.get('browser-text').textContent, '# page', 'fetched text rendered');
 

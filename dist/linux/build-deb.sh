@@ -1,11 +1,11 @@
 #!/bin/sh
-# Build a Debian package for Perch from an already-built release binary.
+# Build a Debian package for Omnix from an already-built release binary.
 set -eu
 
-APP=perch
-MAINTAINER=${PERCH_MAINTAINER:-Perch maintainers <maintainers@perch.invalid>}
+APP=omnix
+MAINTAINER=${OMNIX_MAINTAINER:-Omnix maintainers <maintainers@omnix.invalid>}
 BINARY=
-VERSION=${PERCH_VERSION:-}
+VERSION=${OMNIX_VERSION:-}
 
 die() {
     printf 'build-deb: %s\n' "$1" >&2
@@ -16,7 +16,7 @@ usage() {
     cat <<'EOF'
 usage: build-deb.sh [--binary PATH] [--version VERSION]
 
-  --binary PATH      use PATH instead of target/release/perch
+  --binary PATH      use PATH instead of target/release/omnix
   --version VERSION  override the version read from Cargo.toml
 EOF
 }
@@ -50,7 +50,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
 
 if [ -z "$BINARY" ]; then
-    BINARY=$ROOT_DIR/target/release/perch
+    BINARY=$ROOT_DIR/target/release/omnix
 fi
 [ -f "$BINARY" ] || die "binary not found: $BINARY (build it with: cargo build --release)"
 
@@ -62,7 +62,7 @@ fi
 ARCH=$(dpkg --print-architecture)
 [ -n "$ARCH" ] || die "dpkg --print-architecture returned nothing"
 
-ICON=$SCRIPT_DIR/perch.svg
+ICON=$SCRIPT_DIR/omnix.svg
 [ -f "$ICON" ] || die "icon not found: $ICON"
 
 STAGE=$(mktemp -d)
@@ -79,13 +79,13 @@ install -m 0644 "$ICON" "$STAGE/usr/share/icons/hicolor/scalable/apps/$APP.svg"
 cat >"$STAGE/usr/share/applications/$APP.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Perch
+Name=Omnix
 Comment=Worktrees, agent sessions, and a browser in one workbench
-Exec=/usr/bin/perch
-Icon=perch
+Exec=/usr/bin/omnix
+Icon=omnix
 Terminal=false
 Categories=Development;
-StartupWMClass=perch
+StartupWMClass=omnix
 EOF
 
 SIZE=$(du -sk "$STAGE/usr" | cut -f1)
@@ -99,7 +99,7 @@ Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libsoup-3.0-0
 Installed-Size: $SIZE
 Maintainer: $MAINTAINER
 Description: Light workbench for worktrees, agent sessions, and browsers
- Perch indexes agent transcripts with SQLite FTS5, sleeps and resumes
+ Omnix indexes agent transcripts with SQLite FTS5, sleeps and resumes
  worktree sessions, hands work off to a new worktree, and switches between
  the native WebView and the Lightpanda automation engine.
 EOF
