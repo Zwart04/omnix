@@ -126,12 +126,8 @@ pub fn sleep(root: &Path, workspace: &Path) -> Result<Workspace> {
     Ok(out)
 }
 
-pub fn wake(root: &Path, workspace: &Path, run: bool) -> Result<Workspace> {
-    let mut state = load(root)?;
-    let ws = get_or_create(&mut state, workspace)?;
-    if ws.sessions.is_empty() {
-        bail!("no agent sessions recorded for {}", ws.path);
-    }
+/// Human-readable session list, used by the CLI only.
+pub fn describe(ws: &Workspace) {
     for session in &ws.sessions {
         println!(
             "{}  {}  {}\n  cd {}\n  {}",
@@ -141,7 +137,17 @@ pub fn wake(root: &Path, workspace: &Path, run: bool) -> Result<Workspace> {
             session.cwd,
             session.resume_command
         );
-        if run {
+    }
+}
+
+pub fn wake(root: &Path, workspace: &Path, run: bool) -> Result<Workspace> {
+    let mut state = load(root)?;
+    let ws = get_or_create(&mut state, workspace)?;
+    if ws.sessions.is_empty() {
+        bail!("no agent sessions recorded for {}", ws.path);
+    }
+    if run {
+        for session in &ws.sessions {
             let child =
                 super::agent::spawn(&session.agent, Some(&session.session_id), &session.cwd)
                     .with_context(|| format!("resume {} in {}", session.agent, session.cwd))?;

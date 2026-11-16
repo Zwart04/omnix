@@ -31,9 +31,56 @@ fn lightpanda(args: &[&str]) -> Result<std::process::ExitStatus> {
     })
 }
 
+/// True when the binary runs at all; used by the GUI engine badge.
+pub fn available() -> bool {
+    Command::new(binary())
+        .arg("version")
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+pub fn version() -> Option<String> {
+    let out = Command::new(binary()).arg("version").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+fn check_dump(dump: &str) -> Result<()> {
+    if !matches!(dump, "markdown" | "html" | "semantic_tree_text") {
+        bail!("--dump must be markdown, html, or semantic_tree_text");
+    }
+    Ok(())
+}
+
+/// Fetch a page and return its text. Used by the GUI text pane.
+pub fn fetch_text(url: &str, dump: &str) -> Result<String> {
+    check_dump(dump)?;
+    let out = Command::new(binary())
+        .args(["fetch", url, "--dump", dump])
+        .output()
+        .with_context(|| {
+            format!(
+                "could not run '{}'. Install Lightpanda or set PERCH_LIGHTPANDA",
+                binary()
+            )
+        })?;
+    if !out.status.success() {
+        bail!(
+            "lightpanda fetch failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
 pub fn fetch(url: &str, engine: Engine, dump: &str) -> Result<()> {
     match engine {
         Engine::Lightpanda => {
+            check_dump(dump)?;
             let status = lightpanda(&["fetch", url, "--dump", dump])?;
             if !status.success() {
                 bail!("lightpanda fetch exited with {status}");

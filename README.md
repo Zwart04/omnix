@@ -31,6 +31,38 @@ Belum dibangun (sengaja, biar tidak jadi kerangka kosong):
 - PTY injection untuk benar-benar mengirim prompt ke TUI agent. Sekarang brief ditulis ke file dan outcome jujur dilaporkan `unconfirmed`.
 - CDP client penuh untuk `click/fill/snapshot`. Kontrak harness sudah ada di `harness/`, implementasinya menyusul.
 
+## Install
+
+Build dulu, lalu pasang. Linux butuh `pkg-config` dan paket dev WebKitGTK 4.1:
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev
+cargo build --release
+
+# user-only, ke ~/.local/bin
+sh dist/linux/install.sh
+
+# atau paket Debian
+sh dist/linux/build-deb.sh
+sudo apt install dist/linux/perch_*.deb
+```
+
+Windows memakai `dist/windows/build-zip.ps1` (butuh WebView2 Runtime), macOS
+memakai `dist/macos/build-app.sh`. Paket `.deb`, zip, dan `.app` dibangun oleh
+GitHub Actions pada tag `v*`. Panduan lengkap, termasuk state, troubleshooting,
+dan batasan: `docs/app.md`.
+
+Jalankan `perch` tanpa argumen untuk membuka jendela aplikasi. Verifikasi
+end-to-end tanpa screenshot:
+
+```bash
+PERCH_HOME=/tmp/perch-selftest PERCH_SELFTEST=1 perch app   # berakhir "selftest: PASS"
+```
+
+Hanya jalur Linux yang sudah dibangun dan diuji di mesin ini; Windows dan macOS
+belum dijalankan. Kalau `cc` di `PATH` bukan compiler sungguhan (mis. wrapper
+zig), build dengan `CC=/usr/bin/cc RUSTFLAGS="-C linker=/usr/bin/cc"`.
+
 ## Quickstart
 
 ```bash
@@ -84,6 +116,7 @@ Semua state ada di `.perch/` di root project (atau `PERCH_HOME`):
 
 ## Docs
 
+- `docs/app.md` — panduan pengguna: instalasi per OS, isi jendela, terminal, browser, state, troubleshooting.
 - `docs/architecture.md` — model data, invariant, dan roadmap.
 - `docs/browser.md` — tutorial lengkap browser native + Lightpanda, command, harness, keamanan.
 - `docs/orca-evidence.md` — bukti kode Orca untuk indexed history, resume worktree, handoff.

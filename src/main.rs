@@ -1,7 +1,13 @@
 mod agent;
 mod browser;
+#[cfg(feature = "gui")]
+mod gui;
 mod handoff;
 mod history;
+#[cfg(feature = "gui")]
+mod pty;
+#[cfg(feature = "gui")]
+mod selftest;
 mod workspace;
 
 use anyhow::{Context, Result, bail};
@@ -34,6 +40,8 @@ const HELP: &str = r#"perch - a light workbench for worktrees, agents, and brows
   perch browser fetch <url> [--engine native|lightpanda] [--dump markdown|html|semantic_tree_text]
   perch browser serve [--port 9222]
   perch browser doctor
+
+  perch app                      open the desktop app (no arguments does the same)
 
 Defaults: history dir .perch/transcripts; agent codex; browser engine lightpanda.
 Docs: README.md, docs/browser.md, docs/orca-evidence.md
@@ -208,6 +216,7 @@ fn cmd_resume(args: &[String]) -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(root);
     let state = workspace::wake(&root(), &ws, has(args, "--run"))?;
+    workspace::describe(&state);
     println!("awake {}", state.path);
     Ok(())
 }
@@ -297,11 +306,26 @@ fn run() -> Result<()> {
         Some("status") => cmd_status(&args[1..]),
         Some("handoff") => cmd_handoff(&args[1..]),
         Some("browser") => cmd_browser(&args[1..]),
-        Some("-h" | "--help" | "help") | None => {
+        Some("app") => start_app(),
+        Some("-h" | "--help" | "help") => {
             print!("{HELP}");
             Ok(())
         }
+        None => start_app(),
         Some(other) => bail!("unknown command '{other}'. Try: perch --help"),
+    }
+}
+
+/// No arguments opens the app on desktop builds; keep the CLI as the fallback.
+fn start_app() -> Result<()> {
+    #[cfg(feature = "gui")]
+    {
+        return gui::run();
+    }
+    #[cfg(not(feature = "gui"))]
+    {
+        print!("{HELP}");
+        Ok(())
     }
 }
 

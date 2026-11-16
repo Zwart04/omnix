@@ -1,0 +1,76 @@
+name: release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: package (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libsoup-3.0-dev
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Package Debian (Linux)
+        if: runner.os == 'Linux'
+        run: sh dist/linux/build-deb.sh
+
+      - name: Package zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./dist/windows/build-zip.ps1
+
+      - name: Package app bundle (macOS)
+        if: runner.os == 'macOS'
+        run: sh dist/macos/build-app.sh
+
+      - name: Upload Debian package
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: perch-linux-x64
+          path: dist/linux/*.deb
+          if-no-files-found: error
+
+      - name: Upload Windows zip
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: perch-windows-x64
+          path: dist/windows/perch-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Upload macOS bundle
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: perch-macos-x64
+          path: dist/macos/Perch-*-macos.tar.gz
+          if-no-files-found: error
