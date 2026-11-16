@@ -88,7 +88,12 @@ cargo build --release
 ./dist/windows/build-zip.ps1
 ```
 
-Hasilnya `dist\windows\omnix-windows-x64.zip` berisi `omnix.exe` dan `README.txt`.
+Skrip memakai `target\release\omnix.exe`. Untuk build silang dari Linux
+(mis. CI atau mesin tanpa Windows), jalankan
+`cargo xwin build --release --target x86_64-pc-windows-msvc`; skrip otomatis
+memakai `target\x86_64-pc-windows-msvc\release\omnix.exe` kalau berkas
+release biasa tidak ada. Hasilnya `dist\windows\omnix-windows-x64.zip` berisi
+`omnix.exe` dan `README.txt`.
 Ekstrak, lalu jalankan `omnix.exe`. Runtime **Microsoft Edge WebView2** wajib
 ada; Windows 11 sudah membawanya, Windows 10 mungkin perlu memasangnya dari
 situs Microsoft. Build ini belum ditandatangani, jadi SmartScreen bisa meminta

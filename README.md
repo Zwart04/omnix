@@ -15,6 +15,18 @@ Browser dibuat bisa diganti:
 
 Alasannya sederhana: Lightpanda bukan pengganti browser visual. Ia pengganti *automation browser*. Jadi Omnix memisahkan **engine yang dilihat manusia** dari **engine yang dipakai agent**.
 
+## Unduh
+
+Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
+
+| Platform | Berkas | Cara pasang |
+| --- | --- | --- |
+| Linux x86_64 | `omnix_0.1.0_amd64.deb` | `sudo apt install ./omnix_0.1.0_amd64.deb` |
+| Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
+| macOS 11+ | `Omnix-0.1.0-macos.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+
+<https://github.com/Zwart04/omnix/releases>
+
 ## Status
 
 Yang sudah jalan dan dites di repo ini:
@@ -59,8 +71,10 @@ end-to-end tanpa screenshot:
 OMNIX_HOME=/tmp/omnix-selftest OMNIX_SELFTEST=1 omnix app   # berakhir "selftest: PASS"
 ```
 
-Hanya jalur Linux yang sudah dibangun dan diuji di mesin ini; Windows dan macOS
-belum dijalankan. Kalau `cc` di `PATH` bukan compiler sungguhan (mis. wrapper
+Linux: dibangun, dipasang dari `.deb`, dan diuji penuh di mesin ini. Windows:
+`.exe` di-cross-compile (`cargo xwin build --release --target
+x86_64-pc-windows-msvc`) dan diperiksa sebagai PE32+ GUI, tetapi belum
+dijalankan di Windows sungguhan. macOS: dibangun oleh CI, belum dijalankan. Kalau `cc` di `PATH` bukan compiler sungguhan (mis. wrapper
 zig), build dengan `CC=/usr/bin/cc RUSTFLAGS="-C linker=/usr/bin/cc"`.
 
 ## Quickstart
