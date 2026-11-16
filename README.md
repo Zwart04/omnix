@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.1.0_amd64.deb` | `sudo apt install ./omnix_0.1.0_amd64.deb` |
+| Linux x86_64 | `omnix_0.2.0_amd64.deb` | `sudo apt install ./omnix_0.2.0_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.1.0-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.1.0-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.2.0-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.2.0-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -35,7 +35,13 @@ Yang sudah jalan dan dites di repo ini:
 - `history index/search/status` dengan SQLite FTS5, skema mirip Orca (`sessions`, `messages`, `messages_fts`, `identifiers`).
 - `agent track` + `sleep` + `resume` dengan state JSON per workspace.
 - `handoff` yang membuat `git worktree`, branch, brief, dan receipt `journaled | handed-to-terminal | not-delivered | unconfirmed`.
+- `history scan` yang membaca langsung transkrip di disk: `~/.codex/sessions`,
+  `~/.claude/projects` (tanpa `subagents/`), dan `~/.local/share/opencode/opencode.db`
+  read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
+- GUI satu jendela bergaya Orca: rail 44px, sidebar project 280px, tab strip di atas
+  terminal, panel `Agents` 320px berisi indexed history semua agent, command palette
+  (Ctrl+K). Palet netral tanpa aksen hijau.
 - 10 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
 
 Belum dibangun (sengaja, biar tidak jadi kerangka kosong):

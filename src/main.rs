@@ -10,6 +10,7 @@ mod history;
 mod pty;
 #[cfg(feature = "gui")]
 mod selftest;
+mod sources;
 mod workspace;
 
 use anyhow::{Context, Result, bail};
@@ -30,6 +31,7 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
 
   omnix history index [dir] [--agent A] [--cwd PATH]
   omnix history search <query...> [--agent A] [--conversation] [--newest] [--limit N] [--json]
+  omnix history scan             index every local agent transcript
   omnix history status
 
   omnix agent track --agent A --session ID [--cwd PATH] [--pane KEY] [--workspace PATH]
@@ -163,6 +165,25 @@ fn cmd_history(args: &[String]) -> Result<()> {
                 }
             }
         }
+        "scan" => {
+            let db = omnix_dir().join("history.sqlite");
+            let mut conn = history::open(&db)?;
+            for (agent, path) in sources::roots() {
+                println!("source {agent}: {}", path.display());
+            }
+            let report = sources::scan(&mut conn)?;
+            println!(
+                "scanned {} files, {} messages ({} unchanged, {} unreadable)",
+                report.files, report.messages, report.unchanged, report.skipped
+            );
+            for count in history::agent_counts(&conn)? {
+                println!(
+                    "  {:<10} {:>4} sessions {:>7} messages",
+                    count.agent, count.sessions, count.messages
+                );
+            }
+            println!("db {}", db.display());
+        }
         "status" => {
             let db = omnix_dir().join("history.sqlite");
             let conn = history::open(&db)?;
@@ -173,7 +194,7 @@ fn cmd_history(args: &[String]) -> Result<()> {
                 db.display()
             );
         }
-        _ => bail!("usage: omnix history index|search|status"),
+        _ => bail!("usage: omnix history index|scan|search|status"),
     }
     Ok(())
 }

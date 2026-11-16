@@ -47,7 +47,7 @@ pub const JS: &str = r#"
           waiting.delete(id);
           resolve({ ok: false, payload: { code: 'timeout', message: cmd } });
         }
-      }, 20000);
+      }, 180000);
       window.ipc.postMessage(JSON.stringify({ id: id, cmd: cmd, args: args || {} }));
     });
   }
@@ -74,6 +74,20 @@ pub const JS: &str = r#"
     const index = await ask('historyIndex', {});
     record('historyIndex', index.ok && index.payload.files >= 1,
       index.ok ? 'files=' + index.payload.files + ' messages=' + index.payload.messages : index.payload);
+
+    const scan = await ask('historyScan', {});
+    record('historyScan', scan.ok && Array.isArray(scan.payload.agents),
+      scan.ok ? 'agents=' + scan.payload.agents.length + ' files=' + scan.payload.files : JSON.stringify(scan.payload));
+
+    const listing = await ask('historySessions', { scope: 'all', limit: 5 });
+    const listed = (listing.ok && listing.payload.sessions) || [];
+    record('historySessions', listing.ok && Array.isArray(listed),
+      listing.ok ? 'sessions=' + listed.length + ' first=' + (listed[0] ? listed[0].agent : '-') : JSON.stringify(listing.payload));
+
+    const proj = await ask('historyProjects', { limit: 10 });
+    const projects = (proj.ok && proj.payload.projects) || [];
+    record('historyProjects', proj.ok && Array.isArray(projects) && projects.every(p => typeof p.name === 'string'),
+      proj.ok ? 'projects=' + projects.length + ' first=' + (projects[0] ? projects[0].name : '-') : JSON.stringify(proj.payload));
 
     const search = await ask('historySearch', { query: 'selftest needle', limit: 5 });
     const hits = (search.ok && search.payload.hits) || [];

@@ -11,7 +11,7 @@
 <body>
   <div id="app">
     <nav id="rail" aria-label="Panels">
-      <span class="rail-brand" aria-hidden="true">
+      <span class="rail-brand" title="Omnix" aria-hidden="true">
         <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"
              stroke-linecap="round" stroke-linejoin="round">
           <path d="M2.5 13h13" />
@@ -21,8 +21,8 @@
       </span>
 
       <div class="rail-group">
-        <button class="panel-btn" type="button" data-panel="search" title="History search"
-                aria-label="History search">
+        <button class="panel-btn" type="button" data-panel="search" title="Search history"
+                aria-label="Search history">
           <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="8" cy="8" r="4.5" />
@@ -48,21 +48,44 @@
           </svg>
         </button>
       </div>
+
+      <div class="rail-group rail-bottom">
+        <button class="panel-btn" type="button" id="cmd-btn" title="Command (Ctrl+K)"
+                aria-label="Open command palette">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.3"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M7 5v8M11 5v8M5 7h8M5 11h8" />
+            <circle cx="7" cy="5" r="1.6" />
+            <circle cx="11" cy="5" r="1.6" />
+            <circle cx="7" cy="13" r="1.6" />
+            <circle cx="11" cy="13" r="1.6" />
+          </svg>
+        </button>
+      </div>
     </nav>
 
-    <aside id="sidebar">
+    <aside id="sidebar" aria-label="Projects">
       <header class="side-head">
-        <h1 class="brand-name">Omnix</h1>
+        <h1 class="side-title">Projects</h1>
+        <button class="icon-btn" type="button" id="project-refresh"
+                title="Refresh projects" aria-label="Refresh projects">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14.5 8a5.5 5.5 0 1 0-1.2 4.3" />
+            <path d="M14.5 3.5V8H10" />
+          </svg>
+        </button>
       </header>
 
-      <div class="side-block grow">
-        <div class="side-label">Workspaces</div>
-        <div id="workspace-list" class="side-list"></div>
-      </div>
+      <div class="side-scroll">
+        <div id="project-tree" class="tree">
+          <div id="workspace-list" class="tree-body"></div>
+        </div>
 
-      <div class="side-block">
-        <div class="side-label">Tabs</div>
-        <div id="tab-list" class="side-list"></div>
+        <div class="side-sec">
+          <div class="side-label">Open tabs</div>
+          <div id="tab-list" class="tab-inv"></div>
+        </div>
       </div>
 
       <div class="side-actions">
@@ -76,77 +99,153 @@
       </div>
     </aside>
 
-    <main id="panes">
-      <section class="pane pane-browser" data-kind="browser" hidden aria-label="Browser">
-        <div class="browser-bar">
-          <label class="sr-only" for="browser-url">URL</label>
-          <input id="browser-url" class="input grow mono" type="text" placeholder="https://example.com"
-                 spellcheck="false" autocomplete="off" />
-          <select id="browser-engine" class="input" aria-label="Browser engine">
-            <option value="native">native</option>
-            <option value="lightpanda">lightpanda</option>
-          </select>
-          <button class="btn primary" id="browser-open" type="button">Open</button>
+    <main id="main">
+      <div id="tabstrip" aria-label="Open tabs">
+        <div id="tabstrip-tabs" class="strip-tabs"></div>
+        <button class="strip-new" type="button" id="tab-new" title="New tab" aria-label="New tab"
+                aria-haspopup="menu" aria-expanded="false">+</button>
+        <div class="menu" id="tab-new-menu" role="menu" hidden>
+          <button class="menu-item" type="button" id="tab-new-terminal" role="menuitem">
+            New Terminal
+          </button>
+          <button class="menu-item" type="button" id="tab-new-browser" role="menuitem">
+            New Browser
+          </button>
         </div>
-        <div class="browser-body">
-          <div id="browser-native" class="browser-rect">
-            <p class="rect-note">native WebView renders over this area</p>
+      </div>
+
+      <div id="panes">
+        <div id="pane-empty" class="pane-empty">
+          <p class="pane-empty-title">Nothing open</p>
+          <p class="hint">Start a terminal or a browser tab.</p>
+          <button class="btn primary" type="button" id="pane-empty-terminal">New Terminal</button>
+        </div>
+
+        <section class="pane pane-browser" data-kind="browser" hidden aria-label="Browser">
+          <div class="browser-bar">
+            <label class="sr-only" for="browser-url">URL</label>
+            <input id="browser-url" class="input grow mono" type="text" placeholder="https://example.com"
+                   spellcheck="false" autocomplete="off" />
+            <select id="browser-engine" class="input" aria-label="Browser engine">
+              <option value="native">native</option>
+              <option value="lightpanda">lightpanda</option>
+            </select>
+            <button class="btn primary" id="browser-open" type="button">Open</button>
           </div>
-          <pre id="browser-text" class="browser-text mono" hidden></pre>
-        </div>
-      </section>
+          <div class="browser-body">
+            <div id="browser-native" class="browser-rect">
+              <p class="rect-note">native WebView renders over this area</p>
+            </div>
+            <pre id="browser-text" class="browser-text mono" hidden></pre>
+          </div>
+        </section>
 
-      <section class="pane pane-search" data-kind="search" hidden aria-label="History search">
-        <div class="panel-head">
-          <h2>History search</h2>
-          <p class="hint">Full-text search over indexed agent transcripts.</p>
-        </div>
-        <form class="search-bar" id="search-form">
-          <label class="sr-only" for="search-query">Search query</label>
-          <input id="search-query" class="input grow mono" type="text" placeholder="query, e.g. blank restore"
-                 spellcheck="false" autocomplete="off" />
-          <label class="check"><input type="checkbox" id="search-conversation" /> conversation</label>
-          <select id="search-agent" class="input" aria-label="Agent filter"></select>
-          <button class="btn primary" type="submit">Search</button>
-        </form>
-        <div id="search-meta" class="hint"></div>
-        <ul id="search-results" class="hits"></ul>
-      </section>
+        <section class="pane pane-search" data-kind="search" hidden aria-label="History search">
+          <div class="panel-head">
+            <h2>History search</h2>
+            <p class="hint">Full-text search over indexed agent transcripts.</p>
+          </div>
+          <form class="search-bar" id="search-form">
+            <label class="sr-only" for="search-query">Search query</label>
+            <input id="search-query" class="input grow mono" type="text" placeholder="query, e.g. blank restore"
+                   spellcheck="false" autocomplete="off" />
+            <label class="check"><input type="checkbox" id="search-conversation" /> conversation</label>
+            <select id="search-agent" class="input" aria-label="Agent filter"></select>
+            <button class="btn primary" type="submit">Search</button>
+          </form>
+          <div id="search-meta" class="hint"></div>
+          <ul id="search-results" class="hits"></ul>
+        </section>
 
-      <section class="pane pane-handoff" data-kind="handoff" hidden aria-label="Handoff">
-        <div class="panel-head">
-          <h2>Handoff</h2>
-          <p class="hint">Create a worktree, write a brief, report the real outcome.</p>
-        </div>
-        <form id="handoff-form" class="handoff-form">
-          <div class="grid2">
-            <label>Name
-              <input id="handoff-name" class="input mono" type="text" placeholder="auth-fix"
+        <section class="pane pane-handoff" data-kind="handoff" hidden aria-label="Handoff">
+          <div class="panel-head">
+            <h2>Handoff</h2>
+            <p class="hint">Create a worktree, write a brief, report the real outcome.</p>
+          </div>
+          <form id="handoff-form" class="handoff-form">
+            <div class="grid2">
+              <label>Name
+                <input id="handoff-name" class="input mono" type="text" placeholder="auth-fix"
+                       spellcheck="false" autocomplete="off" />
+              </label>
+              <label>Agent
+                <select id="handoff-agent" class="input"></select>
+              </label>
+            </div>
+            <label>Prompt
+              <textarea id="handoff-prompt" class="input mono" rows="8"
+                        placeholder="What should the next agent do?"></textarea>
+            </label>
+            <label>Base ref (optional)
+              <input id="handoff-base" class="input mono" type="text" placeholder="main"
                      spellcheck="false" autocomplete="off" />
             </label>
-            <label>Agent
-              <select id="handoff-agent" class="input"></select>
-            </label>
-          </div>
-          <label>Prompt
-            <textarea id="handoff-prompt" class="input mono" rows="8"
-                      placeholder="What should the next agent do?"></textarea>
-          </label>
-          <label>Base ref (optional)
-            <input id="handoff-base" class="input mono" type="text" placeholder="main"
-                   spellcheck="false" autocomplete="off" />
-          </label>
-          <div class="form-actions">
-            <button class="btn primary" type="submit">Create handoff</button>
-          </div>
-        </form>
-        <div id="handoff-result" class="result" hidden></div>
-      </section>
+            <div class="form-actions">
+              <button class="btn primary" type="submit">Create handoff</button>
+            </div>
+          </form>
+          <div id="handoff-result" class="result" hidden></div>
+        </section>
 
-      <section class="pane pane-docs" data-kind="docs" hidden aria-label="Tutorial">
-        <iframe id="docs-frame" title="Omnix tutorial" src="/tutorial.html" width="800" height="600"></iframe>
-      </section>
+        <section class="pane pane-docs" data-kind="docs" hidden aria-label="Tutorial">
+          <iframe id="docs-frame" title="Omnix tutorial" src="/tutorial.html" width="800" height="600"></iframe>
+        </section>
+      </div>
     </main>
+
+    <aside id="agents-panel" aria-label="Agents">
+      <button class="hist-expand" type="button" id="history-expand" aria-label="Expand agents panel">
+        Agents
+      </button>
+
+      <div class="hist-body">
+        <header class="hist-head">
+          <div class="hist-head-text">
+            <h2 class="hist-title">Agents</h2>
+            <p class="hist-sub">Indexed history</p>
+          </div>
+          <button class="icon-btn" type="button" id="history-collapse"
+                  title="Collapse panel" aria-label="Collapse agents panel" aria-expanded="true">
+            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="m11 4.5-4 4.5 4 4.5" />
+            </svg>
+          </button>
+        </header>
+
+        <div class="hist-bar">
+          <span id="history-count" class="hist-count">0 sessions</span>
+          <button class="icon-btn" type="button" id="history-rescan"
+                  title="Rescan history" aria-label="Rescan history">
+            <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M14.5 8a5.5 5.5 0 1 0-1.2 4.3" />
+              <path d="M14.5 3.5V8H10" />
+            </svg>
+          </button>
+        </div>
+
+        <div class="chips" id="history-scope" role="group" aria-label="History scope">
+          <button class="chip" type="button" data-scope="workspace" aria-pressed="false">Workspace</button>
+          <button class="chip" type="button" data-scope="project" aria-pressed="false">Project</button>
+          <button class="chip" type="button" data-scope="all" aria-pressed="true">All</button>
+        </div>
+
+        <div class="chips" id="history-agents" role="group" aria-label="Agent filter">
+          <button class="chip" type="button" data-agent="" aria-pressed="true">All agents</button>
+        </div>
+
+        <div class="hist-search">
+          <label class="sr-only" for="history-search">Search sessions</label>
+          <input class="input" id="history-search" type="search" placeholder="Search sessions"
+                 spellcheck="false" autocomplete="off" />
+        </div>
+
+        <div id="history-meta" class="hist-meta mono"></div>
+
+        <div id="history-list" class="hist-list" role="list" aria-label="Indexed sessions"></div>
+      </div>
+    </aside>
   </div>
 
   <footer id="statusbar">
@@ -156,6 +255,17 @@
   </footer>
 
   <div id="toasts" aria-live="polite"></div>
+
+  <div id="palette" class="palette" hidden>
+    <div class="palette-box" role="dialog" aria-modal="true" aria-labelledby="palette-label">
+      <h2 class="sr-only" id="palette-label">Command palette</h2>
+      <label class="sr-only" for="palette-input">Command</label>
+      <input class="palette-input" id="palette-input" type="text" placeholder="Type a command"
+             role="combobox" aria-expanded="true" aria-controls="palette-list"
+             aria-autocomplete="list" spellcheck="false" autocomplete="off" />
+      <div class="palette-list" id="palette-list" role="listbox" aria-label="Commands"></div>
+    </div>
+  </div>
 
   <script src="/vendor/xterm.js"></script>
   <script src="/vendor/addon-fit.js"></script>

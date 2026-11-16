@@ -41,11 +41,11 @@ CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
 "#;
 
 #[derive(Deserialize)]
-struct TranscriptLine {
-    role: String,
-    text: String,
+pub struct TranscriptLine {
+    pub role: String,
+    pub text: String,
     #[serde(default)]
-    ts: Option<String>,
+    pub ts: Option<String>,
 }
 
 #[derive(Debug)]
@@ -60,12 +60,17 @@ pub fn open(db_path: &Path) -> Result<Connection> {
         fs::create_dir_all(parent)?;
     }
     let conn = Connection::open(db_path)?;
-    conn.pragma_update(None, "journal_mode", "WAL")?;
+    // Switching journal mode needs an exclusive lock and does not retry, so a
+    // concurrent writer must not turn "open" into a hard failure.
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
     conn.pragma_update(None, "synchronous", "NORMAL")?;
+    // Panel reads and a background rescan can overlap; wait instead of failing.
+    conn.busy_timeout(std::time::Duration::from_secs(10))?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.execute_batch(SCHEMA)?;
     conn.execute(
-        "INSERT OR REPLACE INTO meta(key,value) VALUES('schema_version', ?1)",
+        "INSERT INTO meta(key,value) VALUES('schema_version', ?1)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value <> excluded.value",
         params![SCHEMA_VERSION.to_string()],
     )?;
     Ok(conn)
@@ -196,96 +201,259 @@ pub fn index_dir(
             })
             .unwrap_or_else(|| "unknown".into());
 
-        let title = lines
-            .iter()
-            .find(|l| l.role == "user")
-            .map(|l| collapse(&l.text, 80))
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| file_name.to_string());
+        let title = session_title(&lines, file_name);
         let resume_command = super::agent::resume_command(&agent, file_name).unwrap_or_default();
-        let updated_at = fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs() as i64)
-            .unwrap_or(0);
+        let updated_at = file_mtime(&path);
         let hash = content_hash(&lines);
 
-        let tx = conn.transaction()?;
-        let old_id: Option<i64> = tx
-            .query_row(
-                "SELECT id FROM sessions WHERE file_path = ?1",
-                params![path.to_string_lossy()],
-                |r| r.get(0),
-            )
-            .ok();
-        if let Some(id) = old_id {
-            tx.execute(
-                "DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_row_id = ?1)",
-                params![id],
-            )?;
-            tx.execute(
-                "DELETE FROM messages WHERE session_row_id = ?1",
-                params![id],
-            )?;
-        }
-        tx.execute(
-            r#"INSERT INTO sessions(agent,session_id,file_path,title,cwd,updated_at,message_count,resume_command,content_hash)
-               VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
-               ON CONFLICT(file_path) DO UPDATE SET
-                 agent=excluded.agent, session_id=excluded.session_id, title=excluded.title,
-                 cwd=excluded.cwd, updated_at=excluded.updated_at,
-                 message_count=excluded.message_count, resume_command=excluded.resume_command,
-                 content_hash=excluded.content_hash"#,
-            params![
-                agent,
-                file_name,
-                path.to_string_lossy(),
-                title,
-                cwd,
+        report.messages += upsert(
+            conn,
+            &Entry {
+                key: &path.to_string_lossy(),
+                agent: &agent,
+                session_id: file_name,
+                title: &title,
+                cwd: Some(cwd),
                 updated_at,
-                lines.len() as i64,
-                resume_command,
-                hash
-            ],
+                resume_command: &resume_command,
+                hash: &hash,
+                lines: &lines,
+            },
         )?;
-        let session_row: i64 = tx.query_row(
-            "SELECT id FROM sessions WHERE file_path = ?1",
-            params![path.to_string_lossy()],
-            |r| r.get(0),
-        )?;
-
-        let mut insert_msg = tx.prepare(
-            "INSERT INTO messages(session_row_id, role, ts, text_truncated) VALUES(?1,?2,?3,?4)",
-        )?;
-        let mut insert_fts = tx.prepare(
-            "INSERT INTO messages_fts(rowid,user_text,assistant_text,tool_text,identifiers) VALUES(?1,?2,?3,?4,?5)",
-        )?;
-        for line in &lines {
-            let truncated = line.text.chars().count() > MAX_MESSAGE_CHARS;
-            let text: String = line.text.chars().take(MAX_MESSAGE_CHARS).collect();
-            insert_msg.execute(params![
-                session_row,
-                line.role,
-                line.ts,
-                if truncated { 1 } else { 0 }
-            ])?;
-            let id = tx.last_insert_rowid();
-            let (user, assistant, tool) = match line.role.as_str() {
-                "user" => (text.as_str(), "", ""),
-                "assistant" => ("", text.as_str(), ""),
-                "tool" => ("", "", text.as_str()),
-                _ => ("", "", ""),
-            };
-            insert_fts.execute(params![id, user, assistant, tool, identifiers(&text)])?;
-            report.messages += 1;
-        }
-        drop(insert_msg);
-        drop(insert_fts);
-        tx.commit()?;
         report.files += 1;
     }
     Ok(report)
+}
+
+#[derive(Debug)]
+pub struct SessionRow {
+    pub agent: String,
+    pub session_id: String,
+    pub title: String,
+    pub cwd: Option<String>,
+    pub updated_at: Option<i64>,
+    pub message_count: i64,
+    pub resume_command: String,
+    pub preview: String,
+}
+
+/// Session browser for the right-hand history panel.
+pub fn list(
+    conn: &Connection,
+    agent: Option<&str>,
+    cwd_prefix: Option<&str>,
+    query: Option<&str>,
+    limit: usize,
+) -> Result<Vec<SessionRow>> {
+    let mut sql = String::from(
+        "SELECT s.agent, s.session_id, s.title, s.cwd, s.updated_at, s.message_count,
+                s.resume_command,
+                COALESCE((SELECT substr(f.user_text, 1, 220) FROM messages m
+                          JOIN messages_fts f ON f.rowid = m.id
+                          WHERE m.session_row_id = s.id AND m.role = 'user'
+                          ORDER BY m.id LIMIT 1), '')
+         FROM sessions s WHERE 1=1",
+    );
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(agent) = agent.filter(|a| !a.is_empty() && *a != "all") {
+        sql.push_str(" AND s.agent = ?");
+        params.push(Box::new(agent.to_string()));
+    }
+    if let Some(prefix) = cwd_prefix.filter(|p| !p.is_empty()) {
+        sql.push_str(" AND (s.cwd = ? OR s.cwd LIKE ? || '/%')");
+        params.push(Box::new(prefix.to_string()));
+        params.push(Box::new(prefix.to_string()));
+    }
+    if let Some(query) = query.filter(|q| !q.trim().is_empty()) {
+        sql.push_str(" AND (s.title LIKE ? OR s.session_id LIKE ? OR s.cwd LIKE ?)");
+        let like = format!("%{}%", query.trim());
+        params.push(Box::new(like.clone()));
+        params.push(Box::new(like.clone()));
+        params.push(Box::new(like));
+    }
+    sql.push_str(" ORDER BY s.updated_at DESC, s.id DESC LIMIT ?");
+    params.push(Box::new(limit.clamp(1, 500) as i64));
+
+    let mut stmt = conn.prepare(&sql)?;
+    let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok(SessionRow {
+            agent: row.get(0)?,
+            session_id: row.get(1)?,
+            title: row.get(2)?,
+            cwd: row.get(3)?,
+            updated_at: row.get(4)?,
+            message_count: row.get(5)?,
+            resume_command: row.get(6)?,
+            preview: row
+                .get::<_, String>(7)?
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+        })
+    })?;
+    Ok(rows.filter_map(Result::ok).collect())
+}
+
+#[derive(Debug)]
+pub struct ProjectRow {
+    pub path: String,
+    pub sessions: i64,
+    pub messages: i64,
+    pub updated_at: Option<i64>,
+    pub agents: String,
+}
+
+/// Distinct working directories, the way the left project tree groups sessions.
+pub fn projects(conn: &Connection, limit: usize) -> Result<Vec<ProjectRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT cwd, COUNT(*), COALESCE(SUM(message_count), 0), MAX(updated_at),
+                GROUP_CONCAT(DISTINCT agent)
+         FROM sessions WHERE cwd IS NOT NULL AND cwd <> ''
+         GROUP BY cwd ORDER BY MAX(updated_at) DESC LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([limit.clamp(1, 300) as i64], |row| {
+        Ok(ProjectRow {
+            path: row.get(0)?,
+            sessions: row.get(1)?,
+            messages: row.get(2)?,
+            updated_at: row.get(3)?,
+            agents: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+        })
+    })?;
+    Ok(rows.filter_map(Result::ok).collect())
+}
+
+#[derive(Debug)]
+pub struct AgentCount {
+    pub agent: String,
+    pub sessions: i64,
+    pub messages: i64,
+}
+
+pub fn agent_counts(conn: &Connection) -> Result<Vec<AgentCount>> {
+    let mut stmt = conn.prepare(
+        "SELECT agent, COUNT(*), COALESCE(SUM(message_count), 0)
+         FROM sessions GROUP BY agent ORDER BY COUNT(*) DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(AgentCount {
+            agent: row.get(0)?,
+            sessions: row.get(1)?,
+            messages: row.get(2)?,
+        })
+    })?;
+    Ok(rows.filter_map(Result::ok).collect())
+}
+
+pub struct Entry<'a> {
+    pub key: &'a str,
+    pub agent: &'a str,
+    pub session_id: &'a str,
+    pub title: &'a str,
+    pub cwd: Option<&'a str>,
+    pub updated_at: i64,
+    pub resume_command: &'a str,
+    pub hash: &'a str,
+    pub lines: &'a [TranscriptLine],
+}
+
+pub fn session_title(lines: &[TranscriptLine], fallback: &str) -> String {
+    lines
+        .iter()
+        .find(|l| l.role == "user")
+        .map(|l| collapse(&l.text, 80))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+pub fn file_mtime(path: &Path) -> i64 {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// One row per transcript/session: replace messages, keep the session row fresh.
+pub fn upsert(conn: &mut Connection, entry: &Entry) -> Result<usize> {
+    // IMMEDIATE takes the write lock up front: a deferred transaction that reads
+    // first gets SQLITE_BUSY_SNAPSHOT at once and would ignore busy_timeout.
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let old_id: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM sessions WHERE file_path = ?1",
+            params![entry.key],
+            |r| r.get(0),
+        )
+        .ok();
+    if let Some(id) = old_id {
+        tx.execute(
+            "DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_row_id = ?1)",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM messages WHERE session_row_id = ?1",
+            params![id],
+        )?;
+    }
+    tx.execute(
+        r#"INSERT INTO sessions(agent,session_id,file_path,title,cwd,updated_at,message_count,resume_command,content_hash)
+           VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+           ON CONFLICT(file_path) DO UPDATE SET
+             agent=excluded.agent, session_id=excluded.session_id, title=excluded.title,
+             cwd=excluded.cwd, updated_at=excluded.updated_at,
+             message_count=excluded.message_count, resume_command=excluded.resume_command,
+             content_hash=excluded.content_hash"#,
+        params![
+            entry.agent,
+            entry.session_id,
+            entry.key,
+            entry.title,
+            entry.cwd,
+            entry.updated_at,
+            entry.lines.len() as i64,
+            entry.resume_command,
+            entry.hash
+        ],
+    )?;
+    let session_row: i64 = tx.query_row(
+        "SELECT id FROM sessions WHERE file_path = ?1",
+        params![entry.key],
+        |r| r.get(0),
+    )?;
+
+    let mut insert_msg = tx.prepare(
+        "INSERT INTO messages(session_row_id, role, ts, text_truncated) VALUES(?1,?2,?3,?4)",
+    )?;
+    let mut insert_fts = tx.prepare(
+        "INSERT INTO messages_fts(rowid,user_text,assistant_text,tool_text,identifiers) VALUES(?1,?2,?3,?4,?5)",
+    )?;
+    let mut stored = 0usize;
+    for line in entry.lines {
+        let truncated = line.text.chars().count() > MAX_MESSAGE_CHARS;
+        let text: String = line.text.chars().take(MAX_MESSAGE_CHARS).collect();
+        insert_msg.execute(params![
+            session_row,
+            line.role,
+            line.ts,
+            if truncated { 1 } else { 0 }
+        ])?;
+        let id = tx.last_insert_rowid();
+        let (user, assistant, tool) = match line.role.as_str() {
+            "user" => (text.as_str(), "", ""),
+            "assistant" => ("", text.as_str(), ""),
+            "tool" => ("", "", text.as_str()),
+            _ => ("", "", ""),
+        };
+        insert_fts.execute(params![id, user, assistant, tool, identifiers(&text)])?;
+        stored += 1;
+    }
+    drop(insert_msg);
+    drop(insert_fts);
+    tx.commit()?;
+    Ok(stored)
 }
 
 #[derive(Debug)]

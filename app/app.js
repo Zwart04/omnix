@@ -8,16 +8,19 @@
   ];
 
   var RPC_TIMEOUT_MS = 20000;
+  var SCAN_TIMEOUT_MS = 180000;
+  var HISTORY_LIMIT = 80;
+  var SEARCH_DEBOUNCE_MS = 200;
 
   var TERM_THEME = {
     background: '#0b0f14',
     foreground: '#e6edf3',
-    cursor: '#7ee0b8',
+    cursor: '#dbe4ee',
     cursorAccent: '#0b0f14',
     selectionBackground: '#27303b',
     black: '#0b0f14',
     red: '#ff7b72',
-    green: '#7ee0b8',
+    green: '#8fbfa0',
     yellow: '#ffd479',
     blue: '#79b8ff',
     magenta: '#d2a8ff',
@@ -25,7 +28,7 @@
     white: '#e6edf3',
     brightBlack: '#6b7785',
     brightRed: '#ff9b93',
-    brightGreen: '#a8f0d2',
+    brightGreen: '#b6d9c3',
     brightYellow: '#ffe3a3',
     brightBlue: '#a3d0ff',
     brightMagenta: '#e2c7ff',
@@ -96,6 +99,31 @@
     return typeof v === 'number' ? String(v) : (v == null ? '?' : String(v));
   }
 
+  function fmtNum(v) {
+    var n = Number(v);
+    if (v == null || !isFinite(n)) return v == null ? '?' : String(v);
+    return n.toLocaleString('en-US');
+  }
+
+  /* local relative time, no dependency; accepts seconds or milliseconds */
+  function relTime(ts) {
+    var t = Number(ts);
+    if (!isFinite(t) || t <= 0) return '';
+    if (t > 1e12) t = t / 1000;
+    var secs = Math.floor(Date.now() / 1000 - t);
+    if (secs < 0) secs = 0;
+    if (secs < 45) return 'just now';
+    var mins = Math.floor(secs / 60);
+    if (mins < 60) return mins + 'm ago';
+    var hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + 'h ago';
+    var days = Math.floor(hours / 24);
+    if (days < 30) return days + 'd ago';
+    var months = Math.floor(days / 30);
+    if (months < 12) return months + 'mo ago';
+    return Math.floor(months / 12) + 'y ago';
+  }
+
   /* ---------- toasts ---------- */
 
   var lastToast = { text: '', at: 0 };
@@ -121,7 +149,7 @@
   var pending = new Map();
   var EVENTS = Object.create(null);
 
-  function rpc(cmd, args) {
+  function rpc(cmd, args, timeoutMs) {
     return new Promise(function (resolve, reject) {
       if (!window.ipc || typeof window.ipc.postMessage !== 'function') {
         reject(new Error('IPC bridge not available (window.ipc.postMessage)'));
@@ -131,7 +159,7 @@
       var timer = setTimeout(function () {
         pending.delete(id);
         reject(new Error(cmd + ': no reply from host (timeout)'));
-      }, RPC_TIMEOUT_MS);
+      }, timeoutMs || RPC_TIMEOUT_MS);
       pending.set(id, { resolve: resolve, reject: reject, timer: timer });
       try {
         window.ipc.postMessage(JSON.stringify({ id: id, cmd: cmd, args: args || {} }));
@@ -198,6 +226,7 @@
   var activeTab = null;
 
   var PANEL_TITLE = { browser: 'Browser', search: 'Search', handoff: 'Handoff', docs: 'Docs' };
+  var KIND_TAG = { terminal: 'pty', browser: 'web', search: 'srch', handoff: 'hand', docs: 'docs' };
 
   function byPaneKey(key) {
     for (var i = 0; i < tabs.length; i++) {
@@ -213,31 +242,72 @@
     return null;
   }
 
+  function renderTabs() {
+    renderTabStrip();
+    renderTabList();
+    var empty = $('pane-empty');
+    if (empty) empty.hidden = tabs.length > 0;
+  }
+
+  function renderTabStrip() {
+    var box = $('tabstrip-tabs');
+    if (!box) return;
+    box.textContent = '';
+    for (var i = 0; i < tabs.length; i++) {
+      (function (tab) {
+        var row = el('div', 'strip-tab' + (tab === activeTab ? ' active' : ''));
+        var main = el('button', 'strip-main');
+        main.type = 'button';
+        if (tab === activeTab) main.setAttribute('aria-current', 'page');
+        main.appendChild(el('span', 'kind-tag', KIND_TAG[tab.kind] || tab.kind));
+        var title = el('span', 'strip-title', tab.title);
+        title.title = tab.paneKey || tab.title;
+        main.appendChild(title);
+        main.addEventListener('click', guard(function () { activate(tab); }));
+
+        var close = el('button', 'strip-close', '\u00d7');
+        close.type = 'button';
+        close.setAttribute('aria-label', 'Close ' + tab.title);
+        close.addEventListener('click', function (ev) {
+          if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+          guard(function () { closeTab(tab); })(ev);
+        });
+
+        row.appendChild(main);
+        row.appendChild(close);
+        box.appendChild(row);
+      })(tabs[i]);
+    }
+  }
+
   function renderTabList() {
     var list = $('tab-list');
     if (!list) return;
     list.textContent = '';
     if (!tabs.length) {
-      list.appendChild(el('div', 'side-empty', 'no tabs'));
+      list.appendChild(el('div', 'side-empty', 'No open tabs.'));
       return;
     }
     for (var i = 0; i < tabs.length; i++) {
       (function (tab) {
-        var row = el('div', 'tab-row' + (tab === activeTab ? ' active' : ''));
-        var kind = el('span', 'tab-kind', tab.kind === 'terminal' ? 'pty' : tab.kind);
-        var title = el('span', 'tab-title', tab.title);
-        title.title = tab.paneKey || tab.title;
-        var close = el('button', 'tab-close', 'x');
+        var row = el('div', 'inv-row' + (tab === activeTab ? ' active' : ''));
+        var main = el('button', 'inv-main');
+        main.type = 'button';
+        main.title = tab.title;
+        main.appendChild(el('span', 'kind-tag', KIND_TAG[tab.kind] || tab.kind));
+        main.appendChild(el('span', 'inv-title', tab.title));
+        main.addEventListener('click', guard(function () { activate(tab); }));
+
+        var close = el('button', 'inv-close', '\u00d7');
         close.type = 'button';
-        close.title = 'close tab';
+        close.setAttribute('aria-label', 'Close ' + tab.title);
         close.addEventListener('click', function (ev) {
-          ev.stopPropagation();
+          if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
           guard(function () { closeTab(tab); })(ev);
         });
-        row.appendChild(kind);
-        row.appendChild(title);
+
+        row.appendChild(main);
         row.appendChild(close);
-        row.addEventListener('click', function () { activate(tab); });
         list.appendChild(row);
       })(tabs[i]);
     }
@@ -253,7 +323,8 @@
     for (var i = 0; i < tabs.length; i++) {
       if (tabs[i].el) tabs[i].el.hidden = tabs[i] !== tab;
     }
-    renderTabList();
+    renderTabs();
+    markRail();
     if (tab.kind === 'terminal') {
       scheduleFit(tab);
     } else if (tab.kind === 'browser') {
@@ -264,6 +335,15 @@
       }
     } else if (tab.kind === 'docs') {
       ensureDocs();
+    }
+  }
+
+  function markRail() {
+    var buttons = document.querySelectorAll('.panel-btn');
+    for (var i = 0; i < buttons.length; i++) {
+      var panel = buttons[i].dataset.panel;
+      var on = !!(activeTab && panel && activeTab.kind === panel);
+      buttons[i].setAttribute('aria-current', on ? 'true' : 'false');
     }
   }
 
@@ -283,7 +363,6 @@
         paneKey: null
       };
       tabs.push(tab);
-      renderTabList();
     }
     activate(tab);
     return tab;
@@ -304,19 +383,38 @@
       }
       call('ptyKill', { paneKey: tab.paneKey }, { quiet: true });
     }
-    if (tab.el && tab.el.parentNode) tab.el.parentNode.removeChild(tab.el);
+    if (tab.kind === 'terminal' && tab.el && tab.el.parentNode) {
+      tab.el.parentNode.removeChild(tab.el);
+    } else if (tab.el) {
+      tab.el.hidden = true;
+    }
     var index = tabs.indexOf(tab);
     if (index >= 0) tabs.splice(index, 1);
     if (activeTab === tab) {
       activeTab = null;
-      if (tabs.length) {
-        activate(tabs[tabs.length - 1]);
-      } else {
-        createTerminal({ title: 'terminal' });
-      }
+      if (tabs.length) activate(tabs[tabs.length - 1]);
+      else renderTabs();
     } else {
-      renderTabList();
+      renderTabs();
     }
+  }
+
+  /* tab strip "+" menu */
+
+  function closeTabMenu() {
+    var menu = $('tab-new-menu');
+    if (menu) menu.hidden = true;
+    var btn = $('tab-new');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+
+  function toggleTabMenu() {
+    var menu = $('tab-new-menu');
+    if (!menu) return;
+    var open = menu.hidden;
+    menu.hidden = !open;
+    var btn = $('tab-new');
+    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
   /* ---------- terminal ---------- */
@@ -332,6 +430,7 @@
 
   function createTerminal(opts) {
     opts = opts || {};
+    closeTabMenu();
     var paneKey = opts.paneKey || ('tab:' + (++paneSeq));
     var existing = byPaneKey(paneKey);
     if (existing) {
@@ -605,6 +704,20 @@
 
   /* ---------- search ---------- */
 
+  function resumeSession(s) {
+    if (!s || !s.agent || !s.sessionId) {
+      toast('warn', 'session has no agent or id');
+      return null;
+    }
+    return createTerminal({
+      paneKey: s.paneKey || ('h:' + s.agent + ':' + s.sessionId),
+      agent: s.agent,
+      sessionId: s.sessionId,
+      cwd: s.cwd || null,
+      title: s.agent + ' ' + shortId(s.sessionId)
+    });
+  }
+
   function renderHit(hit) {
     var item = el('li', 'hit');
 
@@ -612,16 +725,7 @@
     top.appendChild(el('span', 'hit-agent', hit.agent || '?'));
     top.appendChild(el('span', 'hit-title', hit.title || '(untitled)'));
     var resume = button('resume', 'btn sm', function () {
-      if (!hit.agent || !hit.sessionId) {
-        toast('warn', 'hit has no agent/sessionId');
-        return;
-      }
-      createTerminal({
-        agent: hit.agent,
-        sessionId: hit.sessionId,
-        cwd: hit.cwd || null,
-        title: hit.agent + ' ' + shortId(hit.sessionId)
-      });
+      resumeSession(hit);
     });
     top.appendChild(resume);
     item.appendChild(top);
@@ -732,7 +836,7 @@
     });
   }
 
-  /* ---------- status and workspaces ---------- */
+  /* ---------- status and project tree ---------- */
 
   function refreshAppInfo() {
     return call('appInfo', {}).then(function (info) {
@@ -748,10 +852,16 @@
     });
   }
 
+  var lastStatus = null;
+
+  var projects = [];
+
   function refreshStatus() {
     return call('status', {}).then(function (res) {
       if (!res) return null;
-      renderWorkspaces(Array.isArray(res.workspaces) ? res.workspaces : []);
+      lastStatus = res;
+      var list = Array.isArray(res.workspaces) ? res.workspaces : [];
+      renderWorkspaces(list);
       var db = typeof res.dbBytes === 'number' ? (res.dbBytes / 1048576).toFixed(1) + ' MiB' : '?';
       $('status-right').textContent =
         'sessions ' + num(res.sessions) + '   messages ' + num(res.messages) + '   db ' + db;
@@ -759,20 +869,97 @@
     });
   }
 
-  function renderWorkspace(ws) {
-    var node = el('div', 'ws');
+  /* no tracked workspaces yet: list indexed projects so the tree is not empty */
+  function refreshProjects() {
+    return call('historyProjects', { limit: 60 }).then(function (res) {
+      if (!res) return null;
+      projects = Array.isArray(res.projects) ? res.projects.slice() : [];
+      /* contract says updatedAt desc; sorting keeps the tree stable if the host order drifts */
+      projects.sort(function (a, b) { return Number(b.updatedAt || 0) - Number(a.updatedAt || 0); });
+      var tracked = lastStatus && Array.isArray(lastStatus.workspaces) ? lastStatus.workspaces : [];
+      if (!tracked.length) renderProjects(projects);
+      return res;
+    });
+  }
 
-    var top = el('div', 'ws-top');
-    var name = el('span', 'ws-name', baseName(ws.path));
-    name.title = ws.path || '';
-    var state = el('span', 'ws-state', ws.sleeping ? 'sleeping' : 'awake');
-    if (ws.sleeping) state.className = 'ws-state sleeping';
-    top.appendChild(name);
-    top.appendChild(state);
+  function renderProjects(list) {
+    var box = $('workspace-list');
+    if (!box) return;
+    if (!list.length) {
+      box.textContent = '';
+      box.appendChild(el('div', 'side-empty', 'No projects indexed yet. Press Rescan.'));
+      return;
+    }
+    box.textContent = '';
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i] || {};
+      var row = el('div', 'proj-row');
+      row.title = p.path || '';
+
+      var top = el('div', 'proj-top');
+      top.appendChild(el('span', 'ws-name', p.name || baseName(p.path)));
+      top.appendChild(el('span', 'proj-time', relTime(p.updatedAt)));
+      row.appendChild(top);
+
+      var meta = el('div', 'proj-meta');
+      meta.appendChild(el('span', null, fmtNum(p.sessions || 0) + ' sessions'));
+      meta.appendChild(el('span', null, fmtNum(p.messages || 0) + ' msgs'));
+      var agents = Array.isArray(p.agents) ? p.agents : [];
+      for (var a = 0; a < agents.length && a < 4; a++) {
+        meta.appendChild(el('span', 'glyph', String(agents[a] || '?').slice(0, 1)));
+      }
+      row.appendChild(meta);
+
+      box.appendChild(row);
+    }
+  }
+
+  function chevron() {
+    var node = el('span', 'ws-chev', '\u25b8');
+    node.setAttribute('aria-hidden', 'true');
+    return node;
+  }
+
+  function renderWorkspace(ws) {
+    var wrap = el('div', 'ws');
 
     var sessions = Array.isArray(ws.sessions) ? ws.sessions : [];
-    var meta = el('div', 'ws-branch',
-      (ws.branch || 'no branch') + '   ' + sessions.length + ' session' + (sessions.length === 1 ? '' : 's'));
+    var row = el('button', 'ws-row');
+    row.type = 'button';
+    row.setAttribute('aria-expanded', 'false');
+    row.title = ws.path || '';
+    row.appendChild(chevron());
+    row.appendChild(el('span', 'ws-name', baseName(ws.path)));
+    row.appendChild(el('span', 'tag branch', ws.branch || 'no branch'));
+    row.appendChild(el('span', 'ws-state' + (ws.sleeping ? ' sleeping' : ''),
+      ws.sleeping ? 'sleeping' : 'awake'));
+
+    var kids = el('div', 'ws-kids');
+    kids.hidden = true;
+
+    row.addEventListener('click', guard(function () {
+      var open = row.getAttribute('aria-expanded') === 'true';
+      row.setAttribute('aria-expanded', open ? 'false' : 'true');
+      kids.hidden = open;
+    }));
+
+    for (var i = 0; i < sessions.length; i++) {
+      (function (s) {
+        var line = el('button', 'sess-row');
+        line.type = 'button';
+        line.title = s.resumeCommand || s.sessionId || '';
+        line.appendChild(el('span', 'glyph', String(s.agent || '?').slice(0, 1)));
+        line.appendChild(el('span', 'inv-title',
+          (s.agent || 'agent') + ' ' + shortId(s.sessionId)));
+        if (s.paneKey) line.appendChild(el('span', 'pane-tag', s.paneKey));
+        line.addEventListener('click', guard(function () { resumeSession(s); }));
+        kids.appendChild(line);
+      })(sessions[i]);
+    }
+
+    if (!sessions.length) {
+      kids.appendChild(el('div', 'side-empty', 'No tracked sessions.'));
+    }
 
     var actions = el('div', 'ws-actions');
 
@@ -795,8 +982,8 @@
         if (!res) return null;
         var list = Array.isArray(res.sessions) ? res.sessions : [];
         toast('ok', 'resumed ' + baseName(res.path) + ' (' + list.length + ' session(s))');
-        for (var i = 0; i < list.length; i++) {
-          var s = list[i] || {};
+        for (var k = 0; k < list.length; k++) {
+          var s = list[k] || {};
           if (!s.paneKey) continue;
           if (byPaneKey(s.paneKey)) continue;
           createTerminal({
@@ -814,11 +1001,11 @@
 
     actions.appendChild(sleepBtn);
     actions.appendChild(resumeBtn);
+    kids.appendChild(actions);
 
-    node.appendChild(top);
-    node.appendChild(meta);
-    node.appendChild(actions);
-    return node;
+    wrap.appendChild(row);
+    wrap.appendChild(kids);
+    return wrap;
   }
 
   function renderWorkspaces(list) {
@@ -826,12 +1013,483 @@
     if (!box) return;
     box.textContent = '';
     if (!list.length) {
-      box.appendChild(el('div', 'side-empty', 'no workspaces yet'));
+      box.appendChild(el('div', 'side-empty', 'No workspaces tracked yet.'));
       return;
     }
     for (var i = 0; i < list.length; i++) {
       box.appendChild(renderWorkspace(list[i]));
     }
+  }
+
+  /* ---------- indexed history panel ---------- */
+
+  var hist = {
+    scope: 'all',
+    agent: '',
+    query: '',
+    scan: null,
+    scannedAt: 0,
+    sessions: [],
+    lastSession: null,
+    loading: false,
+    scanError: null,
+    listError: null
+  };
+
+  var historyTimer = null;
+
+  function historyCount() {
+    if (hist.scan && Array.isArray(hist.scan.agents)) {
+      var total = 0;
+      for (var i = 0; i < hist.scan.agents.length; i++) {
+        total += Number(hist.scan.agents[i].sessions) || 0;
+      }
+      if (total > 0) return total;
+    }
+    return hist.sessions.length;
+  }
+
+  function renderHistory() {
+    var count = $('history-count');
+    if (count) {
+      var n = historyCount();
+      count.textContent = fmtNum(n) + ' session' + (n === 1 ? '' : 's');
+    }
+
+    renderScopeChips();
+    renderAgentChips();
+    renderHistoryMeta();
+    renderHistoryList();
+  }
+
+  function renderScopeChips() {
+    var box = $('history-scope');
+    if (!box) return;
+    var chips = box.children || [];
+    for (var i = 0; i < chips.length; i++) {
+      var scope = chips[i].dataset ? chips[i].dataset.scope : null;
+      if (!scope) continue;
+      chips[i].setAttribute('aria-pressed', scope === hist.scope ? 'true' : 'false');
+    }
+  }
+
+  var agentListSig = '';
+
+  function agentSignature() {
+    var agents = hist.scan && Array.isArray(hist.scan.agents) ? hist.scan.agents : [];
+    var parts = [];
+    for (var i = 0; i < agents.length; i++) {
+      parts.push(String(agents[i].agent || '') + ':' + Number(agents[i].sessions || 0));
+    }
+    return parts.join(',');
+  }
+
+  function renderAgentChips() {
+    var box = $('history-agents');
+    if (!box) return;
+
+    var sig = agentSignature();
+    if (sig !== agentListSig) {
+      agentListSig = sig;
+      box.textContent = '';
+
+      var all = el('button', 'chip', 'All agents');
+      all.type = 'button';
+      all.dataset.agent = '';
+      all.addEventListener('click', guard(function () {
+        if (hist.agent === '') return;
+        hist.agent = '';
+        renderHistory();
+        return loadSessions().then(renderHistory);
+      }));
+      box.appendChild(all);
+
+      var agents = hist.scan && Array.isArray(hist.scan.agents) ? hist.scan.agents : [];
+      for (var i = 0; i < agents.length; i++) {
+        (function (entry) {
+          var name = entry && entry.agent ? String(entry.agent) : '';
+          if (!name) return;
+          var chip = el('button', 'chip', name + ' ' + fmtNum(entry.sessions || 0));
+          chip.type = 'button';
+          chip.dataset.agent = name;
+          chip.addEventListener('click', guard(function () {
+            hist.agent = hist.agent === name ? '' : name;
+            renderHistory();
+            return loadSessions().then(renderHistory);
+          }));
+          box.appendChild(chip);
+        })(agents[i]);
+      }
+    }
+
+    /* pressed state updates in place so the focused chip is not rebuilt */
+    var chips = box.children || [];
+    for (var c = 0; c < chips.length; c++) {
+      var value = chips[c].dataset ? String(chips[c].dataset.agent || '') : '';
+      chips[c].setAttribute('aria-pressed', value === hist.agent ? 'true' : 'false');
+    }
+  }
+
+  function renderHistoryMeta() {
+    var node = $('history-meta');
+    if (!node) return;
+    if (!hist.scan) {
+      node.textContent = '';
+      return;
+    }
+    node.textContent = 'Scanned ' + fmtNum(hist.scan.files || 0) + ' files \u00b7 ' +
+      fmtNum(hist.scan.messages || 0) + ' messages \u00b7 ' +
+      (relTime(hist.scannedAt) || 'just now');
+  }
+
+  function renderHistoryList() {
+    var list = $('history-list');
+    if (!list) return;
+    list.textContent = '';
+
+    if (hist.loading) {
+      var loading = el('div', 'loading', 'Scanning agent history...');
+      loading.setAttribute('role', 'status');
+      list.appendChild(loading);
+      return;
+    }
+
+    var failure = hist.scanError || hist.listError;
+    if (failure) {
+      var err = el('div', 'error', failure);
+      err.setAttribute('role', 'alert');
+      list.appendChild(err);
+      list.appendChild(el('div', 'empty', 'Press Rescan to try again.'));
+      return;
+    }
+
+    if (!hist.sessions.length) {
+      var empty = el('div', 'empty', 'No sessions indexed yet. Press Rescan.');
+      list.appendChild(empty);
+      return;
+    }
+
+    for (var i = 0; i < hist.sessions.length; i++) {
+      list.appendChild(sessionCard(hist.sessions[i]));
+    }
+  }
+
+  function sessionCard(s) {
+    var card = el('div', 'sess');
+    card.setAttribute('role', 'listitem');
+
+    var main = el('button', 'sess-main');
+    main.type = 'button';
+    main.setAttribute('aria-label',
+      'Resume ' + (s.title || 'session') + ' from ' + (s.agent || 'agent'));
+
+    var top = el('span', 'sess-top');
+    top.appendChild(el('span', 'tag agent', s.agent || '?'));
+    var title = el('span', 'sess-title', s.title || '(untitled)');
+    title.title = s.title || s.sessionId || '';
+    top.appendChild(title);
+    main.appendChild(top);
+
+    if (s.preview) main.appendChild(el('span', 'sess-preview', s.preview));
+
+    var meta = el('span', 'sess-meta');
+    meta.appendChild(el('span', null, fmtNum(s.messageCount || 0) + ' msgs'));
+    meta.appendChild(el('span', null, relTime(s.updatedAt) || 'unknown'));
+    meta.appendChild(el('span', null, s.agent || '?'));
+    main.appendChild(meta);
+
+    main.addEventListener('click', guard(function () {
+      resumeSession({
+        paneKey: 'h:' + s.agent + ':' + s.sessionId,
+        agent: s.agent,
+        sessionId: s.sessionId,
+        cwd: s.cwd,
+        title: s.title
+      });
+    }));
+
+    var resume = button('Resume', 'btn sm sess-resume', function () {
+      resumeSession({
+        paneKey: 'h:' + s.agent + ':' + s.sessionId,
+        agent: s.agent,
+        sessionId: s.sessionId,
+        cwd: s.cwd,
+        title: s.title
+      });
+    });
+    resume.setAttribute('aria-label', 'Resume ' + (s.title || 'session'));
+
+    card.appendChild(main);
+    card.appendChild(resume);
+    return card;
+  }
+
+  function loadSessions() {
+    var args = { scope: hist.scope, limit: HISTORY_LIMIT };
+    if (hist.agent) args.agent = hist.agent;
+    if (hist.query) args.query = hist.query;
+
+    return rpc('historySessions', args).then(function (res) {
+      hist.sessions = res && Array.isArray(res.sessions) ? res.sessions : [];
+      if (hist.sessions.length) hist.lastSession = hist.sessions[0];
+      hist.listError = null;
+      setLast('historySessions ok');
+      return res;
+    }, function (err) {
+      hist.sessions = [];
+      hist.listError = 'History listing failed: ' + message(err);
+      toast('error', 'historySessions: ' + message(err));
+      setLast('historySessions failed');
+      return null;
+    });
+  }
+
+  function loadHistory() {
+    hist.loading = true;
+    hist.scanError = null;
+    hist.listError = null;
+    renderHistory();
+
+    var rescan = $('history-rescan');
+    if (rescan) rescan.setAttribute('aria-busy', 'true');
+
+    // Full index can walk hundreds of transcripts on first run.
+    return rpc('historyScan', {}, SCAN_TIMEOUT_MS).then(function (scan) {
+      hist.scan = scan || null;
+      hist.scannedAt = Date.now();
+      setLast('historyScan ok');
+      renderHistory();
+    }, function (err) {
+      hist.scanError = 'History scan failed: ' + message(err);
+      toast('error', 'historyScan: ' + message(err));
+      setLast('historyScan failed');
+      renderHistory();
+    }).then(function () {
+      return loadSessions();
+    }).then(function () {
+      hist.loading = false;
+      if (rescan) rescan.removeAttribute('aria-busy');
+      renderHistory();
+      var tracked = lastStatus && Array.isArray(lastStatus.workspaces) ? lastStatus.workspaces : [];
+      if (!tracked.length) refreshProjects();
+    });
+  }
+
+  function onHistorySearch() {
+    var input = $('history-search');
+    var value = input ? String(input.value || '') : '';
+    if (historyTimer) clearTimeout(historyTimer);
+    historyTimer = setTimeout(guard(function () {
+      historyTimer = null;
+      var trimmed = value.trim();
+      if (trimmed === hist.query) return;
+      hist.query = trimmed;
+      return loadSessions().then(renderHistory);
+    }), SEARCH_DEBOUNCE_MS);
+  }
+
+  /* ---------- command palette ---------- */
+
+  var paletteItems = [
+    { label: 'New Terminal', hint: 'pty', run: function () { createTerminal({ title: 'terminal' }); } },
+    { label: 'New Browser', hint: 'web', run: function () { openStatic('browser'); } },
+    { label: 'Search History', hint: 'panel', run: function () {
+      openStatic('search');
+      var input = $('search-query');
+      if (input) input.focus();
+    } },
+    { label: 'Handoff', hint: 'panel', run: function () { openStatic('handoff'); } },
+    { label: 'Docs', hint: 'panel', run: function () { openStatic('docs'); } },
+    { label: 'Rescan History', hint: 'history', run: function () { return loadHistory(); } },
+    { label: 'Resume last session', hint: 'history', run: resumeLastSession }
+  ];
+
+  var paletteReturn = null;
+  var paletteMatches = [];
+  var paletteIndex = 0;
+
+  function resumeLastSession() {
+    var s = hist.sessions[0] || hist.lastSession;
+    if (!s) {
+      toast('warn', 'No indexed session to resume yet.');
+      return;
+    }
+    resumeSession({
+      paneKey: 'h:' + s.agent + ':' + s.sessionId,
+      agent: s.agent,
+      sessionId: s.sessionId,
+      cwd: s.cwd,
+      title: s.title
+    });
+  }
+
+  function paletteVisible() {
+    var box = $('palette');
+    return !!box && !box.hidden;
+  }
+
+  function paletteOpen() {
+    var box = $('palette');
+    if (!box) return;
+    paletteReturn = document.activeElement || null;
+    box.hidden = false;
+    var input = $('palette-input');
+    if (input) {
+      input.value = '';
+      input.focus();
+    }
+    paletteFilter('');
+  }
+
+  function paletteClose() {
+    var box = $('palette');
+    if (!box || box.hidden) return;
+    box.hidden = true;
+    var back = paletteReturn;
+    paletteReturn = null;
+    if (back && typeof back.focus === 'function') {
+      try { back.focus(); } catch (err) { /* element gone */ }
+    }
+  }
+
+  function paletteFilter(query) {
+    var q = String(query == null ? '' : query).trim().toLowerCase();
+    paletteMatches = [];
+    for (var i = 0; i < paletteItems.length; i++) {
+      if (!q || paletteItems[i].label.toLowerCase().indexOf(q) >= 0) {
+        paletteMatches.push(paletteItems[i]);
+      }
+    }
+    paletteIndex = 0;
+    renderPalette();
+  }
+
+  function renderPalette() {
+    var list = $('palette-list');
+    if (!list) return;
+    list.textContent = '';
+
+    if (!paletteMatches.length) {
+      list.appendChild(el('div', 'palette-empty', 'No command matches.'));
+      syncPaletteSelection();
+      return;
+    }
+
+    for (var i = 0; i < paletteMatches.length; i++) {
+      (function (item, index) {
+        var row = el('div', 'palette-item', item.label);
+        row.id = 'palette-item-' + index;
+        row.dataset.index = String(index);
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', index === paletteIndex ? 'true' : 'false');
+        row.appendChild(el('span', 'palette-hint', item.hint));
+        row.addEventListener('click', guard(function () { paletteRun(index); }));
+        list.appendChild(row);
+      })(paletteMatches[i], i);
+    }
+    syncPaletteSelection();
+  }
+
+  function syncPaletteSelection() {
+    var input = $('palette-input');
+    if (!input) return;
+    if (paletteMatches.length) {
+      input.setAttribute('aria-activedescendant', 'palette-item-' + paletteIndex);
+    } else {
+      input.removeAttribute('aria-activedescendant');
+    }
+  }
+
+  function paletteMove(delta) {
+    if (!paletteMatches.length) return;
+    paletteIndex = (paletteIndex + delta + paletteMatches.length) % paletteMatches.length;
+    var list = $('palette-list');
+    if (list && list.children) {
+      for (var i = 0; i < list.children.length; i++) {
+        var row = list.children[i];
+        if (!row.id) continue;
+        row.setAttribute('aria-selected', i === paletteIndex ? 'true' : 'false');
+      }
+    }
+    syncPaletteSelection();
+  }
+
+  function paletteRun(index) {
+    var item = paletteMatches[index];
+    if (!item) return;
+    paletteClose();
+    guard(item.run)();
+  }
+
+  function onPaletteKey(ev) {
+    if (!paletteVisible()) return;
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      paletteClose();
+      return;
+    }
+    if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      paletteMove(1);
+      return;
+    }
+    if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      paletteMove(-1);
+      return;
+    }
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      paletteRun(paletteIndex);
+      return;
+    }
+    if (ev.key === 'Tab') {
+      ev.preventDefault();
+      var input = $('palette-input');
+      if (input) input.focus();
+    }
+  }
+
+  function onPaletteInput() {
+    var input = $('palette-input');
+    paletteFilter(input ? input.value : '');
+  }
+
+  function onGlobalKey(ev) {
+    var key = ev && ev.key ? String(ev.key) : '';
+    var mod = ev && (ev.ctrlKey || ev.metaKey);
+    if (mod && (key === 'k' || key === 'K')) {
+      ev.preventDefault();
+      if (paletteVisible()) paletteClose();
+      else paletteOpen();
+      return;
+    }
+    if (mod && ev.shiftKey && (key === 'p' || key === 'P')) {
+      ev.preventDefault();
+      paletteOpen();
+      return;
+    }
+    if (key === 'Escape') {
+      if (paletteVisible()) paletteClose();
+      else if (!($('tab-new-menu') || {}).hidden) closeTabMenu();
+    }
+  }
+
+  /* ---------- panel collapse ---------- */
+
+  function setHistoryCollapsed(collapsed) {
+    var app = $('app');
+    var panel = $('agents-panel');
+    var btn = $('history-collapse');
+    if (app) {
+      if (collapsed) app.classList.add('hist-collapsed');
+      else app.classList.remove('hist-collapsed');
+    }
+    if (panel) {
+      if (collapsed) panel.classList.add('collapsed');
+      else panel.classList.remove('collapsed');
+    }
+    if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
   }
 
   /* ---------- events from host ---------- */
@@ -852,7 +1510,7 @@
       tab.term.write('\r\n\x1b[38;5;244m[pty exit ' + code + ']\x1b[0m\r\n');
     }
     tab.title = tab.title + ' (exited)';
-    renderTabList();
+    renderTabs();
     setLast('ptyExit ' + payload.paneKey + ' code ' + code);
   };
 
@@ -892,7 +1550,7 @@
     if (frame && !frame.getAttribute('src')) frame.setAttribute('src', '/tutorial.html');
   }
 
-  function boot() {
+  function wire() {
     fillAgents($('search-agent'), 'any agent', '');
     fillAgents($('handoff-agent'), null, 'codex');
 
@@ -903,14 +1561,35 @@
       openStatic('browser');
     }));
 
+    var emptyBtn = $('pane-empty-terminal');
+    if (emptyBtn) {
+      emptyBtn.addEventListener('click', guard(function () {
+        createTerminal({ title: 'terminal' });
+      }));
+    }
+
+    var projectRefresh = $('project-refresh');
+    if (projectRefresh) {
+      projectRefresh.addEventListener('click', guard(function () {
+        refreshAppInfo();
+        refreshStatus();
+        return refreshProjects();
+      }));
+    }
+
     var panelButtons = document.querySelectorAll('.panel-btn');
     for (var i = 0; i < panelButtons.length; i++) {
       (function (node) {
+        var panel = node.dataset ? node.dataset.panel : null;
+        if (!panel) return;
         node.addEventListener('click', guard(function () {
-          openStatic(node.dataset.panel);
+          openStatic(panel);
         }));
       })(panelButtons[i]);
     }
+
+    var cmdBtn = $('cmd-btn');
+    if (cmdBtn) cmdBtn.addEventListener('click', guard(paletteOpen));
 
     $('browser-open').addEventListener('click', guard(onBrowserOpen));
     $('browser-engine').addEventListener('change', guard(onEngineChange));
@@ -921,16 +1600,66 @@
     $('search-form').addEventListener('submit', guard(runSearch));
     $('handoff-form').addEventListener('submit', guard(runHandoff));
 
+    $('tab-new').addEventListener('click', guard(toggleTabMenu));
+    $('tab-new-terminal').addEventListener('click', guard(function () {
+      closeTabMenu();
+      createTerminal({ title: 'terminal' });
+    }));
+    $('tab-new-browser').addEventListener('click', guard(function () {
+      closeTabMenu();
+      openStatic('browser');
+    }));
+
+    $('history-rescan').addEventListener('click', guard(loadHistory));
+    $('history-search').addEventListener('input', guard(onHistorySearch));
+
+    var scopeBox = $('history-scope');
+    if (scopeBox && scopeBox.children) {
+      for (var s = 0; s < scopeBox.children.length; s++) {
+        (function (chip) {
+          var scope = chip.dataset ? chip.dataset.scope : null;
+          if (!scope) return;
+          chip.addEventListener('click', guard(function () {
+            if (hist.scope === scope) return;
+            hist.scope = scope;
+            renderHistory();
+            return loadSessions().then(renderHistory);
+          }));
+        })(scopeBox.children[s]);
+      }
+    }
+
+    $('history-collapse').addEventListener('click', guard(function () {
+      setHistoryCollapsed(true);
+    }));
+    $('history-expand').addEventListener('click', guard(function () {
+      setHistoryCollapsed(false);
+    }));
+
+    $('palette-input').addEventListener('keydown', guard(onPaletteKey));
+    $('palette-input').addEventListener('input', guard(onPaletteInput));
+    $('palette').addEventListener('mousedown', guard(function (ev) {
+      if (ev && ev.target === $('palette')) paletteClose();
+    }));
+
+    document.addEventListener('keydown', guard(onGlobalKey));
+
     window.addEventListener('resize', guard(function () {
       for (var j = 0; j < tabs.length; j++) {
         if (tabs[j].kind === 'terminal') scheduleFit(tabs[j]);
       }
       syncBrowserBounds();
     }));
+  }
+
+  function boot() {
+    wire();
+    renderTabs();
+    setHistoryCollapsed(false);
 
     refreshAppInfo();
     refreshStatus();
-    createTerminal({ title: 'terminal' });
+    loadHistory();
   }
 
   if (document.readyState === 'loading') {

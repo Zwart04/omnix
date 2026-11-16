@@ -1,9 +1,10 @@
-use crate::{browser, handoff, history, pty, workspace};
+use crate::{browser, handoff, history, pty, sources, workspace};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
@@ -30,6 +31,8 @@ enum Msg {
     Probe(String),
     StartTest,
     Finish(bool),
+    Reply(u64, Result<Value>),
+    DeepCheck,
     PtyData { key: String, data: Vec<u8> },
     PtyExit { key: String },
 }
@@ -210,6 +213,114 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "messages": report.messages,
                 "skippedLines": report.skipped_lines,
                 "db": db.to_string_lossy(),
+            }))
+        })(),
+        "historyScan" => {
+            // First scan can walk hundreds of files: keep the event loop free.
+            let root = app.root.clone();
+            let tx_scan = tx.clone();
+            let proxy_scan = proxy.clone();
+            let probe_on = std::env::var_os("OMNIX_GUI_PROBE").is_some();
+            std::thread::spawn(move || {
+                if probe_on {
+                    eprintln!("scan thread start");
+                }
+                let start = std::time::Instant::now();
+                let result = (|| -> Result<Value> {
+                    let db = history_db(&root);
+                    if probe_on {
+                        eprintln!("scan: opening {}", db.display());
+                    }
+                    let mut conn = history::open(&db)?;
+                    if probe_on {
+                        eprintln!("scan: opened, walking sources");
+                    }
+                    let report = sources::scan(&mut conn)?;
+                    if probe_on {
+                        eprintln!("scan: walked {} files", report.files);
+                    }
+                    let counts = history::agent_counts(&conn)?;
+                    Ok(json!({
+                        "files": report.files,
+                        "messages": report.messages,
+                        "skipped": report.skipped,
+                        "unchanged": report.unchanged,
+                        "db": db.to_string_lossy(),
+                        "agents": counts
+                            .iter()
+                            .map(|c| json!({"agent": c.agent, "sessions": c.sessions, "messages": c.messages}))
+                            .collect::<Vec<_>>(),
+                        "roots": sources::roots()
+                            .iter()
+                            .map(|(agent, path)| json!({"agent": agent, "path": path.to_string_lossy()}))
+                            .collect::<Vec<_>>(),
+                    }))
+                })();
+                println!(
+                    "scan thread done in {}ms ok={}",
+                    start.elapsed().as_millis(),
+                    result.is_ok()
+                );
+                let _ = tx_scan.send(Msg::Reply(id, result));
+                let _ = proxy_scan.send_event(UserEvent::Wake);
+            });
+            return;
+        }
+        "historyProjects" => (|| {
+            let conn = history::open(&history_db(&app.root))?;
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(60) as usize;
+            let rows = history::projects(&conn, limit)?;
+            let projects: Vec<Value> = rows
+                .into_iter()
+                .map(|p| {
+                    json!({
+                        "path": p.path,
+                        "name": p.path.rsplit('/').next().unwrap_or(&p.path),
+                        "sessions": p.sessions,
+                        "messages": p.messages,
+                        "updatedAt": p.updated_at,
+                        "agents": p.agents.split(',').filter(|a| !a.is_empty()).collect::<Vec<_>>(),
+                    })
+                })
+                .collect();
+            Ok(json!({ "root": app.root.to_string_lossy(), "projects": projects }))
+        })(),
+        "historySessions" => (|| {
+            let conn = history::open(&history_db(&app.root))?;
+            let scope = as_str(&args, "scope").unwrap_or_else(|| "all".into());
+            let cwd_prefix = match scope.as_str() {
+                "workspace" | "project" => Some(app.root.to_string_lossy().to_string()),
+                _ => None,
+            };
+            let agent = as_str(&args, "agent");
+            let query = as_str(&args, "query");
+            let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(80) as usize;
+            let rows = history::list(
+                &conn,
+                agent.as_deref(),
+                cwd_prefix.as_deref(),
+                query.as_deref(),
+                limit,
+            )?;
+            let sessions: Vec<Value> = rows
+                .into_iter()
+                .map(|r| {
+                    json!({
+                        "agent": r.agent,
+                        "sessionId": r.session_id,
+                        "title": r.title,
+                        "cwd": r.cwd,
+                        "updatedAt": r.updated_at,
+                        "messageCount": r.message_count,
+                        "resumeCommand": r.resume_command,
+                        "preview": r.preview,
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "scope": scope,
+                "root": app.root.to_string_lossy(),
+                "sessions": sessions,
             }))
         })(),
         "historySearch" => (|| {
@@ -463,17 +574,102 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
     reply(&app.ui, id, result);
 }
 
-/// Debug aid: proves the embedded UI loaded and its JS parsed.
+/// End-to-end UI check: clicks a real session card, opens a browser tab, then
+/// reports what the DOM actually did. Only runs with `OMNIX_GUI_PROBE=deep`.
+const DEEP_JS: &str = r#"(function(){
+  var out = {steps: [], ok: false};
+  function say(name, pass, info) { out.steps.push({name: name, pass: !!pass, info: info == null ? null : String(info).slice(0, 120)}); }
+  function waitFor(test, limit) {
+    return new Promise(function (resolve) {
+      var started = Date.now();
+      (function poll() {
+        var value = null;
+        try { value = test(); } catch (err) { value = null; }
+        if (value) return resolve(value);
+        if (Date.now() - started > limit) return resolve(null);
+        setTimeout(poll, 150);
+      })();
+    });
+  }
+  var cards = function () { return document.querySelectorAll('#history-list > .sess'); };
+  (async function () {
+    var list = await waitFor(function () { return cards().length > 0 ? cards() : null; }, 30000);
+    say('history list', !!list, list ? list.length + ' cards' : 'no cards');
+    if (!list) { out.ok = false; window.__omnixDeep = out; return; }
+
+    var before = document.querySelectorAll('#tabstrip-tabs > *').length;
+    var resume = list[0].querySelector('.sess-resume') || list[0].querySelector('.sess-main');
+    if (resume) resume.click();
+    var termPane = await waitFor(function () {
+      return document.querySelectorAll('#tabstrip-tabs > *').length > before &&
+        document.querySelector('.pane-term') ? document.querySelector('.pane-term') : null;
+    }, 15000);
+    say('resume opens terminal tab', !!termPane,
+      document.querySelectorAll('#tabstrip-tabs > *').length + ' tabs');
+
+    var xterm = await waitFor(function () { return document.querySelector('.pane-term .term-host .xterm') ? 1 : null; }, 8000);
+    say('xterm mounted', !!xterm, xterm ? 'xterm' : 'no xterm');
+    var rows = await waitFor(function () {
+      var node = document.querySelector('.pane-term .xterm-rows');
+      return node && node.textContent.trim().length ? node : null;
+    }, 10000);
+    say('pty output rendered', !!rows, rows ? rows.textContent.trim().slice(0, 60) : 'no rows');
+
+    var tabsBefore = document.querySelectorAll('#tabstrip-tabs > *').length;
+    var add = document.getElementById('tab-new');
+    if (add) add.click();
+    var menu = await waitFor(function () { return document.getElementById('tab-new-browser') ? 1 : null; }, 3000);
+    if (menu) document.getElementById('tab-new-browser').click();
+    var browserPane = await waitFor(function () { return document.querySelector('.pane-browser') ? 1 : null; }, 8000);
+    say('browser tab opens', !!browserPane, document.querySelectorAll('#tabstrip-tabs > *').length + ' tabs');
+
+    var urlBar = document.getElementById('browser-url');
+    say('browser controls present', !!urlBar, urlBar ? urlBar.placeholder : 'missing');
+
+    var rail = document.querySelectorAll('.panel-btn[data-panel]');
+    var handoffBtn = null;
+    for (var i = 0; i < rail.length; i++) { if (rail[i].dataset.panel === 'handoff') handoffBtn = rail[i]; }
+    if (handoffBtn) handoffBtn.click();
+    var form = await waitFor(function () { return document.getElementById('handoff-form') ? 1 : null; }, 4000);
+    say('handoff panel opens', !!form, form ? 'form' : 'missing');
+
+    var palette = document.getElementById('palette');
+    document.dispatchEvent(new KeyboardEvent('keydown', {key: 'k', ctrlKey: true, bubbles: true}));
+    var paletteOpen = await waitFor(function () { return palette && !palette.hidden ? 1 : null; }, 3000);
+    say('palette opens', !!paletteOpen, paletteOpen ? 'open' : 'closed');
+    if (paletteOpen) document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}));
+
+    var fail = 0;
+    for (var j = 0; j < out.steps.length; j++) if (!out.steps[j].pass) fail++;
+    out.ok = fail === 0;
+    out.failed = fail;
+    window.__omnixDeep = out;
+  })();
+})()"#;
+
+/// Debug aid: proves the embedded UI loaded, its JS parsed, and that the
+/// indexed-history panels actually filled in.
 fn probe(ui: &WebView, url: &str) {
     if std::env::var_os("OMNIX_GUI_PROBE").is_none() {
         return;
     }
-    let js = "(function(){try{var d=document.documentElement;return JSON.stringify({title:document.title,\
-        nodes:document.querySelectorAll('*').length,bridge:typeof window.__omnix,\
+    let js = "(function(){try{var d=document.documentElement,q=function(s){return document.querySelectorAll(s).length};\
+        var h=document.getElementById('history-list');return JSON.stringify({title:document.title,\
+        nodes:q('*'),bridge:typeof window.__omnix,\
         overflowX:d.scrollWidth>d.clientWidth,overflowY:d.scrollHeight>d.clientHeight,\
         vw:d.clientWidth,vh:d.clientHeight,\
+        accent:getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),\
         rail:(document.getElementById('rail')||{}).offsetWidth||0,\
         side:(document.getElementById('sidebar')||{}).offsetWidth||0,\
+        right:(document.getElementById('agents-panel')||{}).offsetWidth||0,\
+        tabstrip:(document.getElementById('tabstrip')||{}).offsetHeight||0,\
+        tabs:q('#tabstrip-tabs > *'),cards:q('#history-list > *'),\
+        projects:q('#workspace-list > *'),agents:q('#history-agents > *'),\
+        historyCount:((document.getElementById('history-count')||{}).textContent||'').trim(),\
+        historyMeta:((document.getElementById('history-meta')||{}).textContent||'').trim(),\
+        historyState:h?(h.className||''):'missing',\
+        deep:window.__omnixDeep?JSON.stringify(window.__omnixDeep):'pending',\
+        firstCard:((document.querySelector('#history-list > *')||{}).textContent||'').trim().slice(0,90),\
         visible:Array.from(document.querySelectorAll('button')).filter(function(b){return b.offsetParent}).length});}catch(e){return JSON.stringify({error:String(e)})}})()";
     let url = url.to_string();
     let _ = ui.evaluate_script_with_callback(js, move |result| {
@@ -481,9 +677,32 @@ fn probe(ui: &WebView, url: &str) {
     });
 }
 
+/// The first paint is empty on purpose: sample again once the scan lands.
+fn resample(tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
+    if std::env::var_os("OMNIX_GUI_PROBE").is_none() || SAMPLED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let deep = std::env::var("OMNIX_GUI_PROBE")
+        .map(|v| v == "deep")
+        .unwrap_or(false);
+    let (tx, proxy) = (tx.clone(), proxy.clone());
+    let _ = std::thread::spawn(move || {
+        for (index, wait) in [5u64, 20, 40].into_iter().enumerate() {
+            std::thread::sleep(std::time::Duration::from_secs(wait));
+            if index == 0 && deep {
+                let _ = tx.send(Msg::DeepCheck);
+            }
+            let _ = tx.send(Msg::Probe("omnix://localhost/".into()));
+            let _ = proxy.send_event(UserEvent::Wake);
+        }
+    });
+}
+
+static SAMPLED: AtomicBool = AtomicBool::new(false);
+
 fn start_selftest(ui: &WebView) {
     std::thread::spawn(|| {
-        std::thread::sleep(std::time::Duration::from_secs(90));
+        std::thread::sleep(std::time::Duration::from_secs(240));
         eprintln!("selftest: TIMEOUT");
         std::process::exit(1);
     });
@@ -516,6 +735,10 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
             Msg::PtyExit { key } => exited.push(key),
             Msg::Probe(url) => probe(&app.ui, &url),
             Msg::StartTest => start_selftest(&app.ui),
+            Msg::Reply(id, result) => reply(&app.ui, id, result),
+            Msg::DeepCheck => {
+                let _ = app.ui.evaluate_script(DEEP_JS);
+            }
             Msg::Finish(ok) => {
                 println!("selftest: {}", if ok { "PASS" } else { "FAIL" });
                 use std::io::Write;
@@ -584,7 +807,8 @@ pub fn run() -> Result<()> {
                     matches!(event, wry::PageLoadEvent::Finished)
                 );
             }
-            if url.starts_with("omnix://") {
+            if url.starts_with("omnix://") && matches!(event, wry::PageLoadEvent::Finished) {
+                resample(&tx_load, &proxy_load);
                 let _ = tx_load.send(Msg::Probe(url.clone()));
                 let _ = proxy_load.send_event(UserEvent::Wake);
             }

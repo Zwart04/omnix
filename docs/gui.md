@@ -59,6 +59,9 @@ Error: `{"code":"...","message":"..."}` dengan code salah satu
 | `appInfo` | `{}` | `{version,root,engine:{lightpanda:bool,version:string\|null}}` |
 | `status` | `{}` | `{sessions,messages,dbBytes,workspaces:[{path,branch,sleeping,sessions:[session]}]}` |
 | `historyIndex` | `{dir?,agent?}` | `{files,messages,skippedLines,db}` |
+| `historyScan` | `{}` | `{files,messages,skipped,unchanged,agents:[{agent,sessions,messages}],roots:[{agent,path}],db}` |
+| `historyProjects` | `{limit?}` | `{root,projects:[{path,name,sessions,messages,updatedAt,agents}]}` |
+| `historySessions` | `{scope:"workspace"\|"project"\|"all",agent?,query?,limit?}` | `{scope,root,sessions:[sessionRow]}` |
 | `historySearch` | `{query,agent?,conversation?,newest?,limit?}` | `{hits:[hit]}` |
 | `agentTrack` | `{agent,session,paneKey?,cwd?}` | `{paneKey,agent,sessionId,cwd,resumeCommand}` |
 | `sleep` | `{workspace?}` | `{path,sessions}` |
@@ -74,6 +77,12 @@ Error: `{"code":"...","message":"..."}` dengan code salah satu
 | `browserFetch` | `{url,dump?}` | `{text}` |
 
 `hit` = `{agent,sessionId,title,cwd,updatedAt,score,snippet,resumeCommand}`.
+`sessionRow` = `{agent,sessionId,title,cwd,updatedAt,messageCount,resumeCommand,preview}`.
+`historyScan` indexes the transcripts already on disk: `~/.codex/sessions/**/*.jsonl`
+(`CODEX_HOME`), `~/.claude/projects/**/*.jsonl` without `subagents/`
+(`CLAUDE_CONFIG_DIR`), and `~/.local/share/opencode/opencode.db` opened
+read-only (`XDG_DATA_HOME`). Files whose mtime already matches the stored row
+are skipped, so a rescan is cheap.
 `session` = `{paneKey,agent,sessionId,cwd,resumeCommand,savedAt}`.
 `rect` dalam piksel logis relatif jendela, `x/y` sudut kiri atas.
 
