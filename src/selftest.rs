@@ -101,6 +101,16 @@ pub const JS: &str = r#"
     record('browserFetch', body.toLowerCase().indexOf('example') >= 0,
       fetched.ok ? 'chars=' + body.length : fetched.payload);
 
+    const opened = await ask('browserOpen', {
+      url: 'https://example.com',
+      rect: { x: 0, y: 0, width: 320, height: 200 },
+    });
+    record('browserOpen', opened.ok && opened.payload.url === 'https://example.com',
+      JSON.stringify(opened.payload));
+    await new Promise((r) => setTimeout(r, 800));
+    const closed = await ask('browserClose', {});
+    record('browserClose', closed.ok === true, JSON.stringify(closed.payload));
+
     const handoff = await ask('handoff', {
       name: 'selftest-' + Date.now(),
       prompt: 'selftest prompt',

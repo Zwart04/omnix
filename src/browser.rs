@@ -127,12 +127,9 @@ pub fn serve(port: u16) -> Result<u16> {
 pub fn doctor() -> Result<()> {
     println!("engine: lightpanda");
     println!("binary: {}", binary());
-    let out = Command::new(binary()).arg("--version").output();
-    match out {
-        Ok(out) if out.status.success() => {
-            println!("version: {}", String::from_utf8_lossy(&out.stdout).trim());
-        }
-        _ => println!("version: not found (native app WebView is still usable)"),
+    match version() {
+        Some(text) => println!("version: {text}"),
+        None => println!("version: not found (native app WebView is still usable)"),
     }
     println!("note: Lightpanda does not paint pixels; captureScreenshot is a placeholder.");
     Ok(())
