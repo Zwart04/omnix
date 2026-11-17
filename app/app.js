@@ -77,11 +77,12 @@
     }
   };
 
-  /* Monospace stack per OS: the terminal font each platform ships. */
+  /* Monospace stack per OS, then Orca's fallback chain: the terminal font each
+     platform ships first, then fonts that cover Nerd Font glyphs. */
   var TERM_FONTS = {
-    windows: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
-    macos: '"SF Mono", SFMono-Regular, Menlo, Monaco, monospace',
-    linux: '"JetBrains Mono", "Cascadia Mono", "Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", monospace'
+    windows: '"Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "MesloLGS Nerd Font", "JetBrainsMono Nerd Font", "Hack Nerd Font", monospace',
+    macos: '"SF Mono", Menlo, Monaco, "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Liberation Mono", "Symbols Nerd Font Mono", "MesloLGS Nerd Font", "JetBrainsMono Nerd Font", "Hack Nerd Font", monospace',
+    linux: '"DejaVu Sans Mono", "Liberation Mono", "Noto Sans Mono", "Symbols Nerd Font Mono", "MesloLGS Nerd Font", "JetBrainsMono Nerd Font", "Hack Nerd Font", monospace'
   };
 
   var PLATFORM = 'linux';
@@ -621,12 +622,12 @@
     try {
       term = new window.Terminal({
         fontFamily: termFont(),
-        fontSize: 13,
-        lineHeight: 1.42,
+        fontSize: 14,
+        lineHeight: 1.2,
         letterSpacing: 0,
-        fontWeight: '400',
-        fontWeightBold: '600',
-        cursorStyle: 'bar',
+        fontWeight: '500',
+        fontWeightBold: '700',
+        cursorStyle: 'block',
         cursorBlink: true,
         minimumContrastRatio: 4.5,
         scrollback: 10000,
@@ -658,6 +659,25 @@
     } catch (err) {
       toast('error', 'terminal mount failed: ' + message(err));
       return tab;
+    }
+
+    /* WebGL draws glyphs at the pixel grid instead of laying out DOM spans, so
+       text stays crisp at fractional scale factors. Falls back to xterm's DOM
+       renderer when the context is unavailable (software GL, Xvfb, old driver). */
+    if (window.WebglAddon && typeof window.WebglAddon.WebglAddon === 'function') {
+      try {
+        var gl = new window.WebglAddon.WebglAddon();
+        term.loadAddon(gl);
+        gl.onContextLoss(function () {
+          traceLine({ kind: 'webgl', state: 'context-lost' });
+          try { gl.dispose(); } catch (err) { /* already gone */ }
+        });
+        tab.webgl = gl;
+        traceLine({ kind: 'webgl', state: 'active' });
+      } catch (err) {
+        tab.webgl = null;
+        traceLine({ kind: 'webgl', state: 'fallback-dom', error: message(err) });
+      }
     }
 
     /* xterm mounts its hidden textarea asynchronously; focus it a few times */

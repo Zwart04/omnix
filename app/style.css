@@ -971,10 +971,11 @@ input[type="checkbox"] {
 }
 
 .pane-term { padding: 0; }
+/* Orca insets the terminal by a hairline (4px) instead of a floating card. */
 .term-host {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 10px 12px 12px;
+  padding: 4px 6px 6px;
   overflow: hidden;
 }
 
@@ -987,7 +988,19 @@ input[type="checkbox"] {
 
 .term-host .xterm-viewport {
   scrollbar-width: thin;
-  scrollbar-color: var(--scroll) transparent;
+  scrollbar-color: #79797966 transparent;
+}
+
+.term-host .xterm-viewport::-webkit-scrollbar { width: 14px; }
+
+.term-host .xterm-viewport::-webkit-scrollbar-thumb {
+  background: #79797966 padding-box;
+  border: 3px solid transparent;
+  border-radius: 7px;
+}
+
+.term-host .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: #797979b3 padding-box;
 }
 
 .panel-head {

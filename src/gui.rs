@@ -19,6 +19,7 @@ const APP_JS: &str = include_str!("../app/app.js");
 const XTERM_JS: &str = include_str!("../app/vendor/xterm.js");
 const XTERM_CSS: &str = include_str!("../app/vendor/xterm.css");
 const ADDON_FIT_JS: &str = include_str!("../app/vendor/addon-fit.js");
+const ADDON_WEBGL_JS: &str = include_str!("../app/vendor/addon-webgl.js");
 const TUTORIAL: &str = include_str!("../tutorial/index.html");
 const ICON: &str = include_str!("../app/icon.svg");
 const LOGO_PNG: &[u8] = include_bytes!("../app/logo.png");
@@ -73,6 +74,7 @@ fn asset(path: &str) -> Option<(&'static [u8], &'static str)> {
         "/vendor/xterm.js" => (XTERM_JS.as_bytes(), "text/javascript; charset=utf-8"),
         "/vendor/xterm.css" => (XTERM_CSS.as_bytes(), "text/css; charset=utf-8"),
         "/vendor/addon-fit.js" => (ADDON_FIT_JS.as_bytes(), "text/javascript; charset=utf-8"),
+        "/vendor/addon-webgl.js" => (ADDON_WEBGL_JS.as_bytes(), "text/javascript; charset=utf-8"),
         "/tutorial.html" => (TUTORIAL.as_bytes(), "text/html; charset=utf-8"),
         "/icon.svg" => (ICON.as_bytes(), "image/svg+xml"),
         "/logo.png" => (LOGO_PNG, "image/png"),
