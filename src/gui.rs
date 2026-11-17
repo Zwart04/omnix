@@ -193,6 +193,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             "root": app.root.to_string_lossy(),
             "engine": { "lightpanda": browser::available(), "version": browser::version() },
             "platform": std::env::consts::OS,
+            "traceKeys": app.root.join(".trace-keys").exists(),
             "agents": crate::agent::AGENTS
                 .iter()
                 .map(|a| json!({
@@ -202,6 +203,19 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 }))
                 .collect::<Vec<_>>(),
         })),
+        "uiTrace" => {
+            // Opt-in keyboard diagnostics: only writes when <root>/.trace-keys exists.
+            let root = app.root.clone();
+            let line = args.get("line").and_then(Value::as_str).unwrap_or("").to_string();
+            if root.join(".trace-keys").exists() {
+                use std::io::Write as _;
+                let path = root.join("keys.log");
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
+            Ok(json!({ "ok": true }))
+        }
         "status" => (|| {
             let db = history_db(&app.root);
             let conn = history::open(&db)?;
@@ -882,7 +896,7 @@ pub fn run() -> Result<()> {
     let tx_load = tx.clone();
     let proxy_load = proxy.clone();
     let started = std::cell::Cell::new(false);
-    let ui = WebViewBuilder::new()
+    let ui_builder = WebViewBuilder::new()
         .with_bounds(px_rect(
             window.inner_size().width,
             window.inner_size().height,
@@ -913,8 +927,34 @@ pub fn run() -> Result<()> {
             let _ = proxy_ipc.send_event(UserEvent::Wake);
         })
         .with_devtools(cfg!(debug_assertions))
-        .with_url("omnix://localhost/")
-        .build_as_child(&window)
+        .with_url("omnix://localhost/");
+
+    /* build_as_child on X11 hosts the page in a separate GtkWindow, and some
+       window managers never give that child keyboard focus: clicks work while
+       every keystroke is dropped. Hosting the page in the tao window's own
+       GtkBox with a gtk::Fixed keeps one focus chain. */
+    #[cfg(target_os = "linux")]
+    let ui = {
+        use gtk::prelude::*;
+        use tao::platform::unix::WindowExtUnix;
+        use wry::{WebViewBuilderExtUnix, WebViewExtUnix};
+
+        let fixed = gtk::Fixed::new();
+        let vbox = window
+            .default_vbox()
+            .context("tao window has no default vbox")?;
+        vbox.pack_start(&fixed, true, true, 0);
+        fixed.show_all();
+        let view = ui_builder
+            .build_gtk(&fixed)
+            .context("create ui webview: is WEBKIT_DISABLE_COMPOSITING_MODE needed?")?;
+        view.webview().set_hexpand(true);
+        view.webview().set_vexpand(true);
+        view
+    };
+    #[cfg(not(target_os = "linux"))]
+    let ui = ui_builder
+        .build(&window)
         .context("create ui webview: is WEBKIT_DISABLE_COMPOSITING_MODE needed?")?;
 
     /* build_as_child leaves keyboard focus on the GtkWindow on some

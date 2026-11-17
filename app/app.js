@@ -85,6 +85,15 @@
   };
 
   var PLATFORM = 'linux';
+  var TRACE_KEYS = false;
+
+  function traceLine(obj) {
+    if (!TRACE_KEYS) return;
+    try {
+      obj.ts = Date.now();
+      call('uiTrace', { line: JSON.stringify(obj) }, { quiet: true });
+    } catch (err) { /* tracing must never break input */ }
+  }
 
   function termFont() {
     return TERM_FONTS[PLATFORM] || TERM_FONTS.linux;
@@ -640,6 +649,7 @@
     setTimeout(function () { focusTerm(tab); }, 300);
 
     term.onData(function (data) {
+      traceLine({ kind: 'ptyData', len: data.length, pane: paneKey });
       /* typing can beat the spawn reply; hold keystrokes until the pty exists */
       if (tab.exited) return;
       if (!tab.spawned) {
@@ -1151,6 +1161,7 @@
       $('app-version').textContent = 'v' + version;
       applyPlatform(info.platform);
       appRoot = info.root || '';
+      TRACE_KEYS = !!info.traceKeys;
       setAgents(info.agents);
       var parts = ['omnix ' + version];
       if (info.root) parts.push(info.root);
@@ -1190,6 +1201,19 @@
     });
   }
 
+  /* A project row opens a terminal rooted at that project, the same gesture
+     Orca uses when a workspace row is clicked. */
+  function openProject(p) {
+    if (!p || !p.path) return;
+    var name = p.name || baseName(p.path);
+    var existing = null;
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabs[i].kind === 'terminal' && tabs[i].cwd === p.path) { existing = tabs[i]; break; }
+    }
+    if (existing) { activate(existing); return; }
+    createTerminal({ title: name, cwd: p.path });
+  }
+
   function renderProjects(list) {
     var box = $('workspace-list');
     if (!box) return;
@@ -1222,6 +1246,16 @@
         meta.appendChild(el('span', 'glyph', '+' + (agents.length - shown)));
       }
       row.appendChild(meta);
+
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.addEventListener('click', guard(function () { openProject(p); }));
+      row.addEventListener('keydown', guard(function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') {
+          ev.preventDefault();
+          openProject(p);
+        }
+      }));
 
       box.appendChild(row);
     }
@@ -1987,6 +2021,14 @@
     /* WebKitGTK sometimes keeps DOM focus on the body after a tab switch.
        Any plain typing then goes nowhere, so pull focus back to the pty. */
     document.addEventListener('keydown', function (ev) {
+      traceLine({
+        kind: 'keydown',
+        key: ev.key,
+        code: ev.code,
+        target: (ev.target && (ev.target.tagName + '#' + (ev.target.id || ev.target.className || ''))) || 'none',
+        active: activeTab ? activeTab.kind : 'none',
+        defaultPrevented: ev.defaultPrevented
+      });
       if (!activeTab || activeTab.kind !== 'terminal') return;
       var tag = (ev.target && ev.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
