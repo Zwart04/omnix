@@ -501,6 +501,14 @@ input[type="checkbox"] {
   overflow: hidden;
 }
 
+/* Agent marks sit at the far right of the meta line, clear of the count. */
+.proj-agents {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
 .ws-row {
   display: flex;
   align-items: center;
@@ -602,17 +610,43 @@ input[type="checkbox"] {
 
 .sess-row:hover { background: var(--surface-2); color: var(--text); }
 
-.glyph {
+/* Brand/UI marks. One box size everywhere so a logo, a glyph, and a monogram
+   all sit on the same baseline and optical centre. */
+.icon {
   display: grid;
   place-items: center;
   flex: none;
   width: 16px;
   height: 16px;
+  color: var(--text-2);
+}
+
+.icon > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.icon.is-mono {
   border: 1px solid var(--line);
   border-radius: var(--r-ctl);
-  font: 500 12px/1 var(--mono);
+  font: 500 11px/1 var(--mono);
   color: var(--meta);
   text-transform: uppercase;
+}
+
+/* Overflow counter chip, e.g. +2 hidden agents. */
+.glyph {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 3px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  font: 500 11px/1 var(--mono);
+  color: var(--meta);
 }
 
 .sess-row .inv-title { flex: 1 1 auto; }
@@ -878,17 +912,14 @@ input[type="checkbox"] {
   color: var(--text-2);
 }
 
-.menu-glyph {
-  display: grid;
-  place-items: center;
-  flex: none;
+.menu-item .icon {
   width: 18px;
   height: 18px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  font: 500 12px/1 var(--mono);
-  color: var(--meta);
-  text-transform: uppercase;
+  color: inherit;
+}
+
+.menu-item .icon.is-mono {
+  font-size: 11px;
 }
 
 .menu-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

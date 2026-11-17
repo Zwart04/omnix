@@ -288,7 +288,9 @@ require('./app.js');
     'project row carries its session count');
   assert.strictEqual(all(projRows[0], (n) => n.className === 'proj-time')[0].textContent, '2m ago',
     'project row carries relative time');
-  assert.strictEqual(byClass('workspace-list', 'glyph').length, 5, 'agent glyphs rendered');
+  const agentIcons = byClass('workspace-list', 'icon');
+  assert.strictEqual(agentIcons.length, 5, 'agent icons rendered');
+  assert.ok(agentIcons.every((n) => /^<svg viewBox=/.test(n.innerHTML || '')), 'icons are brand SVGs');
 
   // ---- scope chip sends the right scope ----
   const scopeChips = byId.get('history-scope').children;
