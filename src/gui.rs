@@ -917,6 +917,10 @@ pub fn run() -> Result<()> {
         .build_as_child(&window)
         .context("create ui webview: is WEBKIT_DISABLE_COMPOSITING_MODE needed?")?;
 
+    /* build_as_child leaves keyboard focus on the GtkWindow on some
+       compositors; without this the pty never receives keystrokes. */
+    let _ = ui.focus();
+
     let mut app = App {
         content: None,
         ui,
@@ -932,6 +936,12 @@ pub fn run() -> Result<()> {
         *control_flow = ControlFlow::Wait;
         match event {
             Event::UserEvent(UserEvent::Wake) => drain(&mut app, &rx, &tx, &proxy),
+            Event::WindowEvent {
+                event: WindowEvent::Focused(true),
+                ..
+            } => {
+                let _ = app.ui.focus();
+            }
             Event::WindowEvent {
                 event: WindowEvent::Resized(physical),
                 ..

@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.3.1_amd64.deb` | `sudo apt install ./omnix_0.3.1_amd64.deb` |
+| Linux x86_64 | `omnix_0.3.2_amd64.deb` | `sudo apt install ./omnix_0.3.2_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.3.1-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.3.1-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.3.2-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.3.2-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -48,6 +48,8 @@ Yang sudah jalan dan dites di repo ini:
   sama. Panel `Agents` default tertutup dan index baru dipindai saat dibuka.
 - Terminal fokus otomatis saat tab dibuka (tanpa klik), font UI 15px, dan
   terminal menaikkan ukuran font ke 15px supaya TUI agent tetap terbaca.
+- WebView mengambil fokus keyboard sendiri saat jendela aktif (WebKitGTK di
+  compositor tertentu sempat membiarkan fokus di body, jadi ketikan pty hilang).
 - 10 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
 
 Belum dibangun (sengaja, biar tidak jadi kerangka kosong):

@@ -349,6 +349,9 @@
         title.title = tab.paneKey || tab.title;
         main.appendChild(title);
         main.addEventListener('click', guard(function () { activate(tab); }));
+        main.addEventListener('pointerdown', guard(function () {
+          if (tab.kind === 'terminal') focusTerm(tab);
+        }));
 
         var close = el('button', 'strip-close', '\u00d7');
         close.type = 'button';
@@ -629,6 +632,12 @@
       toast('error', 'terminal mount failed: ' + message(err));
       return tab;
     }
+
+    /* xterm mounts its hidden textarea asynchronously; focus it a few times */
+    focusTerm(tab);
+    setTimeout(function () { focusTerm(tab); }, 0);
+    setTimeout(function () { focusTerm(tab); }, 80);
+    setTimeout(function () { focusTerm(tab); }, 300);
 
     term.onData(function (data) {
       /* typing can beat the spawn reply; hold keystrokes until the pty exists */
@@ -1974,6 +1983,16 @@
     window.addEventListener('focus', function () {
       if (activeTab && activeTab.kind === 'terminal') focusTerm(activeTab);
     });
+
+    /* WebKitGTK sometimes keeps DOM focus on the body after a tab switch.
+       Any plain typing then goes nowhere, so pull focus back to the pty. */
+    document.addEventListener('keydown', function (ev) {
+      if (!activeTab || activeTab.kind !== 'terminal') return;
+      var tag = (ev.target && ev.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+      focusTerm(activeTab);
+    }, true);
 
     var railAgents = $('rail-agents');
     if (railAgents) {
