@@ -71,7 +71,10 @@ const byId = new Map();
   'docs-frame', 'toasts', 'statusbar', 'status-left', 'status-right', 'status-last',
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
-  'project-tree', 'project-refresh', 'cmd-btn',
+  'project-tree', 'project-refresh', 'cmd-btn', 'rail-agents',
+  'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
+  'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
+  'cmd-modal', 'cmd-close', 'cmd-cancel', 'cmd-start', 'cmd-line', 'cmd-cwd', 'cmd-error',
   'palette', 'palette-input', 'palette-list'
 ].forEach((id) => byId.set(id, fakeEl(id)));
 
@@ -132,7 +135,10 @@ global.document = {
     const match = /data-kind="([a-z]+)"/.exec(sel);
     return match ? (paneByKind[match[1]] || null) : null;
   },
-  querySelectorAll(sel) { return sel === '.panel-btn' ? panelButtons : []; },
+  querySelectorAll(sel) {
+    if (sel.indexOf('.panel-btn') === 0) return panelButtons;
+    return [];
+  },
   addEventListener(type, fn) { docHandlers[type] = fn; }
 };
 document.activeElement = byId.get('cmd-btn');
@@ -162,9 +168,9 @@ require('./app.js');
   assert.ok(typeof window.__omnix.emit === 'function', 'emit exposed');
 
   assert.deepStrictEqual(
-    posted.map((r) => r.cmd).slice(0, 3),
-    ['appInfo', 'status', 'historyScan'],
-    'boot sends appInfo, status, historyScan; first paint not blocked on a spawned shell'
+    posted.map((r) => r.cmd).slice(0, 2),
+    ['appInfo', 'status'],
+    'boot sends appInfo and status only; the index walk waits for the panel'
   );
   posted.forEach((req) => {
     assert.strictEqual(typeof req.id, 'number', 'numeric id');
@@ -173,12 +179,25 @@ require('./app.js');
   });
   assert.ok(!posted.some((r) => r.cmd === 'ptySpawn'), 'no terminal spawned at boot');
 
-  const [infoReq, statusReq, scanReq] = posted;
+  const [infoReq, statusReq] = posted;
 
   window.__omnix.reply(infoReq.id, true,
-    '{"version":"0.1.0","root":"/repo","engine":{"lightpanda":true,"version":"9.9"}}');
+    '{"version":"0.1.0","root":"/repo","engine":{"lightpanda":true,"version":"9.9"},' +
+    '"agents":[{"name":"codex","bin":"codex"},{"name":"claude","bin":"claude"}]}');
   window.__omnix.reply(statusReq.id, true,
     '{"sessions":0,"messages":0,"dbBytes":0,"workspaces":[]}');
+  await tick();
+
+  const bootProjectsReq = posted[posted.length - 1];
+  assert.strictEqual(bootProjectsReq.cmd, 'historyProjects', 'boot lists cached projects');
+  window.__omnix.reply(bootProjectsReq.id, true, JSON.stringify({ root: '/repo', projects: [] }));
+  await tick();
+
+  // opening the agents panel starts the index walk
+  byId.get('rail-agents').handlers.click(noop());
+  await tick();
+  const scanReq = posted[posted.length - 1];
+  assert.strictEqual(scanReq.cmd, 'historyScan', 'expanding Agents starts the scan');
   window.__omnix.reply(scanReq.id, true, JSON.stringify({
     files: 290,
     messages: 44846,
@@ -345,8 +364,8 @@ require('./app.js');
   }));
   await tick();
 
-  const resumeBtn = byClass('history-list', 'sess-resume')[0];
-  assert.ok(resumeBtn, 'resume button rendered on the card');
+  const resumeBtn = byClass('history-list', 'sess-main')[0];
+  assert.ok(resumeBtn, 'session card renders');
   resumeBtn.handlers.click(noop());
   const spawn = posted[posted.length - 1];
   assert.strictEqual(spawn.cmd, 'ptySpawn', 'resume spawns a pty');
@@ -402,7 +421,7 @@ require('./app.js');
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, false, 'Ctrl+K opens the palette');
   const rows = byId.get('palette-list').children;
-  assert.strictEqual(rows.length, 7, 'all commands listed with an empty query');
+  assert.strictEqual(rows.length, 9, 'all commands listed with an empty query');
   byId.get('palette-input').handlers.keydown({ key: 'ArrowDown', preventDefault: noop });
   assert.strictEqual(byId.get('palette-list').children[1].getAttribute('aria-selected'), 'true',
     'arrow down moves the selection');
@@ -455,18 +474,28 @@ require('./app.js');
   await tick();
   assert.match(byId.get('search-meta').textContent, /1 hit for "blank restore"/);
 
-  byId.get('handoff-name').value = 'auth-fix';
-  byId.get('handoff-prompt').value = 'fix it';
-  byId.get('handoff-base').value = 'main';
-  await byId.get('handoff-form').handlers.submit({ preventDefault: noop });
+  panelButtons[1].handlers.click(noop());
+  assert.strictEqual(byId.get('handoff-modal').hidden, false, 'handoff modal opens');
+  assert.match(byId.get('handoff-source-title').textContent, /wire indexed history/,
+    'modal picks the last session');
+  byId.get('handoff-target').value = 'codex';
+  byId.get('handoff-start').handlers.click(noop());
   const handoffReq = posted[posted.length - 1];
-  assert.strictEqual(handoffReq.cmd, 'handoff');
-  assert.deepStrictEqual(handoffReq.args, {
-    name: 'auth-fix', prompt: 'fix it', agent: 'codex', base: 'main'
-  });
-  window.__omnix.reply(handoffReq.id, true, '{"outcome":"unconfirmed","worktree":"/w","branch":"omnix/auth-fix","brief":"/b.md"}');
+  assert.strictEqual(handoffReq.cmd, 'handoffAgent');
+  assert.strictEqual(handoffReq.args.agent, 'codex');
+  assert.strictEqual(handoffReq.args.sourceAgent, 'claude');
+  assert.strictEqual(handoffReq.args.sessionId, 'uuid-1');
+  assert.strictEqual(handoffReq.args.context, 'focused');
+  window.__omnix.reply(handoffReq.id, true,
+    '{"agent":"codex","cwd":"/repo","brief":"/repo/.omnix/handoffs/1-to-codex.md","messages":12}');
   await tick();
-  assert.strictEqual(byId.get('handoff-result').hidden, false, 'handoff result shown');
+  const handoffSpawn = posted[posted.length - 1];
+  assert.strictEqual(handoffSpawn.cmd, 'ptySpawn', 'handoff starts a new agent session');
+  assert.strictEqual(handoffSpawn.args.command, 'codex', 'handoff runs the target CLI');
+  assert.strictEqual(handoffSpawn.args.cwd, '/repo');
+  window.__omnix.reply(handoffSpawn.id, true, '{"paneKey":"hf:codex:1","pid":79}');
+  await tick();
+  assert.strictEqual(byId.get('handoff-modal').hidden, true, 'handoff modal closes');
 
   byId.get('new-browser').handlers.click(noop());
   byId.get('browser-url').value = 'ftp://example.com';

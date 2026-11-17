@@ -12,29 +12,115 @@
   var HISTORY_LIMIT = 80;
   var SEARCH_DEBOUNCE_MS = 200;
 
-  var TERM_THEME = {
-    background: '#0b0f14',
-    foreground: '#e6edf3',
-    cursor: '#dbe4ee',
-    cursorAccent: '#0b0f14',
-    selectionBackground: '#27303b',
-    black: '#0b0f14',
-    red: '#ff7b72',
-    green: '#8fbfa0',
-    yellow: '#ffd479',
-    blue: '#79b8ff',
-    magenta: '#d2a8ff',
-    cyan: '#76e3ea',
-    white: '#e6edf3',
-    brightBlack: '#6b7785',
-    brightRed: '#ff9b93',
-    brightGreen: '#b6d9c3',
-    brightYellow: '#ffe3a3',
-    brightBlue: '#a3d0ff',
-    brightMagenta: '#e2c7ff',
-    brightCyan: '#a9f1f6',
-    brightWhite: '#ffffff'
+  /* Terminal palettes copied from each OS's shipped default profile so the
+     workbench and the shell feel like the same terminal. */
+  var PALETTES = {
+    windows: {
+      dark: {
+        background: '#0c0c0c', foreground: '#cccccc', cursor: '#ffffff', cursorAccent: '#0c0c0c',
+        selectionBackground: 'rgba(255,255,255,.25)',
+        black: '#0c0c0c', red: '#c50f1f', green: '#13a10e', yellow: '#c19c00',
+        blue: '#0037da', magenta: '#881798', cyan: '#3a96dd', white: '#cccccc',
+        brightBlack: '#767676', brightRed: '#e74856', brightGreen: '#16c60c',
+        brightYellow: '#f9f1a5', brightBlue: '#3b78ff', brightMagenta: '#b4009e',
+        brightCyan: '#61d6d6', brightWhite: '#f2f2f2'
+      },
+      light: {
+        background: '#ffffff', foreground: '#0c0c0c', cursor: '#0c0c0c', cursorAccent: '#ffffff',
+        selectionBackground: 'rgba(0,55,218,.22)',
+        black: '#0c0c0c', red: '#c50f1f', green: '#107c10', yellow: '#8a6d00',
+        blue: '#0037da', magenta: '#881798', cyan: '#0f7b8a', white: '#767676',
+        brightBlack: '#767676', brightRed: '#e74856', brightGreen: '#16c60c',
+        brightYellow: '#c19c00', brightBlue: '#3b78ff', brightMagenta: '#b4009e',
+        brightCyan: '#3a96dd', brightWhite: '#0c0c0c'
+      }
+    },
+    macos: {
+      dark: {
+        background: '#000000', foreground: '#f2f2f2', cursor: '#52f2ff', cursorAccent: '#000000',
+        selectionBackground: 'rgba(255,255,255,.28)',
+        black: '#000000', red: '#c23621', green: '#25bc24', yellow: '#adad27',
+        blue: '#492ee1', magenta: '#d338d3', cyan: '#33bbc8', white: '#cbcccd',
+        brightBlack: '#818383', brightRed: '#fc391f', brightGreen: '#31e722',
+        brightYellow: '#eaec23', brightBlue: '#5833ff', brightMagenta: '#f935f8',
+        brightCyan: '#14f0f0', brightWhite: '#e9ebeb'
+      },
+      light: {
+        background: '#ffffff', foreground: '#000000', cursor: '#000000', cursorAccent: '#ffffff',
+        selectionBackground: 'rgba(0,0,0,.18)',
+        black: '#000000', red: '#c23621', green: '#1c8f1b', yellow: '#8a8a1f',
+        blue: '#3b25b3', magenta: '#a82aa8', cyan: '#1f8a94', white: '#818383',
+        brightBlack: '#818383', brightRed: '#c23621', brightGreen: '#25bc24',
+        brightYellow: '#adad27', brightBlue: '#492ee1', brightMagenta: '#d338d3',
+        brightCyan: '#33bbc8', brightWhite: '#000000'
+      }
+    },
+    linux: {
+      dark: {
+        background: '#000000', foreground: '#d3d7cf', cursor: '#d3d7cf', cursorAccent: '#000000',
+        selectionBackground: 'rgba(211,215,207,.28)',
+        black: '#2e3436', red: '#cc0000', green: '#4e9a06', yellow: '#c4a000',
+        blue: '#3465a4', magenta: '#75507b', cyan: '#06989a', white: '#d3d7cf',
+        brightBlack: '#555753', brightRed: '#ef2929', brightGreen: '#8ae234',
+        brightYellow: '#fce94f', brightBlue: '#729fcf', brightMagenta: '#ad7fa8',
+        brightCyan: '#34e2e2', brightWhite: '#eeeeec'
+      },
+      light: {
+        background: '#ffffff', foreground: '#2e3436', cursor: '#2e3436', cursorAccent: '#ffffff',
+        selectionBackground: 'rgba(52,101,164,.24)',
+        black: '#2e3436', red: '#a40000', green: '#3d7a05', yellow: '#8f7600',
+        blue: '#204a87', magenta: '#5c385f', cyan: '#067276', white: '#555753',
+        brightBlack: '#555753', brightRed: '#cc0000', brightGreen: '#4e9a06',
+        brightYellow: '#c4a000', brightBlue: '#3465a4', brightMagenta: '#75507b',
+        brightCyan: '#06989a', brightWhite: '#2e3436'
+      }
+    }
   };
+
+  /* Monospace stack per OS: the terminal font each platform ships. */
+  var TERM_FONTS = {
+    windows: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
+    macos: '"SF Mono", SFMono-Regular, Menlo, Monaco, monospace',
+    linux: '"DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Noto Sans Mono", monospace'
+  };
+
+  var PLATFORM = 'linux';
+
+  function termFont() {
+    return TERM_FONTS[PLATFORM] || TERM_FONTS.linux;
+  }
+
+  function darkScheme() {
+    if (!window.matchMedia) return true;
+    return !window.matchMedia('(prefers-color-scheme: light)').matches;
+  }
+
+  function termTheme() {
+    var set = PALETTES[PLATFORM] || PALETTES.linux;
+    return darkScheme() ? set.dark : set.light;
+  }
+
+  function refreshTermThemes() {
+    var theme = termTheme();
+    var fontFamily = termFont();
+    for (var i = 0; i < tabs.length; i++) {
+      var term = tabs[i].term;
+      if (!term || !term.options) continue;
+      term.options.theme = theme;
+      term.options.fontFamily = fontFamily;
+    }
+  }
+
+  /* Adopt the host OS: platform fonts, terminal palette, chrome accent. */
+  function applyPlatform(platform) {
+    var name = String(platform || '').toLowerCase();
+    if (name !== 'windows' && name !== 'macos' && name !== 'linux') name = 'linux';
+    var root = document.documentElement;
+    if (root && root.dataset) root.dataset.platform = name;
+    if (name === PLATFORM) return;
+    PLATFORM = name;
+    refreshTermThemes();
+  }
 
   /* ---------- helpers ---------- */
 
@@ -225,8 +311,8 @@
   var paneSeq = 0;
   var activeTab = null;
 
-  var PANEL_TITLE = { browser: 'Browser', search: 'Search', handoff: 'Handoff', docs: 'Docs' };
-  var KIND_TAG = { terminal: 'pty', browser: 'web', search: 'srch', handoff: 'hand', docs: 'docs' };
+  var PANEL_TITLE = { browser: 'Browser', search: 'Search', docs: 'Docs' };
+  var KIND_TAG = { terminal: 'pty', browser: 'web', search: 'srch', docs: 'docs' };
 
   function byPaneKey(key) {
     for (var i = 0; i < tabs.length; i++) {
@@ -244,7 +330,6 @@
 
   function renderTabs() {
     renderTabStrip();
-    renderTabList();
     var empty = $('pane-empty');
     if (empty) empty.hidden = tabs.length > 0;
   }
@@ -280,44 +365,12 @@
     }
   }
 
-  function renderTabList() {
-    var list = $('tab-list');
-    if (!list) return;
-    list.textContent = '';
-    if (!tabs.length) {
-      list.appendChild(el('div', 'side-empty', 'No open tabs.'));
-      return;
-    }
-    for (var i = 0; i < tabs.length; i++) {
-      (function (tab) {
-        var row = el('div', 'inv-row' + (tab === activeTab ? ' active' : ''));
-        var main = el('button', 'inv-main');
-        main.type = 'button';
-        main.title = tab.title;
-        main.appendChild(el('span', 'kind-tag', KIND_TAG[tab.kind] || tab.kind));
-        main.appendChild(el('span', 'inv-title', tab.title));
-        main.addEventListener('click', guard(function () { activate(tab); }));
-
-        var close = el('button', 'inv-close', '\u00d7');
-        close.type = 'button';
-        close.setAttribute('aria-label', 'Close ' + tab.title);
-        close.addEventListener('click', function (ev) {
-          if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
-          guard(function () { closeTab(tab); })(ev);
-        });
-
-        row.appendChild(main);
-        row.appendChild(close);
-        list.appendChild(row);
-      })(tabs[i]);
-    }
-  }
-
   function activate(tab) {
     if (!tab || !tab.el) return;
     var prev = activeTab;
-    if (prev && prev !== tab && prev.kind === 'browser' && browser.open) {
-      closeBrowser({ quiet: true });
+    if (prev && prev !== tab && prev.kind === 'browser') {
+      /* keep the page alive: hide the native view instead of destroying it */
+      hideBrowser();
     }
     activeTab = tab;
     for (var i = 0; i < tabs.length; i++) {
@@ -328,10 +381,9 @@
     if (tab.kind === 'terminal') {
       scheduleFit(tab);
     } else if (tab.kind === 'browser') {
-      if (browser.engine === 'native' && browser.url && !browser.open) {
-        openBrowserNative();
-      } else {
-        syncBrowserBounds();
+      if (browser.engine === 'native' && browser.url) {
+        if (browser.open) syncBrowserBounds(true);
+        else openBrowserNative();
       }
     } else if (tab.kind === 'docs') {
       ensureDocs();
@@ -381,7 +433,11 @@
       if (tab.term) {
         try { tab.term.dispose(); } catch (err) { /* ignore */ }
       }
-      call('ptyKill', { paneKey: tab.paneKey }, { quiet: true });
+      /* a pty that is still spawning is killed once its reply lands */
+      if (tab.spawned) {
+        tab.spawned = false;
+        call('ptyKill', { paneKey: tab.paneKey }, { quiet: true });
+      }
     }
     if (tab.kind === 'terminal' && tab.el && tab.el.parentNode) {
       tab.el.parentNode.removeChild(tab.el);
@@ -412,9 +468,64 @@
     var menu = $('tab-new-menu');
     if (!menu) return;
     var open = menu.hidden;
+    if (open) buildTabMenu();
     menu.hidden = !open;
     var btn = $('tab-new');
     if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  function menuRow(label, hint, glyph, run, disabled) {
+    var row = el('button', 'menu-item' + (disabled ? ' is-disabled' : ''));
+    row.type = 'button';
+    row.setAttribute('role', 'menuitem');
+    if (disabled) {
+      row.disabled = true;
+      row.setAttribute('aria-disabled', 'true');
+      row.title = 'not found on PATH';
+    }
+    if (glyph) row.appendChild(el('span', 'menu-glyph', glyph));
+    row.appendChild(el('span', 'menu-label', label));
+    if (hint) row.appendChild(el('span', 'menu-hint', hint));
+    if (!disabled) row.addEventListener('click', guard(run));
+    return row;
+  }
+
+  function buildTabMenu() {
+    var box = $('tab-new-menu');
+    if (!box) return;
+    box.textContent = '';
+    box.appendChild(menuRow('Terminal', 'pty', '>_', function () {
+      closeTabMenu();
+      createTerminal({ title: 'terminal' });
+    }));
+    box.appendChild(menuRow('Browser', 'web', 'web', function () {
+      closeTabMenu();
+      openStatic('browser');
+    }));
+    box.appendChild(menuRow('Custom CLI\u2026', 'command', '!', function () {
+      closeTabMenu();
+      openCmdModal();
+    }));
+    box.appendChild(el('div', 'menu-sep'));
+    box.appendChild(el('div', 'menu-label-group', 'Agents'));
+    for (var i = 0; i < agentsInfo.length; i++) {
+      (function (agent) {
+        box.appendChild(menuRow(
+          agentLabel(agent.name),
+          agent.available === false ? 'not found' : (agent.bin === agent.name ? '' : agent.bin),
+          agent.name.slice(0, 1),
+          function () {
+            closeTabMenu();
+            createTerminal({
+              paneKey: 'agent:' + agent.name + ':' + Date.now(),
+              command: agent.bin,
+              title: agent.name
+            });
+          },
+          agent.available === false
+        ));
+      })(agentsInfo[i]);
+    }
   }
 
   /* ---------- terminal ---------- */
@@ -425,6 +536,7 @@
     if (opts.shell) args.shell = opts.shell;
     if (opts.agent) args.agent = opts.agent;
     if (opts.sessionId) args.sessionId = opts.sessionId;
+    if (opts.command) args.command = opts.command;
     return args;
   }
 
@@ -464,10 +576,14 @@
       ro: null,
       title: title,
       cwd: opts.cwd || null,
+      agent: opts.agent || null,
+      sessionId: opts.sessionId || null,
       lastCols: 0,
       lastRows: 0,
       spawned: false,
-      closed: false
+      closed: false,
+      exited: false,
+      handoffBrief: opts.handoffBrief || null
     };
     tabs.push(tab);
     activate(tab);
@@ -481,12 +597,12 @@
     var term;
     try {
       term = new window.Terminal({
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+        fontFamily: termFont(),
         fontSize: 12,
         lineHeight: 1.2,
         cursorBlink: true,
         scrollback: 5000,
-        theme: TERM_THEME
+        theme: termTheme()
       });
     } catch (err) {
       toast('error', 'terminal init failed: ' + message(err));
@@ -514,6 +630,13 @@
     }
 
     term.onData(function (data) {
+      /* typing can beat the spawn reply; hold keystrokes until the pty exists */
+      if (tab.exited) return;
+      if (!tab.spawned) {
+        var queued = tab.pendingWrites || '';
+        if (queued.length < 4096) tab.pendingWrites = (queued + data).slice(0, 4096);
+        return;
+      }
       call('ptyWrite', { paneKey: paneKey, data: data }, { quiet: true });
     });
 
@@ -533,9 +656,21 @@
     scheduleFit(tab);
 
     call('ptySpawn', spawnArgs(opts, paneKey)).then(function (res) {
-      if (!res || tab.closed) return;
+      if (!res || tab.closed) {
+        if (tab.closed) call('ptyKill', { paneKey: paneKey }, { quiet: true });
+        return;
+      }
       tab.spawned = true;
       pushResize(tab);
+      if (tab.pendingWrites) {
+        var queued = tab.pendingWrites;
+        tab.pendingWrites = '';
+        call('ptyWrite', { paneKey: paneKey, data: queued }, { quiet: true });
+      }
+      if (tab.handoffBrief && tab.term) {
+        tab.term.write('\x1b[38;5;244m[omnix] handoff brief: ' +
+          tab.handoffBrief + '\x1b[0m\r\n');
+      }
       if (res.pid != null) setLast('ptySpawn ' + paneKey + ' pid ' + res.pid);
     });
 
@@ -587,6 +722,7 @@
 
   var browser = {
     open: false,
+    visible: false,
     url: '',
     engine: 'native',
     lastRect: null
@@ -630,6 +766,7 @@
     return call('browserOpen', { url: browser.url, rect: rect }).then(function (res) {
       if (!res) return null;
       browser.open = true;
+      browser.visible = true;
       browser.lastRect = rect;
       setLast('browserOpen ' + (res.url || browser.url));
       return res;
@@ -639,21 +776,32 @@
   function closeBrowser(opts) {
     if (!browser.open) return;
     browser.open = false;
+    browser.visible = false;
     browser.lastRect = null;
     call('browserClose', {}, opts);
   }
 
-  function syncBrowserBounds() {
+  function hideBrowser() {
+    if (!browser.open || !browser.visible) return;
+    syncBrowserBounds(false);
+  }
+
+  function syncBrowserBounds(visible) {
     if (!browser.open) return;
-    if (!activeTab || activeTab.kind !== 'browser') return;
+    var show = visible !== false;
+    /* never paint the native view over a different tab */
+    if (show && (!activeTab || activeTab.kind !== 'browser' || activeTab.el.hidden)) show = false;
     var rect = browserRect();
+    /* a hidden pane measures 0x0; keep the last good rect */
+    if (rect.width < 8 || rect.height < 8) rect = browser.lastRect || rect;
     var prev = browser.lastRect;
-    if (prev && prev.x === rect.x && prev.y === rect.y &&
+    if (browser.visible === show && prev && prev.x === rect.x && prev.y === rect.y &&
         prev.width === rect.width && prev.height === rect.height) {
       return;
     }
+    browser.visible = show;
     browser.lastRect = rect;
-    call('browserBounds', { rect: rect, visible: true }, { quiet: true });
+    call('browserBounds', { rect: rect, visible: show }, { quiet: true });
   }
 
   function onBrowserOpen() {
@@ -778,65 +926,205 @@
     });
   }
 
-  /* ---------- handoff ---------- */
+  /* ---------- handoff to another agent ---------- */
 
-  function renderResult(node, rows) {
-    if (!node) return;
-    node.textContent = '';
-    node.hidden = false;
-    var shown = 0;
-    for (var i = 0; i < rows.length; i++) {
-      var value = rows[i][1];
-      if (value == null || value === '') continue;
-      var row = el('div', 'row');
-      row.appendChild(el('div', 'key', rows[i][0]));
-      row.appendChild(el('div', 'val' + (typeof value === 'string' ? ' mono' : ''), String(value)));
-      node.appendChild(row);
-      shown++;
-    }
-    if (!shown) node.appendChild(el('div', 'hint', 'no fields returned'));
+  var AGENT_LABEL = {
+    claude: 'Claude Code',
+    codex: 'Codex',
+    opencode: 'OpenCode',
+    opencode2: 'OpenCode 2',
+    cursor: 'Cursor Agent',
+    gemini: 'Gemini CLI',
+    grok: 'Grok',
+    copilot: 'GitHub Copilot',
+    'qwen-code': 'Qwen Code',
+    pi: 'Pi',
+    kimi: 'Kimi',
+    kiro: 'Kiro',
+    antigravity: 'Antigravity',
+    rovo: 'Rovo'
+  };
+
+  function agentLabel(name) {
+    return AGENT_LABEL[name] || name;
   }
 
-  function runHandoff(ev) {
-    if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
-    var name = $('handoff-name').value.trim();
-    var prompt = $('handoff-prompt').value.trim();
-    var agent = $('handoff-agent').value;
-    var base = $('handoff-base').value.trim();
+  var agentsInfo = AGENTS.map(function (name) {
+    return { name: name, bin: name, available: true };
+  });
+  var appRoot = '';
+  var handoffSource = null;
+  var handoffContext = 'focused';
 
-    if (!name) {
-      toast('warn', 'handoff name is required');
-      $('handoff-name').focus();
+  function agentBin(name) {
+    for (var i = 0; i < agentsInfo.length; i++) {
+      if (agentsInfo[i].name === name) return agentsInfo[i].bin || name;
+    }
+    return name;
+  }
+
+  function setAgents(list) {
+    if (!Array.isArray(list) || !list.length) return;
+    agentsInfo = list
+      .filter(function (a) { return a && a.name; })
+      .map(function (a) {
+        return {
+          name: String(a.name),
+          bin: String(a.bin || a.name),
+          available: a.available !== false
+        };
+      });
+    fillAgentSelect($('handoff-target'), 'opencode2');
+  }
+
+  function fillAgentSelect(select, preferred) {
+    if (!select) return;
+    var current = select.value;
+    select.textContent = '';
+    var fallback = '';
+    for (var i = 0; i < agentsInfo.length; i++) {
+      var agent = agentsInfo[i];
+      var opt = el('option', null,
+        agentLabel(agent.name) + ' (CLI)' + (agent.available ? '' : ' \u00b7 not found'));
+      opt.value = agent.name;
+      if (!agent.available) opt.disabled = true;
+      else if (!fallback) fallback = agent.name;
+      select.appendChild(opt);
+    }
+    var pick = current || preferred || fallback;
+    var usable = false;
+    for (var j = 0; j < agentsInfo.length; j++) {
+      if (agentsInfo[j].name === pick && agentsInfo[j].available) usable = true;
+    }
+    select.value = usable ? pick : fallback;
+  }
+
+  function showModal(node) {
+    if (!node) return;
+    node.hidden = false;
+    var focus = node.querySelector('select, input');
+    if (focus && focus.focus) focus.focus();
+  }
+
+  function hideModal(node) {
+    if (node) node.hidden = true;
+  }
+
+  function setHandoffContext(value) {
+    handoffContext = value === 'full' ? 'full' : 'focused';
+    var rows = document.querySelectorAll('#handoff-modal .radio-row');
+    for (var i = 0; i < rows.length; i++) {
+      rows[i].setAttribute('aria-checked',
+        rows[i].dataset.context === handoffContext ? 'true' : 'false');
+    }
+  }
+
+  function openHandoff(session) {
+    var pick = session;
+    if (!pick) {
+      pick = hist.sessions[0] || hist.lastSession ||
+        (activeTab && activeTab.kind === 'terminal' && activeTab.agent
+          ? { agent: activeTab.agent, sessionId: activeTab.sessionId, cwd: activeTab.cwd, title: activeTab.title }
+          : null);
+    }
+    handoffSource = pick && pick.agent && pick.sessionId ? pick : null;
+
+    var title = $('handoff-source-title');
+    var sub = $('handoff-source-sub');
+    var cwd = $('handoff-cwd');
+    if (handoffSource) {
+      if (title) title.textContent = handoffSource.title || handoffSource.agent + ' session';
+      if (sub) {
+        sub.textContent = handoffSource.agent + ' \u00b7 ' +
+          shortId(handoffSource.sessionId) + ' \u00b7 ' + (handoffSource.cwd || 'unknown cwd');
+      }
+    } else {
+      if (title) title.textContent = 'No session selected';
+      if (sub) sub.textContent = 'Open a session from Agents history, then hand off';
+    }
+    if (cwd) {
+      cwd.textContent = (handoffSource && handoffSource.cwd) || appRoot || '-';
+    }
+    fillAgentSelect($('handoff-target'), 'opencode2');
+    var start = $('handoff-start');
+    if (start) start.disabled = !handoffSource;
+    setHandoffContext('focused');
+    showModal($('handoff-modal'));
+  }
+
+  function startHandoff() {
+    if (!handoffSource) {
+      toast('warn', 'choose a session from Agents history first');
       return Promise.resolve(null);
     }
-    if (!prompt) {
-      toast('warn', 'handoff prompt is required');
-      $('handoff-prompt').focus();
+    var select = $('handoff-target');
+    var agent = select ? select.value : '';
+    if (!agent) {
+      toast('warn', 'pick a target agent');
       return Promise.resolve(null);
     }
-
-    var args = { name: name, prompt: prompt };
-    if (agent) args.agent = agent;
-    if (base) args.base = base;
-
-    setLast('handoff ' + name);
-    return call('handoff', args).then(function (res) {
+    var start = $('handoff-start');
+    if (start) start.disabled = true;
+    setLast('handoffAgent ' + agent);
+    return call('handoffAgent', {
+      agent: agent,
+      sourceAgent: handoffSource.agent,
+      sessionId: handoffSource.sessionId,
+      context: handoffContext,
+      cwd: handoffSource.cwd || appRoot
+    }).then(function (res) {
+      if (start) start.disabled = false;
       if (!res) return null;
-      renderResult($('handoff-result'), [
-        ['outcome', res.outcome],
-        ['worktree', res.worktree],
-        ['branch', res.branch],
-        ['brief', res.brief],
-        ['record', res.record],
-        ['launch', res.launch]
-      ]);
-      setLast('handoff ' + (res.outcome || 'done'));
-      if (res.outcome) toast('ok', 'handoff: ' + res.outcome);
+      hideModal($('handoff-modal'));
+      createTerminal({
+        paneKey: 'hf:' + agent + ':' + Date.now(),
+        command: agentBin(agent),
+        cwd: res.cwd,
+        title: agent + ' handoff',
+        handoffBrief: res.brief
+      });
+      toast('ok', 'handoff to ' + agent + ' \u00b7 ' + res.messages + ' messages');
+      setLast('brief ' + res.brief);
       return res;
+    }, function (err) {
+      if (start) start.disabled = false;
+      throw err;
     });
   }
 
-  /* ---------- status and project tree ---------- */
+  /* ---------- custom CLI ---------- */
+
+  function openCmdModal() {
+    var line = $('cmd-line');
+    var cwd = $('cmd-cwd');
+    var err = $('cmd-error');
+    if (err) err.textContent = '';
+    if (line) line.value = '';
+    if (cwd) cwd.value = appRoot || '';
+    showModal($('cmd-modal'));
+    if (line && line.focus) line.focus();
+  }
+
+  function startCmd() {
+    var line = $('cmd-line');
+    var cwd = $('cmd-cwd');
+    var err = $('cmd-error');
+    var command = line ? line.value.trim() : '';
+    if (!command) {
+      if (err) err.textContent = 'command is required';
+      return;
+    }
+    if (err) err.textContent = '';
+    hideModal($('cmd-modal'));
+    createTerminal({
+      paneKey: 'cli:' + Date.now(),
+      command: command,
+      cwd: cwd ? cwd.value.trim() : '',
+      title: command.split(/\s+/)[0]
+    });
+  }
+
+  /* ---------- status and project tree ---------- */  /* ---------- status and project tree ---------- */
 
   function refreshAppInfo() {
     return call('appInfo', {}).then(function (info) {
@@ -844,6 +1132,9 @@
       var engine = info.engine || {};
       var version = info.version || '?';
       $('app-version').textContent = 'v' + version;
+      applyPlatform(info.platform);
+      appRoot = info.root || '';
+      setAgents(info.agents);
       var parts = ['omnix ' + version];
       if (info.root) parts.push(info.root);
       parts.push('lightpanda ' + (engine.lightpanda ? (engine.version || 'ready') : 'unavailable'));
@@ -901,12 +1192,17 @@
       top.appendChild(el('span', 'proj-time', relTime(p.updatedAt)));
       row.appendChild(top);
 
+      var count = Number(p.sessions || 0);
       var meta = el('div', 'proj-meta');
-      meta.appendChild(el('span', null, fmtNum(p.sessions || 0) + ' sessions'));
-      meta.appendChild(el('span', null, fmtNum(p.messages || 0) + ' msgs'));
+      meta.appendChild(el('span', null, fmtNum(count) + (count === 1 ? ' session' : ' sessions')));
       var agents = Array.isArray(p.agents) ? p.agents : [];
-      for (var a = 0; a < agents.length && a < 4; a++) {
+      var shown = 0;
+      for (var a = 0; a < agents.length && shown < 3; a++) {
         meta.appendChild(el('span', 'glyph', String(agents[a] || '?').slice(0, 1)));
+        shown++;
+      }
+      if (agents.length > shown) {
+        meta.appendChild(el('span', 'glyph', '+' + (agents.length - shown)));
       }
       row.appendChild(meta);
 
@@ -1174,6 +1470,15 @@
     }
   }
 
+  /* history titles often start with <system-reminder> scaffolding */
+  function cleanText(text) {
+    return String(text == null ? '' : text)
+      .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
+      .replace(/<[^>]{1,80}>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
   function sessionCard(s) {
     var card = el('div', 'sess');
     card.setAttribute('role', 'listitem');
@@ -1185,12 +1490,14 @@
 
     var top = el('span', 'sess-top');
     top.appendChild(el('span', 'tag agent', s.agent || '?'));
-    var title = el('span', 'sess-title', s.title || '(untitled)');
-    title.title = s.title || s.sessionId || '';
+    var titleText = cleanText(s.title) || '(untitled)';
+    var title = el('span', 'sess-title', titleText);
+    title.title = titleText;
     top.appendChild(title);
     main.appendChild(top);
 
-    if (s.preview) main.appendChild(el('span', 'sess-preview', s.preview));
+    var preview = cleanText(s.preview);
+    if (preview) main.appendChild(el('span', 'sess-preview', preview));
 
     var meta = el('span', 'sess-meta');
     meta.appendChild(el('span', null, fmtNum(s.messageCount || 0) + ' msgs'));
@@ -1208,19 +1515,16 @@
       });
     }));
 
-    var resume = button('Resume', 'btn sm sess-resume', function () {
-      resumeSession({
-        paneKey: 'h:' + s.agent + ':' + s.sessionId,
-        agent: s.agent,
-        sessionId: s.sessionId,
-        cwd: s.cwd,
-        title: s.title
-      });
-    });
-    resume.setAttribute('aria-label', 'Resume ' + (s.title || 'session'));
+    var hop = el('button', 'sess-hop', '\u2192');
+    hop.type = 'button';
+    hop.title = 'Hand off to another agent';
+    hop.setAttribute('aria-label', 'Hand off ' + (s.title || 'session'));
+    hop.addEventListener('click', guard(function () {
+      openHandoff({ agent: s.agent, sessionId: s.sessionId, cwd: s.cwd, title: s.title });
+    }));
 
     card.appendChild(main);
-    card.appendChild(resume);
+    card.appendChild(hop);
     return card;
   }
 
@@ -1293,12 +1597,14 @@
   var paletteItems = [
     { label: 'New Terminal', hint: 'pty', run: function () { createTerminal({ title: 'terminal' }); } },
     { label: 'New Browser', hint: 'web', run: function () { openStatic('browser'); } },
+    { label: 'New Agent Session', hint: 'agent', run: function () { toggleTabMenu(); } },
+    { label: 'Custom CLI', hint: 'agent', run: openCmdModal },
     { label: 'Search History', hint: 'panel', run: function () {
       openStatic('search');
       var input = $('search-query');
       if (input) input.focus();
     } },
-    { label: 'Handoff', hint: 'panel', run: function () { openStatic('handoff'); } },
+    { label: 'Hand off to another agent', hint: 'agent', run: function () { openHandoff(null); } },
     { label: 'Docs', hint: 'panel', run: function () { openStatic('docs'); } },
     { label: 'Rescan History', hint: 'history', run: function () { return loadHistory(); } },
     { label: 'Resume last session', hint: 'history', run: resumeLastSession }
@@ -1471,6 +1777,8 @@
     }
     if (key === 'Escape') {
       if (paletteVisible()) paletteClose();
+      else if (!$('handoff-modal').hidden) hideModal($('handoff-modal'));
+      else if (!$('cmd-modal').hidden) hideModal($('cmd-modal'));
       else if (!($('tab-new-menu') || {}).hidden) closeTabMenu();
     }
   }
@@ -1481,6 +1789,7 @@
     var app = $('app');
     var panel = $('agents-panel');
     var btn = $('history-collapse');
+    var rail = $('rail-agents');
     if (app) {
       if (collapsed) app.classList.add('hist-collapsed');
       else app.classList.remove('hist-collapsed');
@@ -1490,6 +1799,19 @@
       else panel.classList.remove('collapsed');
     }
     if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    if (rail) {
+      rail.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      rail.setAttribute('aria-current', collapsed ? 'false' : 'true');
+    }
+    if (!collapsed) ensureHistory();
+  }
+
+  /* the history panel is closed by default: index only when it is opened */
+  function ensureHistory() {
+    if (hist.loading) return null;
+    if (!hist.scan) return loadHistory();
+    if (!hist.sessions.length) return loadSessions().then(renderHistory);
+    return null;
   }
 
   /* ---------- events from host ---------- */
@@ -1504,7 +1826,9 @@
 
   EVENTS.ptyExit = function (payload) {
     var tab = byPaneKey(payload.paneKey);
-    if (!tab) return;
+    if (!tab || tab.exited) return;
+    tab.exited = true;
+    tab.spawned = false;
     var code = payload.code == null ? '?' : payload.code;
     if (tab.term) {
       tab.term.write('\r\n\x1b[38;5;244m[pty exit ' + code + ']\x1b[0m\r\n');
@@ -1552,7 +1876,7 @@
 
   function wire() {
     fillAgents($('search-agent'), 'any agent', '');
-    fillAgents($('handoff-agent'), null, 'codex');
+    fillAgentSelect($('handoff-target'), 'opencode2');
 
     $('new-terminal').addEventListener('click', guard(function () {
       createTerminal({ title: 'terminal' });
@@ -1577,12 +1901,16 @@
       }));
     }
 
-    var panelButtons = document.querySelectorAll('.panel-btn');
+    var panelButtons = document.querySelectorAll('.panel-btn[data-panel]');
     for (var i = 0; i < panelButtons.length; i++) {
       (function (node) {
         var panel = node.dataset ? node.dataset.panel : null;
         if (!panel) return;
         node.addEventListener('click', guard(function () {
+          if (panel === 'handoff') {
+            openHandoff(null);
+            return;
+          }
           openStatic(panel);
         }));
       })(panelButtons[i]);
@@ -1598,17 +1926,46 @@
     }));
 
     $('search-form').addEventListener('submit', guard(runSearch));
-    $('handoff-form').addEventListener('submit', guard(runHandoff));
 
     $('tab-new').addEventListener('click', guard(toggleTabMenu));
-    $('tab-new-terminal').addEventListener('click', guard(function () {
-      closeTabMenu();
-      createTerminal({ title: 'terminal' });
+
+    /* handoff modal */
+    $('handoff-close').addEventListener('click', guard(function () {
+      hideModal($('handoff-modal'));
     }));
-    $('tab-new-browser').addEventListener('click', guard(function () {
-      closeTabMenu();
-      openStatic('browser');
+    $('handoff-cancel').addEventListener('click', guard(function () {
+      hideModal($('handoff-modal'));
     }));
+    $('handoff-start').addEventListener('click', guard(startHandoff));
+    $('handoff-modal').addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === $('handoff-modal')) hideModal($('handoff-modal'));
+    }));
+    var radios = document.querySelectorAll('#handoff-modal .radio-row');
+    for (var r = 0; r < radios.length; r++) {
+      (function (row) {
+        row.addEventListener('click', guard(function () {
+          setHandoffContext(row.dataset ? row.dataset.context : 'focused');
+        }));
+      })(radios[r]);
+    }
+
+    /* custom CLI modal */
+    $('cmd-close').addEventListener('click', guard(function () { hideModal($('cmd-modal')); }));
+    $('cmd-cancel').addEventListener('click', guard(function () { hideModal($('cmd-modal')); }));
+    $('cmd-start').addEventListener('click', guard(startCmd));
+    $('cmd-modal').addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === $('cmd-modal')) hideModal($('cmd-modal'));
+    }));
+    $('cmd-line').addEventListener('keydown', guard(function (ev) {
+      if (ev.key === 'Enter') startCmd();
+    }));
+
+    var railAgents = $('rail-agents');
+    if (railAgents) {
+      railAgents.addEventListener('click', guard(function () {
+        setHistoryCollapsed(!(document.getElementById('app') || {}).classList.contains('hist-collapsed'));
+      }));
+    }
 
     $('history-rescan').addEventListener('click', guard(loadHistory));
     $('history-search').addEventListener('input', guard(onHistorySearch));
@@ -1632,9 +1989,6 @@
     $('history-collapse').addEventListener('click', guard(function () {
       setHistoryCollapsed(true);
     }));
-    $('history-expand').addEventListener('click', guard(function () {
-      setHistoryCollapsed(false);
-    }));
 
     $('palette-input').addEventListener('keydown', guard(onPaletteKey));
     $('palette-input').addEventListener('input', guard(onPaletteInput));
@@ -1648,18 +2002,37 @@
       for (var j = 0; j < tabs.length; j++) {
         if (tabs[j].kind === 'terminal') scheduleFit(tabs[j]);
       }
-      syncBrowserBounds();
+      syncBrowserBounds(true);
     }));
+
+    /* panel collapse/resize changes layout without a window resize event */
+    if (typeof ResizeObserver === 'function') {
+      try {
+        var mainRo = new ResizeObserver(guard(function () { syncBrowserBounds(true); }));
+        var main = $('main');
+        if (main) mainRo.observe(main);
+      } catch (err) { /* layout observer is optional */ }
+    }
+
+    if (window.matchMedia) {
+      try {
+        var scheme = window.matchMedia('(prefers-color-scheme: light)');
+        var onScheme = function () { refreshTermThemes(); };
+        if (scheme.addEventListener) scheme.addEventListener('change', onScheme);
+        else if (scheme.addListener) scheme.addListener(onScheme);
+      } catch (err) { /* older webkit */ }
+    }
   }
 
   function boot() {
     wire();
     renderTabs();
-    setHistoryCollapsed(false);
+    /* the right column starts closed: no index walk, no chat cards */
+    setHistoryCollapsed(true);
+    renderHistory();
 
     refreshAppInfo();
-    refreshStatus();
-    loadHistory();
+    refreshStatus().then(refreshProjects);
   }
 
   if (document.readyState === 'loading') {

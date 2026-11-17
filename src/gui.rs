@@ -21,6 +21,9 @@ const XTERM_CSS: &str = include_str!("../app/vendor/xterm.css");
 const ADDON_FIT_JS: &str = include_str!("../app/vendor/addon-fit.js");
 const TUTORIAL: &str = include_str!("../tutorial/index.html");
 const ICON: &str = include_str!("../app/icon.svg");
+const LOGO_PNG: &[u8] = include_bytes!("../app/logo.png");
+const LOGO_RGBA: &[u8] = include_bytes!("../app/logo.rgba");
+const LOGO_SIDE: u32 = 128;
 
 pub enum UserEvent {
     Wake,
@@ -48,6 +51,13 @@ struct App {
     ptys: HashMap<String, pty::Pty>,
 }
 
+fn px_rect(w: u32, h: u32) -> Rect {
+    Rect {
+        position: wry::dpi::PhysicalPosition::new(0, 0).into(),
+        size: wry::dpi::PhysicalSize::new(w, h).into(),
+    }
+}
+
 fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     Rect {
         position: WryPos::new(x, y).into(),
@@ -55,16 +65,17 @@ fn rect(x: f64, y: f64, w: f64, h: f64) -> Rect {
     }
 }
 
-fn asset(path: &str) -> Option<(&'static str, &'static str)> {
+fn asset(path: &str) -> Option<(&'static [u8], &'static str)> {
     Some(match path {
-        "/" | "/index.html" => (INDEX_HTML, "text/html; charset=utf-8"),
-        "/style.css" => (APP_CSS, "text/css; charset=utf-8"),
-        "/app.js" => (APP_JS, "text/javascript; charset=utf-8"),
-        "/vendor/xterm.js" => (XTERM_JS, "text/javascript; charset=utf-8"),
-        "/vendor/xterm.css" => (XTERM_CSS, "text/css; charset=utf-8"),
-        "/vendor/addon-fit.js" => (ADDON_FIT_JS, "text/javascript; charset=utf-8"),
-        "/tutorial.html" => (TUTORIAL, "text/html; charset=utf-8"),
-        "/icon.svg" => (ICON, "image/svg+xml"),
+        "/" | "/index.html" => (INDEX_HTML.as_bytes(), "text/html; charset=utf-8"),
+        "/style.css" => (APP_CSS.as_bytes(), "text/css; charset=utf-8"),
+        "/app.js" => (APP_JS.as_bytes(), "text/javascript; charset=utf-8"),
+        "/vendor/xterm.js" => (XTERM_JS.as_bytes(), "text/javascript; charset=utf-8"),
+        "/vendor/xterm.css" => (XTERM_CSS.as_bytes(), "text/css; charset=utf-8"),
+        "/vendor/addon-fit.js" => (ADDON_FIT_JS.as_bytes(), "text/javascript; charset=utf-8"),
+        "/tutorial.html" => (TUTORIAL.as_bytes(), "text/html; charset=utf-8"),
+        "/icon.svg" => (ICON.as_bytes(), "image/svg+xml"),
+        "/logo.png" => (LOGO_PNG, "image/png"),
         _ => return None,
     })
 }
@@ -75,7 +86,7 @@ fn serve(req: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::borrow::C
         Some((body, kind)) => wry::http::Response::builder()
             .header("Content-Type", kind)
             .header("Cache-Control", "no-store")
-            .body(std::borrow::Cow::Owned(body.as_bytes().to_vec()))
+            .body(std::borrow::Cow::Borrowed(body))
             .unwrap(),
         None => wry::http::Response::builder()
             .status(404)
@@ -182,6 +193,14 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             "root": app.root.to_string_lossy(),
             "engine": { "lightpanda": browser::available(), "version": browser::version() },
             "platform": std::env::consts::OS,
+            "agents": crate::agent::AGENTS
+                .iter()
+                .map(|a| json!({
+                    "name": a,
+                    "bin": crate::agent::launch_cmd(a),
+                    "available": crate::agent::available(a),
+                }))
+                .collect::<Vec<_>>(),
         })),
         "status" => (|| {
             let db = history_db(&app.root);
@@ -273,9 +292,13 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let projects: Vec<Value> = rows
                 .into_iter()
                 .map(|p| {
+                    let name = std::path::Path::new(&p.path)
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| p.path.clone());
                     json!({
                         "path": p.path,
-                        "name": p.path.rsplit('/').next().unwrap_or(&p.path),
+                        "name": name,
                         "sessions": p.sessions,
                         "messages": p.messages,
                         "updatedAt": p.updated_at,
@@ -418,8 +441,15 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let shell = as_str(&args, "shell");
             let agent = as_str(&args, "agent");
             let session = as_str(&args, "sessionId");
-            let spawned = match (agent, session) {
-                (Some(a), Some(s)) => pty::spawn(shell.as_deref(), &cwd, Some((&a, &s)))?,
+            let command = as_str(&args, "command");
+            let spawned = match (agent, session, command) {
+                (_, _, Some(line)) => {
+                    if line.len() > 240 {
+                        return Err(anyhow!("command is too long"));
+                    }
+                    pty::spawn_command(&line, &cwd)?
+                }
+                (Some(a), Some(s), None) => pty::spawn(shell.as_deref(), &cwd, Some((&a, &s)))?,
                 _ => pty::spawn(shell.as_deref(), &cwd, None)?,
             };
             let pid = spawned.pid;
@@ -548,6 +578,56 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let dump = as_str(&args, "dump").unwrap_or_else(|| "markdown".into());
             let text = browser::fetch_text(&url, &dump)?;
             Ok(json!({ "text": text }))
+        })(),
+        "handoffAgent" => (|| {
+            let agent = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
+            if crate::agent::launch_cmd(&agent).is_none() {
+                return Err(anyhow!("unknown agent '{agent}'"));
+            }
+            let source_agent = as_str(&args, "sourceAgent").unwrap_or_default();
+            let session = as_str(&args, "sessionId").unwrap_or_default();
+            let focused = as_str(&args, "context").as_deref() != Some("full");
+            let cwd = as_str(&args, "cwd")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| app.root.clone());
+
+            let (body, title, messages, source_cwd) = if source_agent.is_empty() || session.is_empty() {
+                (String::from("_(no source session selected)_"), String::new(), 0, None)
+            } else {
+                let conn = history::open(&history_db(&app.root))?;
+                match history::transcript(&conn, &source_agent, &session, focused) {
+                    Ok(t) => (t.text, t.title, t.messages, t.cwd),
+                    Err(err) => (
+                        format!("_(transcript unavailable: {err:#})_"),
+                        String::new(),
+                        0,
+                        None,
+                    ),
+                }
+            };
+
+            let dir = cwd.join(".omnix").join("handoffs");
+            std::fs::create_dir_all(&dir)?;
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let brief = dir.join(format!("{stamp}-to-{agent}.md"));
+            let text = format!(
+                "# Handoff to {agent}\n\n- From: {source_agent} {session}\n- Cwd: {}\n- Context: {}\n- Messages: {messages}\n- Created: {stamp}\n\n## Stopping point\n\n{body}",
+                cwd.display(),
+                if focused { "focused" } else { "full" },
+            );
+            std::fs::write(&brief, &text)?;
+            Ok(json!({
+                "agent": agent,
+                "cwd": cwd.to_string_lossy(),
+                "brief": brief.to_string_lossy(),
+                "title": title,
+                "messages": messages,
+                "sourceCwd": source_cwd,
+                "preview": text.chars().take(1400).collect::<String>(),
+            }))
         })(),
         "selftest" => {
             if std::env::var_os("OMNIX_SELFTEST").is_none() {
@@ -766,6 +846,10 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
     }
 }
 
+fn window_icon() -> Option<tao::window::Icon> {
+    tao::window::Icon::from_rgba(LOGO_RGBA.to_vec(), LOGO_SIDE, LOGO_SIDE).ok()
+}
+
 pub fn run() -> Result<()> {
     // Wayland sessions report an unsupported window handle to wry; XWayland works.
     if std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("GDK_BACKEND").is_none() {
@@ -783,6 +867,7 @@ pub fn run() -> Result<()> {
 
     let window = WindowBuilder::new()
         .with_title("Omnix")
+        .with_window_icon(window_icon())
         .with_inner_size(LogicalSize::new(1240.0, 820.0))
         .with_min_inner_size(LogicalSize::new(760.0, 480.0))
         .build(&event_loop)
@@ -798,7 +883,10 @@ pub fn run() -> Result<()> {
     let proxy_load = proxy.clone();
     let started = std::cell::Cell::new(false);
     let ui = WebViewBuilder::new()
-        .with_bounds(rect(0.0, 0.0, w, h))
+        .with_bounds(px_rect(
+            window.inner_size().width,
+            window.inner_size().height,
+        ))
         .with_custom_protocol("omnix".into(), |_id, req| serve(req))
         .with_on_page_load_handler(move |event, url| {
             if std::env::var_os("OMNIX_GUI_PROBE").is_some() {
@@ -850,9 +938,7 @@ pub fn run() -> Result<()> {
             } => {
                 let logical = physical.to_logical::<f64>(app.window.scale_factor());
                 app.size = (logical.width, logical.height);
-                let _ = app
-                    .ui
-                    .set_bounds(rect(0.0, 0.0, logical.width, logical.height));
+                let _ = app.ui.set_bounds(px_rect(physical.width, physical.height));
                 if app.content.is_some() {
                     let (x, y, w, h) = app.content_rect;
                     let h = h.min((logical.height - y).max(1.0));

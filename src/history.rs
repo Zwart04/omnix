@@ -587,6 +587,66 @@ pub fn search(
         .unwrap_or_else(|| anyhow::anyhow!("search failed")))
 }
 
+#[derive(Debug)]
+pub struct Transcript {
+    pub title: String,
+    pub cwd: Option<String>,
+    pub messages: usize,
+    pub text: String,
+}
+
+/// Rebuild a session transcript from the index for agent-to-agent handoff.
+/// `focused` keeps only the tail (the stopping point), `full` keeps everything.
+pub fn transcript(
+    conn: &Connection,
+    agent: &str,
+    session_id: &str,
+    focused: bool,
+) -> Result<Transcript> {
+    let (row_id, title, cwd): (i64, String, Option<String>) = conn
+        .query_row(
+            "SELECT id, title, cwd FROM sessions WHERE agent = ?1 AND session_id = ?2
+             ORDER BY updated_at DESC, id DESC LIMIT 1",
+            params![agent, session_id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .with_context(|| format!("session {agent}/{session_id} is not indexed yet"))?;
+
+    let limit = if focused { 40i64 } else { -1 };
+    let mut stmt = conn.prepare(
+        "SELECT m.role,
+                COALESCE(NULLIF(f.user_text, ''), NULLIF(f.assistant_text, ''),
+                         NULLIF(f.tool_text, ''), '')
+         FROM messages m JOIN messages_fts f ON f.rowid = m.id
+         WHERE m.session_row_id = ?1 ORDER BY m.id DESC LIMIT ?2",
+    )?;
+    let mut rows: Vec<(String, String)> = stmt
+        .query_map(params![row_id, limit], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?
+        .filter_map(Result::ok)
+        .filter(|(_, text)| !text.trim().is_empty())
+        .collect();
+    rows.reverse();
+
+    let mut text = String::new();
+    for (role, body) in &rows {
+        let clipped: String = body.trim().chars().take(6_000).collect();
+        text.push_str(&format!("### {role}\n\n{clipped}\n\n"));
+        if text.len() > 160_000 {
+            text.push_str("_(truncated)_\n");
+            break;
+        }
+    }
+
+    Ok(Transcript {
+        title,
+        cwd,
+        messages: rows.len(),
+        text,
+    })
+}
+
 pub fn status(conn: &Connection, db_path: &Path) -> Result<(i64, i64, u64)> {
     let sessions: i64 = conn.query_row("SELECT COUNT(*) FROM sessions", [], |r| r.get(0))?;
     let messages: i64 = conn.query_row("SELECT COUNT(*) FROM messages", [], |r| r.get(0))?;

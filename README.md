@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.2.0_amd64.deb` | `sudo apt install ./omnix_0.2.0_amd64.deb` |
+| Linux x86_64 | `omnix_0.3.0_amd64.deb` | `sudo apt install ./omnix_0.3.0_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.2.0-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.2.0-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.3.0-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.3.0-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -39,15 +39,20 @@ Yang sudah jalan dan dites di repo ini:
   `~/.claude/projects` (tanpa `subagents/`), dan `~/.local/share/opencode/opencode.db`
   read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
-- GUI satu jendela bergaya Orca: rail 44px, sidebar project 280px, tab strip di atas
-  terminal, panel `Agents` 320px berisi indexed history semua agent, command palette
-  (Ctrl+K). Palet netral tanpa aksen hijau.
+- GUI satu jendela bergaya Orca: rail 44px, sidebar project, tab strip di atas,
+  panel `Agents` berisi indexed history semua agent, command palette (Ctrl+K).
+  Tab strip punya menu `+` (Terminal, Browser, Custom CLI, Agents), agent yang
+  tidak ada di `PATH` diredupkan, dan terminal memakai palet/font per OS.
+- Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
+  ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
+  sama. Panel `Agents` default tertutup dan index baru dipindai saat dibuka.
 - 10 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
 
 Belum dibangun (sengaja, biar tidak jadi kerangka kosong):
 
-- Shell GUI `wry` + multi-tab. Butuh `webkit2gtk-4.1` di mesin build.
-- PTY injection untuk benar-benar mengirim prompt ke TUI agent. Sekarang brief ditulis ke file dan outcome jujur dilaporkan `unconfirmed`.
+- Prompt otomatis ke TUI agent penerima: sekarang brief ditulis ke file dan
+  path-nya dicetak di tab agent baru; agent tetap mulai dari prompt kosong.
+- Headless screenshot Lightpanda: `Page.captureScreenshot` masih placeholder.
 - CDP client penuh untuk `click/fill/snapshot`. Kontrak harness sudah ada di `harness/`, implementasinya menyusul.
 
 ## Install
