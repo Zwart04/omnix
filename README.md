@@ -41,16 +41,22 @@ Yang sudah jalan dan dites di repo ini:
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
 - GUI satu jendela bergaya Orca: rail 44px, sidebar project, tab strip di atas,
   panel `Agents` berisi indexed history semua agent, command palette (Ctrl+K).
-  Tab strip punya menu `+` (Terminal, Browser, Custom CLI, Agents), agent yang
-  tidak ada di `PATH` diredupkan, dan terminal memakai palet/font per OS.
+  Tab strip punya menu `+` (Terminal, Browser, Custom CLI, lalu **agent yang
+  terdeteksi saja** dengan logo aslinya), dan terminal memakai palet/font per OS.
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
   sama. Panel `Agents` default tertutup dan index baru dipindai saat dibuka.
 - Terminal fokus otomatis saat tab dibuka (tanpa klik), font UI 15px, dan
-  terminal menaikkan ukuran font ke 15px supaya TUI agent tetap terbaca.
+  terminal 13px / line-height 1.42 dengan palet netral kontras tinggi supaya TUI
+  agent tetap enak dibaca.
+- Agent settings (rail gear atau menu `+`): daftar CLI yang terdeteksi plus
+  argumen dan environment per agent, disimpan di `~/.omnix/agents.json` dan
+  dipakai saat agent diluncurkan atau di-resume. Deteksi mencari `PATH` lalu
+  direktori install per-user (`~/.opencode/bin`, `~/.local/bin`, `~/.bun/bin`,
+  `~/.cargo/bin`, nvm, npm global).
 - WebView mengambil fokus keyboard sendiri saat jendela aktif (WebKitGTK di
   compositor tertentu sempat membiarkan fokus di body, jadi ketikan pty hilang).
-- 10 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
+- 14 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
 
 Belum dibangun (sengaja, biar tidak jadi kerangka kosong):
 

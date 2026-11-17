@@ -1,11 +1,17 @@
 use anyhow::{Result, bail};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
+/// Menu order mirrors Orca: the agents people actually run first.
 pub const AGENTS: &[&str] = &[
-    "claude",
+    "opencode2",
     "codex",
     "opencode",
-    "opencode2",
+    "antigravity",
+    "command-code",
+    "claude",
     "cursor",
     "gemini",
     "grok",
@@ -14,9 +20,63 @@ pub const AGENTS: &[&str] = &[
     "pi",
     "kimi",
     "kiro",
-    "antigravity",
     "rovo",
 ];
+
+/// Per-agent launch overrides, persisted as `.omnix/agents.json` under the
+/// app root. `args` is appended before any resume flags; `env` is
+/// whitespace-separated `KEY=VALUE` pairs. Values containing spaces are not
+/// supported (ponytail: quote-aware split the day someone needs it).
+#[derive(Default, Clone, Serialize, Deserialize)]
+pub struct AgentConfig {
+    #[serde(default)]
+    pub args: String,
+    #[serde(default)]
+    pub env: String,
+}
+
+impl AgentConfig {
+    pub fn arg_list(&self) -> Vec<String> {
+        self.args.split_whitespace().map(str::to_string).collect()
+    }
+
+    pub fn env_list(&self) -> Vec<(String, String)> {
+        self.env
+            .split_whitespace()
+            .filter_map(|pair| pair.split_once('='))
+            .filter(|(key, _)| valid_env_key(key))
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+}
+
+fn valid_env_key(key: &str) -> bool {
+    !key.is_empty()
+        && !key.starts_with(|c: char| c.is_ascii_digit())
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+pub fn settings_path(root: &Path) -> PathBuf {
+    root.join(".omnix").join("agents.json")
+}
+
+pub fn load_settings(root: &Path) -> BTreeMap<String, AgentConfig> {
+    std::fs::read(settings_path(root))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_settings(root: &Path, map: &BTreeMap<String, AgentConfig>) -> Result<()> {
+    let path = settings_path(root);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, serde_json::to_vec_pretty(map)?)?;
+    Ok(())
+}
 
 pub fn launch_cmd(agent: &str) -> Option<&'static str> {
     Some(match agent {
@@ -32,8 +92,9 @@ pub fn launch_cmd(agent: &str) -> Option<&'static str> {
         "pi" => "pi",
         "kimi" => "kimi",
         "kiro" => "kiro",
-        "antigravity" => "antigravity",
+        "antigravity" => "agy",
         "rovo" => "rovo",
+        "command-code" => "command-code",
         _ => return None,
     })
 }
@@ -52,17 +113,42 @@ fn executable(path: &std::path::Path) -> bool {
     }
 }
 
-/// True when the agent CLI resolves on PATH. The UI greys out the rest instead
-/// of letting the spawn fail with a raw pty error.
-pub fn available(agent: &str) -> bool {
-    let Some(bin) = launch_cmd(agent) else {
-        return false;
-    };
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
+/// Install locations a desktop-launched app rarely inherits in PATH. A menu
+/// launch gets the session PATH, which on most setups misses per-user bin dirs,
+/// so an agent installed there would look missing.
+fn extra_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    if let Some(home) = home {
+        let home = PathBuf::from(home);
+        for rel in [
+            ".opencode/bin",
+            ".local/bin",
+            ".bun/bin",
+            ".cargo/bin",
+            ".deno/bin",
+            ".npm-global/bin",
+            "go/bin",
+        ] {
+            dirs.push(home.join(rel));
+        }
+        // nvm keeps one bin dir per node version.
+        if let Ok(entries) = std::fs::read_dir(home.join(".nvm").join("versions").join("node")) {
+            for entry in entries.flatten() {
+                dirs.push(entry.path().join("bin"));
+            }
+        }
+    }
     #[cfg(windows)]
-    let names: Vec<String> = {
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        dirs.push(PathBuf::from(appdata).join("npm"));
+    }
+    dirs
+}
+
+fn candidate_names(bin: &str) -> Vec<String> {
+    #[cfg(windows)]
+    {
         let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".into());
         std::iter::once(bin.to_string())
             .chain(
@@ -71,12 +157,29 @@ pub fn available(agent: &str) -> bool {
                     .map(|e| format!("{bin}{e}")),
             )
             .collect()
-    };
+    }
     #[cfg(not(windows))]
-    let names = [bin.to_string()];
+    {
+        vec![bin.to_string()]
+    }
+}
 
-    std::env::split_paths(&path)
-        .any(|dir| names.iter().any(|name| executable(&dir.join(name))))
+/// Resolve an agent binary across PATH plus the per-user install dirs the GUI
+/// session usually lacks. Returns the absolute path used for spawning.
+pub fn resolve(agent: &str) -> Option<PathBuf> {
+    let bin = launch_cmd(agent)?;
+    let names = candidate_names(bin);
+    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
+        .map(|path| std::env::split_paths(&path).collect())
+        .unwrap_or_default();
+    dirs.extend(extra_dirs());
+    dirs.into_iter()
+        .find_map(|dir| names.iter().map(|name| dir.join(name)).find(|p| executable(p)))
+}
+
+/// True when the agent CLI resolves on PATH. The menu lists only these.
+pub fn available(agent: &str) -> bool {
+    resolve(agent).is_some()
 }
 
 fn valid_id(session_id: &str) -> bool {
@@ -147,6 +250,32 @@ mod tests {
             "claude --resume u-1"
         );
         assert!(resume_args("copilot", "x").unwrap()[0].starts_with("--resume="));
+    }
+
+    #[test]
+    fn extra_dirs_cover_per_user_installs() {
+        let dirs = extra_dirs();
+        assert!(!dirs.is_empty(), "home-based install dirs are searched");
+        assert!(
+            dirs.iter().any(|d| d.ends_with(".opencode/bin")),
+            "opencode ships in ~/.opencode/bin"
+        );
+    }
+
+    #[test]
+    fn config_parses_args_and_env() {
+        let cfg = AgentConfig {
+            args: "--dangerously-skip-permissions --fast".into(),
+            env: "FOO=1 NOPE BAR=two=3 9X=y".into(),
+        };
+        assert_eq!(cfg.arg_list().len(), 2);
+        assert_eq!(
+            cfg.env_list(),
+            vec![
+                ("FOO".to_string(), "1".to_string()),
+                ("BAR".to_string(), "two=3".to_string())
+            ]
+        );
     }
 
     #[test]

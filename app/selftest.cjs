@@ -74,6 +74,7 @@ const byId = new Map();
   'project-tree', 'project-refresh', 'cmd-btn', 'rail-agents',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
+  'agent-settings', 'agent-settings-meta', 'agent-settings-refresh',
   'cmd-modal', 'cmd-close', 'cmd-cancel', 'cmd-start', 'cmd-line', 'cmd-cwd', 'cmd-error',
   'palette', 'palette-input', 'palette-list'
 ].forEach((id) => byId.set(id, fakeEl(id)));
@@ -91,10 +92,11 @@ const paneByKind = {
   browser: fakeEl('section'),
   search: fakeEl('section'),
   handoff: fakeEl('section'),
-  docs: fakeEl('section')
+  docs: fakeEl('section'),
+  settings: fakeEl('section')
 };
 
-const panelButtons = ['search', 'handoff', 'docs'].map((panel) => {
+const panelButtons = ['search', 'handoff', 'docs', 'settings'].map((panel) => {
   const node = fakeEl('button');
   node.dataset.panel = panel;
   return node;
@@ -423,7 +425,7 @@ require('./app.js');
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, false, 'Ctrl+K opens the palette');
   const rows = byId.get('palette-list').children;
-  assert.strictEqual(rows.length, 9, 'all commands listed with an empty query');
+  assert.strictEqual(rows.length, 10, 'all commands listed with an empty query');
   byId.get('palette-input').handlers.keydown({ key: 'ArrowDown', preventDefault: noop });
   assert.strictEqual(byId.get('palette-list').children[1].getAttribute('aria-selected'), 'true',
     'arrow down moves the selection');

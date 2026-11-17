@@ -203,6 +203,47 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 }))
                 .collect::<Vec<_>>(),
         })),
+        "agentSettings" => (|| {
+            let saved = crate::agent::load_settings(&app.root);
+            Ok(json!({
+                "path": crate::agent::settings_path(&app.root).to_string_lossy(),
+                "agents": crate::agent::AGENTS
+                    .iter()
+                    .map(|name| {
+                        let cfg = saved.get(*name);
+                        json!({
+                            "name": name,
+                            "bin": crate::agent::launch_cmd(name),
+                            "available": crate::agent::available(name),
+                            "args": cfg.map(|c| c.args.clone()).unwrap_or_default(),
+                            "env": cfg.map(|c| c.env.clone()).unwrap_or_default(),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            }))
+        })(),
+        "agentSettingsSave" => (|| {
+            let name = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
+            if !crate::agent::AGENTS.contains(&name.as_str()) {
+                return Err(anyhow!("unknown agent '{name}'"));
+            }
+            let extra_args = as_str(&args, "args").unwrap_or_default();
+            let env = as_str(&args, "env").unwrap_or_default();
+            if extra_args.len() > 400 || env.len() > 400 {
+                return Err(anyhow!("agent settings are too long"));
+            }
+            let mut saved = crate::agent::load_settings(&app.root);
+            if extra_args.trim().is_empty() && env.trim().is_empty() {
+                saved.remove(&name);
+            } else {
+                saved.insert(
+                    name.clone(),
+                    crate::agent::AgentConfig { args: extra_args, env },
+                );
+            }
+            crate::agent::save_settings(&app.root, &saved)?;
+            Ok(json!({ "ok": true }))
+        })(),
         "uiTrace" => {
             // Opt-in keyboard diagnostics: only writes when <root>/.trace-keys exists.
             let root = app.root.clone();
@@ -463,7 +504,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     }
                     pty::spawn_command(&line, &cwd)?
                 }
-                (Some(a), Some(s), None) => pty::spawn(shell.as_deref(), &cwd, Some((&a, &s)))?,
+                (Some(a), s, None) => pty::spawn_agent(&app.root, &a, s.as_deref(), &cwd)?,
                 _ => pty::spawn(shell.as_deref(), &cwd, None)?,
             };
             let pid = spawned.pid;

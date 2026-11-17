@@ -57,22 +57,22 @@
     },
     linux: {
       dark: {
-        background: '#000000', foreground: '#d3d7cf', cursor: '#d3d7cf', cursorAccent: '#000000',
-        selectionBackground: 'rgba(211,215,207,.28)',
-        black: '#2e3436', red: '#cc0000', green: '#4e9a06', yellow: '#c4a000',
-        blue: '#3465a4', magenta: '#75507b', cyan: '#06989a', white: '#d3d7cf',
-        brightBlack: '#555753', brightRed: '#ef2929', brightGreen: '#8ae234',
-        brightYellow: '#fce94f', brightBlue: '#729fcf', brightMagenta: '#ad7fa8',
-        brightCyan: '#34e2e2', brightWhite: '#eeeeec'
+        background: '#0a0a0a', foreground: '#d6d6d6', cursor: '#e8e8e8', cursorAccent: '#0a0a0a',
+        selectionBackground: 'rgba(255,255,255,.16)',
+        black: '#1f1f1f', red: '#f47067', green: '#7ee787', yellow: '#e3b341',
+        blue: '#6cb6ff', magenta: '#dcbdfb', cyan: '#56d4dd', white: '#c9d1d9',
+        brightBlack: '#6e7681', brightRed: '#ff938a', brightGreen: '#aff5b4',
+        brightYellow: '#f2cc60', brightBlue: '#96d0ff', brightMagenta: '#f0c6ff',
+        brightCyan: '#9be9ef', brightWhite: '#f0f6fc'
       },
       light: {
-        background: '#ffffff', foreground: '#2e3436', cursor: '#2e3436', cursorAccent: '#ffffff',
-        selectionBackground: 'rgba(52,101,164,.24)',
-        black: '#2e3436', red: '#a40000', green: '#3d7a05', yellow: '#8f7600',
-        blue: '#204a87', magenta: '#5c385f', cyan: '#067276', white: '#555753',
-        brightBlack: '#555753', brightRed: '#cc0000', brightGreen: '#4e9a06',
-        brightYellow: '#c4a000', brightBlue: '#3465a4', brightMagenta: '#75507b',
-        brightCyan: '#06989a', brightWhite: '#2e3436'
+        background: '#ffffff', foreground: '#24292f', cursor: '#24292f', cursorAccent: '#ffffff',
+        selectionBackground: 'rgba(31,111,235,.22)',
+        black: '#24292f', red: '#cf222e', green: '#1a7f37', yellow: '#9a6700',
+        blue: '#0969da', magenta: '#8250df', cyan: '#1b7c83', white: '#6e7781',
+        brightBlack: '#57606a', brightRed: '#a40e26', brightGreen: '#2da44e',
+        brightYellow: '#bf8700', brightBlue: '#218bff', brightMagenta: '#a475f9',
+        brightCyan: '#3192aa', brightWhite: '#24292f'
       }
     }
   };
@@ -81,7 +81,7 @@
   var TERM_FONTS = {
     windows: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
     macos: '"SF Mono", SFMono-Regular, Menlo, Monaco, monospace',
-    linux: '"DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Noto Sans Mono", monospace'
+    linux: '"JetBrains Mono", "Cascadia Mono", "Noto Sans Mono", "DejaVu Sans Mono", "Liberation Mono", monospace'
   };
 
   var PLATFORM = 'linux';
@@ -320,8 +320,8 @@
   var paneSeq = 0;
   var activeTab = null;
 
-  var PANEL_TITLE = { browser: 'Browser', search: 'Search', docs: 'Docs' };
-  var KIND_TAG = { terminal: 'pty', browser: 'web', search: 'srch', docs: 'docs' };
+  var PANEL_TITLE = { browser: 'Browser', search: 'Search', docs: 'Docs', settings: 'Settings' };
+  var KIND_TAG = { terminal: 'pty', browser: 'web', search: 'srch', docs: 'docs', settings: 'set' };
 
   function byPaneKey(key) {
     for (var i = 0; i < tabs.length; i++) {
@@ -400,6 +400,8 @@
       }
     } else if (tab.kind === 'docs') {
       ensureDocs();
+    } else if (tab.kind === 'settings') {
+      loadAgentSettings();
     }
   }
 
@@ -519,26 +521,34 @@
       closeTabMenu();
       openCmdModal();
     }));
+    /* Orca lists only the CLIs it can actually launch: an item that would fail
+       on click is noise, and most agents are simply not installed. */
+    var detected = agentsInfo.filter(function (a) { return a.available !== false; });
     box.appendChild(el('div', 'menu-sep'));
-    box.appendChild(el('div', 'menu-label-group', 'Agents'));
-    for (var i = 0; i < agentsInfo.length; i++) {
-      (function (agent) {
-        box.appendChild(menuRow(
-          agentLabel(agent.name),
-          agent.available === false ? 'not found' : (agent.bin === agent.name ? '' : agent.bin),
-          agent.name,
-          function () {
-            closeTabMenu();
-            createTerminal({
-              paneKey: 'agent:' + agent.name + ':' + Date.now(),
-              command: agent.bin,
-              title: agent.name
-            });
-          },
-          agent.available === false
-        ));
-      })(agentsInfo[i]);
+    if (detected.length) {
+      box.appendChild(el('div', 'menu-label-group', 'Detected agents'));
+      for (var i = 0; i < detected.length; i++) {
+        (function (agent) {
+          box.appendChild(menuRow(
+            agentLabel(agent.name),
+            '',
+            agent.name,
+            function () {
+              closeTabMenu();
+              createTerminal({
+                paneKey: 'agent:' + agent.name + ':' + Date.now(),
+                agent: agent.name,
+                title: agentLabel(agent.name)
+              });
+            }
+          ));
+        })(detected[i]);
+      }
+    } else {
+      box.appendChild(el('div', 'menu-empty', 'No agent CLIs detected on PATH.'));
     }
+    box.appendChild(el('div', 'menu-sep'));
+    box.appendChild(menuRow('Agent settings\u2026', 'settings', 'gear', openAgentSettings));
   }
 
   /* ---------- terminal ---------- */
@@ -611,10 +621,18 @@
     try {
       term = new window.Terminal({
         fontFamily: termFont(),
-        fontSize: 15,
-        lineHeight: 1.2,
+        fontSize: 13,
+        lineHeight: 1.42,
+        letterSpacing: 0,
+        fontWeight: '400',
+        fontWeightBold: '600',
+        cursorStyle: 'bar',
         cursorBlink: true,
-        scrollback: 5000,
+        minimumContrastRatio: 4.5,
+        scrollback: 10000,
+        scrollSensitivity: 3,
+        smoothScrollDuration: 80,
+        macOptionIsMeta: true,
         theme: termTheme()
       });
     } catch (err) {
@@ -877,6 +895,92 @@
     }
   }
 
+  /* ---------- agent settings ---------- */
+
+  function openAgentSettings() {
+    closeTabMenu();
+    var tab = openStatic('settings');
+    loadAgentSettings();
+    return tab;
+  }
+
+  function loadAgentSettings() {
+    return call('agentSettings', {}).then(function (res) {
+      renderAgentSettings(res);
+      return res;
+    }).catch(function (err) {
+      toast('error', 'agent settings: ' + message(err));
+    });
+  }
+
+  function renderAgentSettings(res) {
+    var box = $('agent-settings');
+    if (!box) return;
+    box.textContent = '';
+    var list = res && Array.isArray(res.agents) ? res.agents : [];
+    var installed = list.filter(function (a) { return a && a.available !== false; });
+    var meta = $('agent-settings-meta');
+    if (meta) {
+      meta.textContent = installed.length + ' detected' +
+        (res && res.path ? '  \u00b7  ' + res.path : '');
+    }
+    if (!installed.length) {
+      box.appendChild(el('p', 'side-empty', 'No agent CLIs detected. Install one, then hit Refresh.'));
+      return;
+    }
+    for (var i = 0; i < installed.length; i++) {
+      box.appendChild(agentSettingsCard(installed[i]));
+    }
+  }
+
+  function settingsField(card, label, value, placeholder, save) {
+    var wrap = el('label', 'set-field');
+    wrap.appendChild(el('span', 'set-field-label', label));
+    var input = el('input', 'input mono set-input');
+    input.type = 'text';
+    input.value = value || '';
+    input.placeholder = placeholder;
+    input.spellcheck = false;
+    input.autocomplete = 'off';
+    var timer = null;
+    input.addEventListener('input', function () {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(save, 500);
+    });
+    wrap.appendChild(input);
+    card.appendChild(wrap);
+    return input;
+  }
+
+  function agentSettingsCard(agent) {
+    var card = el('div', 'set-card');
+    var head = el('div', 'set-head');
+    head.appendChild(iconNode(agent.name));
+    head.appendChild(el('span', 'set-name', agentLabel(agent.name)));
+    head.appendChild(el('span', 'tag mono', agent.bin || agent.name));
+    head.appendChild(el('span', 'set-state', 'detected'));
+    card.appendChild(head);
+
+    var argsInput = null;
+    var envInput = null;
+    var save = function () {
+      call('agentSettingsSave', {
+        agent: agent.name,
+        args: argsInput ? argsInput.value : '',
+        env: envInput ? envInput.value : ''
+      }).then(function () {
+        toast('ok', 'Saved ' + agentLabel(agent.name) + ' launch settings');
+      }).catch(function (err) {
+        toast('error', 'Save failed: ' + message(err));
+      });
+    };
+
+    argsInput = settingsField(card, 'Arguments', agent.args,
+      'extra arguments, e.g. --dangerously-skip-permissions', save);
+    envInput = settingsField(card, 'Environment', agent.env, 'KEY=value KEY=value', save);
+    return card;
+  }
+
   /* ---------- search ---------- */
 
   function resumeSession(s) {
@@ -975,6 +1079,8 @@
     'qwen': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M19.713 2.825h-5.907c0-.251-.066-.503-.196-.728L12.819.728A1.46 1.46 0 0 0 11.559 0h-1.58c-.52 0-1 .275-1.26.728l-2.42 4.19a1.45 1.45 0 0 0 0 1.453l.791 1.37c.26.448.74.727 1.26.727h11.36c.52 0 1-.275 1.26-.728l.79-1.37a1.45 1.45 0 0 0 0-1.451l-.79-1.37a1.46 1.46 0 0 0-1.26-.728zM.195 9.905l2.951 5.115a1.46 1.46 0 0 0-.531.531l-.791 1.37a1.45 1.45 0 0 0 0 1.452l.79 1.37c.26.448.74.727 1.26.727h4.84c.52 0 1-.275 1.26-.728l.79-1.37a1.45 1.45 0 0 0 0-1.451L5.086 7.083a1.46 1.46 0 0 0-1.26-.728h-1.58c-.52 0-1 .276-1.26.728l-.79 1.37a1.45 1.45 0 0 0 0 1.452m15.888 13.367 2.951-5.115c.217.125.469.196.728.196h1.582c.52 0 1-.275 1.26-.728l.79-1.37a1.45 1.45 0 0 0 0-1.451l-2.42-4.191a1.46 1.46 0 0 0-1.259-.728h-1.582c-.52 0-1 .276-1.259.728l-5.678 9.838a1.45 1.45 0 0 0 0 1.452l.79 1.37c.26.448.74.727 1.26.727h1.582c.52 0 1-.275 1.26-.728z"></path></svg>`,
     'rovo': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M7.12 11.084a.683.683 0 00-1.16.126L.075 22.974a.703.703 0 00.63 1.018h8.19a.678.678 0 00.63-.39c1.767-3.65.696-9.203-2.406-12.52zM11.434.386a15.515 15.515 0 00-.906 15.317l3.95 7.9a.703.703 0 00.628.388h8.19a.703.703 0 00.63-1.017L12.63.38a.664.664 0 00-1.196.006z"/></svg>`,
     'terminal': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5 6.1 8 3 11.5"/><path d="M8.6 11.5H13"/></svg>`,
+    'command-code': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path clip-rule="evenodd" d="M19.334 0a4.67 4.67 0 0 0-4.666 4.668v2H9.334v-2A4.67 4.67 0 0 0 4.668 0 4.67 4.67 0 0 0 0 4.668a4.67 4.67 0 0 0 4.668 4.665h2v5.334h-2A4.67 4.67 0 0 0 0 19.334 4.67 4.67 0 0 0 4.668 24a4.67 4.67 0 0 0 4.666-4.666v-2h5.334v2A4.67 4.67 0 0 0 19.334 24 4.67 4.67 0 0 0 24 19.334a4.67 4.67 0 0 0-4.666-4.667h-2V9.333h2A4.67 4.67 0 0 0 24 4.668 4.673 4.673 0 0 0 19.334 0m-2 6.666v-2c0-1.107.893-2 2-2s2 .893 2 2-.893 2-2 2zm-12.668 0c-1.107 0-2-.893-2-2s.893-2 2-2 2 .893 2 2v2zm4.666 8V9.334h5.334v5.334zm10.002 6.667c-1.107 0-2-.893-2-2v-2h2c1.107 0 2 .892 2 2 0 1.107-.893 2-2 2m-14.668 0c-1.107 0-2-.893-2-2 0-1.108.893-2 2-2h2v2c0 1.107-.893 2-2 2"></path></svg>`,
+    gear: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   };
 
   function iconKey(name) {
@@ -1013,7 +1119,8 @@
     kimi: 'Kimi',
     kiro: 'Kiro',
     antigravity: 'Antigravity',
-    rovo: 'Rovo'
+    rovo: 'Rovo',
+    'command-code': 'Command Code'
   };
 
   function agentLabel(name) {
@@ -1703,6 +1810,7 @@
     } },
     { label: 'Hand off to another agent', hint: 'agent', run: function () { openHandoff(null); } },
     { label: 'Docs', hint: 'panel', run: function () { openStatic('docs'); } },
+    { label: 'Agent settings', hint: 'settings', run: openAgentSettings },
     { label: 'Rescan History', hint: 'history', run: function () { return loadHistory(); } },
     { label: 'Resume last session', hint: 'history', run: resumeLastSession }
   ];
@@ -2012,6 +2120,9 @@
         }));
       })(panelButtons[i]);
     }
+
+    var settingsRefresh = $('agent-settings-refresh');
+    if (settingsRefresh) settingsRefresh.addEventListener('click', guard(loadAgentSettings));
 
     var stripCmd = $('strip-command');
     if (stripCmd) stripCmd.addEventListener('click', guard(paletteOpen));
