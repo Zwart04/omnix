@@ -380,6 +380,7 @@
     markRail();
     if (tab.kind === 'terminal') {
       scheduleFit(tab);
+      focusTerm(tab);
     } else if (tab.kind === 'browser') {
       if (browser.engine === 'native' && browser.url) {
         if (browser.open) syncBrowserBounds(true);
@@ -598,7 +599,7 @@
     try {
       term = new window.Terminal({
         fontFamily: termFont(),
-        fontSize: 12,
+        fontSize: 15,
         lineHeight: 1.2,
         cursorBlink: true,
         scrollback: 5000,
@@ -667,6 +668,7 @@
         tab.pendingWrites = '';
         call('ptyWrite', { paneKey: paneKey, data: queued }, { quiet: true });
       }
+      focusTerm(tab);
       if (tab.handoffBrief && tab.term) {
         tab.term.write('\x1b[38;5;244m[omnix] handoff brief: ' +
           tab.handoffBrief + '\x1b[0m\r\n');
@@ -675,6 +677,12 @@
     });
 
     return tab;
+  }
+
+  function focusTerm(tab) {
+    if (!tab || tab.kind !== 'terminal' || !tab.term || tab.closed) return;
+    if (tab !== activeTab) return;
+    try { tab.term.focus(); } catch (err) { /* terminal not mounted yet */ }
   }
 
   function scheduleFit(tab) {
@@ -1916,6 +1924,9 @@
       })(panelButtons[i]);
     }
 
+    var stripCmd = $('strip-command');
+    if (stripCmd) stripCmd.addEventListener('click', guard(paletteOpen));
+
     var cmdBtn = $('cmd-btn');
     if (cmdBtn) cmdBtn.addEventListener('click', guard(paletteOpen));
 
@@ -1959,6 +1970,10 @@
     $('cmd-line').addEventListener('keydown', guard(function (ev) {
       if (ev.key === 'Enter') startCmd();
     }));
+
+    window.addEventListener('focus', function () {
+      if (activeTab && activeTab.kind === 'terminal') focusTerm(activeTab);
+    });
 
     var railAgents = $('rail-agents');
     if (railAgents) {

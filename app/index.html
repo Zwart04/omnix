@@ -97,14 +97,17 @@
       </div>
     </aside>
 
-    <main id="main">
-      <div id="tabstrip" aria-label="Open tabs">
-        <div id="tabstrip-tabs" class="strip-tabs"></div>
-        <button class="strip-new" type="button" id="tab-new" title="New tab" aria-label="New tab"
-                aria-haspopup="menu" aria-expanded="false">+</button>
-        <div class="menu tab-menu" id="tab-new-menu" role="menu" hidden></div>
-      </div>
+    <div id="tabstrip" aria-label="Open tabs">
+      <div id="tabstrip-tabs" class="strip-tabs"></div>
+      <button class="strip-new" type="button" id="tab-new" title="New tab" aria-label="New tab"
+              aria-haspopup="menu" aria-expanded="false">+</button>
+      <button class="strip-command" type="button" id="strip-command" title="Command palette (Ctrl+K)">
+        <span class="strip-command-glyph" aria-hidden="true">&#9656;</span>Command
+      </button>
+      <div class="menu tab-menu" id="tab-new-menu" role="menu" hidden></div>
+    </div>
 
+    <main id="main">
       <div id="panes">
         <div id="pane-empty" class="pane-empty">
           <p class="pane-empty-title">Nothing open</p>

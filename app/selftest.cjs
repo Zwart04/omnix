@@ -64,7 +64,7 @@ const byId = new Map();
 [
   'app', 'app-version', 'sidebar', 'workspace-list', 'tab-list', 'panes', 'tabstrip',
   'tabstrip-tabs', 'new-terminal', 'new-browser', 'pane-empty', 'pane-empty-terminal',
-  'tab-new', 'tab-new-menu', 'tab-new-terminal', 'tab-new-browser',
+  'tab-new', 'tab-new-menu', 'strip-command', 'tab-new-terminal', 'tab-new-browser',
   'browser-url', 'browser-open', 'browser-engine', 'browser-native', 'browser-text',
   'search-form', 'search-query', 'search-conversation', 'search-agent', 'search-results', 'search-meta',
   'handoff-form', 'handoff-name', 'handoff-agent', 'handoff-base', 'handoff-prompt', 'handoff-result',
