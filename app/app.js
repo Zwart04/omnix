@@ -81,7 +81,7 @@
   var TERM_FONTS = {
     windows: '"Cascadia Mono", "Cascadia Code", Consolas, "Courier New", monospace',
     macos: '"SF Mono", SFMono-Regular, Menlo, Monaco, monospace',
-    linux: '"DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", "Noto Sans Mono", monospace'
+    linux: '"Noto Sans Mono", "Liberation Mono", "DejaVu Sans Mono", "Ubuntu Mono", monospace'
   };
 
   var PLATFORM = 'linux';
