@@ -127,9 +127,9 @@ dituju:
   folder yang kamu pin lewat `+ Project`; indexed history hanya memperkaya baris
   yang path-nya cocok. Klik baris membuka terminal di folder itu; twisty
   membuka daftar sesi agent yang dilacak, dan spinner kecil menandai pty yang
-  masih hidup. Folder picker-nya milik Omnix sendiri: rail Places, breadcrumb,
-  kolom Name/Size/Type/Modified, sort, dan tombol `Select folder`; tidak ada
-  dialog OS.
+  masih hidup. `+ Project` memakai dialog folder bawaan OS, bukan file browser
+  milik Omnix: GTK `FileChooserNative` di Linux, `FolderBrowserDialog` di
+  Windows, `osascript choose folder` di macOS. Batal tidak menambah apa pun.
 - **Tab bar** — tab terminal, browser, docs, search, dan settings dalam satu
   jendela.
 - **Area konten** — xterm untuk tab terminal; WebView konten hanya dibuat saat

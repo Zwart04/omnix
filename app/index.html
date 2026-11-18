@@ -395,65 +395,6 @@
     </div>
   </div>
 
-  <div id="picker-modal" class="modal picker-modal" hidden>
-    <div class="picker-box" role="dialog" aria-modal="true" aria-labelledby="picker-title">
-      <header class="picker-head">
-        <div class="picker-head-text">
-          <h2 id="picker-title">Choose a project folder</h2>
-          <p class="hint">Pick any folder on this machine. Omnix opens a terminal rooted there.</p>
-        </div>
-        <button class="icon-btn" type="button" id="picker-close" aria-label="Close">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" aria-hidden="true">
-            <path d="M18 6 6 18M6 6l12 12" />
-          </svg>
-        </button>
-      </header>
-
-      <div class="picker-toolbar">
-        <button class="icon-btn" type="button" id="picker-up" title="Parent folder"
-                aria-label="Parent folder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 19V5M5 12l7-7 7 7" />
-          </svg>
-        </button>
-        <nav class="picker-crumbs" id="picker-crumbs" aria-label="Folder path"></nav>
-        <button class="icon-btn" type="button" id="picker-refresh" title="Refresh folder"
-                aria-label="Refresh folder">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-            <path d="M21 3v6h-6" />
-          </svg>
-        </button>
-      </div>
-
-      <div class="picker-body">
-        <nav class="picker-places" id="picker-places" aria-label="Places"></nav>
-        <div class="picker-main">
-          <div class="picker-cols">
-            <button class="picker-col" type="button" data-sort="name">Name</button>
-            <button class="picker-col" type="button" data-sort="size">Size</button>
-            <button class="picker-col" type="button" data-sort="type">Type</button>
-            <button class="picker-col" type="button" data-sort="modified">Modified</button>
-          </div>
-          <div id="picker-list" class="picker-list" role="listbox"
-               aria-label="Folders" tabindex="0"></div>
-          <p class="picker-note" id="picker-error" role="status"></p>
-        </div>
-      </div>
-
-      <footer class="picker-foot">
-        <span class="picker-selected mono" id="picker-selected">No folder selected</span>
-        <div class="modal-actions">
-          <button class="btn" type="button" id="picker-cancel">Cancel</button>
-          <button class="btn primary" type="button" id="picker-select">Select folder</button>
-        </div>
-      </footer>
-    </div>
-  </div>
-
   <div id="project-modal" class="modal" hidden>
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="project-title">
       <header class="modal-head">

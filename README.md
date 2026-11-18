@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.4.1_amd64.deb` | `sudo apt install ./omnix_0.4.1_amd64.deb` |
+| Linux x86_64 | `omnix_0.4.2_amd64.deb` | `sudo apt install ./omnix_0.4.2_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.4.1-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.4.1-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.4.2-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.4.2-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -51,12 +51,10 @@ Yang sudah jalan dan dites di repo ini:
   Tab strip punya menu `+` (Terminal, Browser, Custom CLI, lalu **agent yang
   terdeteksi dan enabled saja** dengan logo aslinya), dan terminal memakai
   palet/font per OS.
-- `+ Project` membuka folder picker bawaan Omnix, bukan dialog OS: rail Places
-  (Home, Desktop, Documents, Downloads, Computer), breadcrumb yang bisa diklik,
-  kolom Name/Size/Type/Modified dengan sort, dan tombol `Select folder`.
-  Single click memilih, double click atau Enter masuk folder, Backspace naik,
-  Escape batal; daftar dibatasi 400 entri agar tetap ringan. Ini membuat
-  tampilan dan perilakunya sama di Linux, Windows, dan macOS. Folder disimpan di
+- `+ Project` membuka dialog folder bawaan OS lewat `FileChooserNative` (Linux,
+  tampil sesuai desktop portal), `FolderBrowserDialog` di Windows, dan
+  `osascript choose folder` di macOS. Omnix tidak menggambar file browser
+  sendiri; batal berarti tidak ada folder yang ditambah. Folder disimpan di
   `~/.omnix/projects.json`, klik satu baris membuka terminal dengan cwd di sana,
   dan `×` di baris menghapusnya dari sidebar. Path manual tetap tersedia lewat
   `Add Project by Path` di palette. Indexed history hanya mengisi jumlah sesi

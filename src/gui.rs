@@ -180,6 +180,90 @@ fn as_bool(args: &Value, key: &str) -> bool {
     args.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// Native folder chooser. Linux asks GTK for a `FileChooserNative`, which the
+/// desktop portal renders with the system look; Windows and macOS shell out to
+/// their own dialogs. Cancelling is `None`, not an error.
+#[cfg(target_os = "linux")]
+fn native_pick_folder(app: &App, start: Option<PathBuf>) -> Result<Option<String>> {
+    use gtk::prelude::*;
+    use tao::platform::unix::WindowExtUnix;
+
+    let dialog = gtk::FileChooserNative::new(
+        Some("Add project folder"),
+        Some(app.window.gtk_window()),
+        gtk::FileChooserAction::SelectFolder,
+        Some("Add project"),
+        Some("Cancel"),
+    );
+    if let Some(dir) = start {
+        dialog.set_current_folder(dir);
+    }
+    let accepted = dialog.run() == gtk::ResponseType::Accept;
+    let picked = dialog.file().and_then(|file| file.path());
+    dialog.destroy();
+    Ok(if accepted {
+        picked.map(|path| path.to_string_lossy().into_owned())
+    } else {
+        None
+    })
+}
+
+#[cfg(target_os = "windows")]
+fn native_pick_folder(_app: &App, start: Option<PathBuf>) -> Result<Option<String>> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let mut script = String::from(
+        "Add-Type -AssemblyName System.Windows.Forms; \
+         $d = New-Object System.Windows.Forms.FolderBrowserDialog; \
+         $d.Description = 'Add project folder';",
+    );
+    if let Some(dir) = start {
+        let dir = dir.to_string_lossy().replace('\'', "''");
+        script.push_str(&format!(" $d.SelectedPath = '{dir}';"));
+    }
+    script.push_str(
+        " if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) \
+         { Write-Output $d.SelectedPath }",
+    );
+
+    let out = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-STA", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .context("open the Windows folder picker")?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(if picked.is_empty() { None } else { Some(picked) })
+}
+
+#[cfg(target_os = "macos")]
+fn native_pick_folder(_app: &App, start: Option<PathBuf>) -> Result<Option<String>> {
+    let mut script = String::from("POSIX path of (choose folder with prompt \"Add project folder\"");
+    if let Some(dir) = start {
+        let dir = dir.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+        script.push_str(&format!(" default location POSIX file \"{dir}\""));
+    }
+    script.push(')');
+
+    let out = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .output()
+        .context("open the macOS folder picker")?;
+    if !out.status.success() {
+        return Ok(None);
+    }
+    let picked = String::from_utf8_lossy(&out.stdout).trim().trim_end_matches('/').to_string();
+    Ok(if picked.is_empty() { None } else { Some(picked) })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn native_pick_folder(_app: &App, _start: Option<PathBuf>) -> Result<Option<String>> {
+    Ok(None)
+}
+
 fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
     let parsed: Value = match serde_json::from_str(raw) {
         Ok(value) => value,
@@ -231,111 +315,13 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let path = as_str(&args, "path").ok_or_else(|| anyhow!("path is required"))?;
             Ok(json!({ "projects": projects::remove(&app.root, &path)? }))
         })(),
-        "fsList" => (|| {
-            // In-app folder picker. One listing per call keeps the browser
-            // responsive and lets the frontend keep its own breadcrumb state.
-            let requested = as_str(&args, "path")
+        "pickFolder" => (|| {
+            // Native folder chooser: GTK portal on Linux, the system dialog on
+            // Windows and macOS. The UI never draws its own file browser.
+            let start = as_str(&args, "path")
                 .map(PathBuf::from)
-                .unwrap_or_else(home_dir);
-            if requested.as_os_str().len() > 4096 {
-                return Err(anyhow!("folder path is too long"));
-            }
-            let path = std::fs::canonicalize(&requested)
-                .map_err(|err| anyhow!("cannot open {}: {err}", requested.display()))?;
-            if !path.is_dir() {
-                return Err(anyhow!("not a folder: {}", path.display()));
-            }
-
-            let mut entries = Vec::new();
-            let mut truncated = false;
-            let read = std::fs::read_dir(&path)
-                .map_err(|err| anyhow!("cannot list {}: {err}", path.display()))?;
-            for item in read.flatten() {
-                if entries.len() >= 400 {
-                    truncated = true;
-                    break;
-                }
-                let item_path = item.path();
-                let Ok(meta) = item.metadata() else { continue };
-                let is_dir = meta.is_dir();
-                let modified = meta
-                    .modified()
-                    .ok()
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_millis() as u64)
-                    .unwrap_or(0);
-                entries.push(json!({
-                    "name": item.file_name().to_string_lossy(),
-                    "path": item_path.to_string_lossy(),
-                    "isDir": is_dir,
-                    "modified": modified,
-                    "size": if is_dir { 0 } else { meta.len() },
-                }));
-            }
-            entries.sort_by(|a, b| {
-                let ad = a.get("isDir").and_then(Value::as_bool).unwrap_or(false);
-                let bd = b.get("isDir").and_then(Value::as_bool).unwrap_or(false);
-                bd.cmp(&ad).then_with(|| {
-                    a.get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_lowercase()
-                        .cmp(&b.get("name").and_then(Value::as_str).unwrap_or("").to_lowercase())
-                })
-            });
-
-            let mut crumbs = Vec::new();
-            for ancestor in path.ancestors() {
-                let name = ancestor
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Root".to_string());
-                crumbs.push(json!({"name": name, "path": ancestor.to_string_lossy()}));
-            }
-            crumbs.reverse();
-
-            let home = home_dir();
-            let mut places = Vec::new();
-            let candidates = [
-                ("Home", "home", home.clone()),
-                ("Desktop", "desktop", home.join("Desktop")),
-                ("Documents", "documents", home.join("Documents")),
-                ("Downloads", "downloads", home.join("Downloads")),
-            ];
-            for (name, kind, candidate) in candidates {
-                if candidate.is_dir() {
-                    places.push(json!({
-                        "name": name,
-                        "kind": kind,
-                        "path": candidate.to_string_lossy(),
-                    }));
-                }
-            }
-            let root = if cfg!(windows) {
-                path.ancestors()
-                    .last()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| PathBuf::from("C:\\"))
-            } else {
-                PathBuf::from("/")
-            };
-            if !places.iter().any(|p| p.get("path").and_then(Value::as_str) == Some(&*root.to_string_lossy())) {
-                places.push(json!({
-                    "name": "Computer",
-                    "kind": "root",
-                    "path": root.to_string_lossy(),
-                }));
-            }
-
-            Ok(json!({
-                "path": path.to_string_lossy(),
-                "parent": path.parent().map(|p| p.to_string_lossy().into_owned()),
-                "home": home.to_string_lossy(),
-                "crumbs": crumbs,
-                "places": places,
-                "entries": entries,
-                "truncated": truncated,
-            }))
+                .filter(|path| path.is_dir());
+            Ok(json!({ "path": native_pick_folder(app, start)? }))
         })(),
         "usage" => Ok(crate::usage::snapshot(home_dir().as_path())),
         "agentSettings" => (|| {

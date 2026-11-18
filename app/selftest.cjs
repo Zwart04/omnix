@@ -90,15 +90,11 @@ const byId = new Map();
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
   'agent-settings', 'agent-settings-meta', 'agent-settings-refresh',
   'agent-settings-path', 'agent-default-perms', 'settings-back', 'settings-search',
-  'picker-modal', 'picker-close', 'picker-cancel', 'picker-select', 'picker-up',
-  'picker-refresh', 'picker-list', 'picker-places', 'picker-crumbs', 'picker-selected',
-  'picker-error', 'picker-title',
   'cmd-modal', 'cmd-close', 'cmd-cancel', 'cmd-start', 'cmd-line', 'cmd-cwd', 'cmd-error',
   'palette', 'palette-input', 'palette-list'
 ].forEach((id) => byId.set(id, fakeEl(id)));
 
 byId.get('palette').hidden = true;
-byId.get('picker-modal').hidden = true;
 
 // scope chips ship in index.html; the stub rebuilds that initial DOM
 ['workspace', 'project', 'all'].forEach((scope) => {
@@ -692,35 +688,13 @@ require('./app.js');
   window.__omnix.reply(openReq.id, true, '{"url":"https://example.com"}');
   await tick();
 
-  // adding a project: in-app folder browser -> projectAdd -> refresh -> terminal there
+  // adding a project: native folder dialog -> projectAdd -> refresh -> terminal there
   byId.get('new-project').handlers.click(noop());
   await tick();
   const pickReq = posted[posted.length - 1];
-  assert.strictEqual(pickReq.cmd, 'fsList', '+ Project opens the in-app folder picker');
-  window.__omnix.reply(pickReq.id, true, JSON.stringify({
-    path: '/home/zwart/git',
-    parent: '/home/zwart',
-    home: '/home/zwart',
-    crumbs: [
-      { name: 'home', path: '/home' },
-      { name: 'zwart', path: '/home/zwart' },
-      { name: 'git', path: '/home/zwart/git' }
-    ],
-    places: [{ name: 'Home', kind: 'home', path: '/home/zwart' }],
-    entries: [{
-      name: 'newrepo', path: '/home/zwart/git/newrepo', isDir: true,
-      modified: Date.now(), size: 0
-    }],
-    truncated: false
-  }));
+  assert.strictEqual(pickReq.cmd, 'pickFolder', '+ Project asks the host for a folder');
+  window.__omnix.reply(pickReq.id, true, JSON.stringify({ path: '/home/zwart/git/newrepo' }));
   await tick();
-  assert.strictEqual(byId.get('picker-modal').hidden, false, 'picker modal is visible');
-  assert.strictEqual(byClass('picker-list', 'picker-row').length, 1, 'folder row rendered');
-  byClass('picker-list', 'picker-row')[0].handlers.click({ stopPropagation: noop() });
-  assert.match(byId.get('picker-selected').textContent, /newrepo/, 'selection label follows the row');
-  byId.get('picker-select').handlers.click(noop());
-  await tick();
-  assert.strictEqual(byId.get('picker-modal').hidden, true, 'picker closes after select');
   const addReq = posted[posted.length - 1];
   assert.strictEqual(addReq.cmd, 'projectAdd', 'picked folder is added');
   assert.deepStrictEqual(addReq.args, { path: '/home/zwart/git/newrepo' }, 'add sends the folder');
