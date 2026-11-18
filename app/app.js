@@ -307,15 +307,67 @@
     }
   };
 
+  /* Status bar copy stays human: RPC names belong in logs, not in the UI. */
+  var STATUS_DONE = {
+    appInfo: 'Ready',
+    status: 'Workspace loaded',
+    projects: 'Projects loaded',
+    historyProjects: 'History stats loaded',
+    historyScan: 'Scan complete',
+    historySessions: 'History loaded',
+    historySearch: 'Search complete',
+    ptySpawn: 'Terminal started',
+    ptyKill: 'Terminal closed',
+    ptyResize: 'Terminal resized',
+    ptyWrite: 'Input sent',
+    browserOpen: 'Browser opened',
+    browserClose: 'Browser closed',
+    browserFetch: 'Page fetched',
+    browserBounds: 'Layout updated',
+    agentSettings: 'Agent settings loaded',
+    projectAdd: 'Project added',
+    projectRemove: 'Project removed',
+    pickFolder: 'Folder selected',
+    handoffAgent: 'Handoff started',
+    memory: 'Memory loaded',
+    usage: 'Usage loaded'
+  };
+
+  var STATUS_FAIL = {
+    appInfo: 'App info',
+    status: 'Workspace',
+    projects: 'Projects',
+    historyProjects: 'History stats',
+    historyScan: 'History scan',
+    historySessions: 'History',
+    historySearch: 'Search',
+    ptySpawn: 'Terminal',
+    ptyKill: 'Terminal',
+    ptyResize: 'Terminal',
+    ptyWrite: 'Input',
+    browserOpen: 'Browser',
+    browserClose: 'Browser',
+    browserFetch: 'Page',
+    browserBounds: 'Browser layout',
+    agentSettings: 'Agent settings',
+    projectAdd: 'Project',
+    projectRemove: 'Project',
+    pickFolder: 'Folder picker',
+    handoffAgent: 'Handoff',
+    memory: 'Memory',
+    usage: 'Usage'
+  };
+
   function call(cmd, args, opts) {
     var quiet = !!(opts && opts.quiet);
     return rpc(cmd, args, opts && opts.timeout).then(function (res) {
-      if (!quiet) setLast(cmd + ' ok');
+      if (!quiet && STATUS_DONE[cmd]) setLast(STATUS_DONE[cmd]);
       return res;
     }, function (err) {
       if (!quiet) {
-        toast('error', cmd + ': ' + message(err));
-        setLast(cmd + ' failed');
+        var name = STATUS_FAIL[cmd] || 'Request';
+        toast('error', name + ' failed: ' + message(err));
+        setLast(name + ' failed');
       }
       return null;
     });
@@ -334,7 +386,6 @@
   var activeTab = null;
 
   var PANEL_TITLE = { browser: 'Browser', search: 'Search', docs: 'Docs', settings: 'Settings' };
-  var KIND_TAG = { terminal: 'pty', browser: 'web', search: 'srch', docs: 'docs', settings: 'set' };
 
   function byPaneKey(key) {
     for (var i = 0; i < tabs.length; i++) {
@@ -366,7 +417,6 @@
         var main = el('button', 'strip-main');
         main.type = 'button';
         if (tab === activeTab) main.setAttribute('aria-current', 'page');
-        main.appendChild(el('span', 'kind-tag', KIND_TAG[tab.kind] || tab.kind));
         var title = el('span', 'strip-title', tab.title);
         title.title = tab.paneKey || tab.title;
         main.appendChild(title);
@@ -543,15 +593,15 @@
   function splitActive() {
     var t = activeTab;
     if (!t || t.kind !== 'terminal') {
-      toast('warn', 'open a terminal before splitting');
+      toast('warn', 'Open a terminal before splitting.');
       return null;
     }
     if (t.group && t.group.panes.length >= maxPanes()) {
-      toast('warn', 'split limit reached (' + maxPanes() + ' panes)');
+      toast('warn', 'Split limit reached: ' + maxPanes() + ' panes.');
       return null;
     }
     var count = t.group ? t.group.panes.length + 1 : 2;
-    return createTerminal({ split: true, cwd: t.cwd, title: 'terminal ' + count });
+    return createTerminal({ split: true, cwd: t.cwd, title: 'Terminal ' + count });
   }
 
   /* tab strip "+" menu */
@@ -593,19 +643,19 @@
     var box = $('tab-new-menu');
     if (!box) return;
     box.textContent = '';
-    box.appendChild(menuRow('Terminal', 'pty', 'terminal', function () {
+    box.appendChild(menuRow('Terminal', '', 'terminal', function () {
       closeTabMenu();
-      createTerminal({ title: 'terminal' });
+      createTerminal({ title: 'Terminal' });
     }));
     box.appendChild(menuRow('Split Terminal', 'Ctrl+Shift+D', 'terminal', function () {
       closeTabMenu();
       splitActive();
     }));
-    box.appendChild(menuRow('Browser', 'web', 'browser', function () {
+    box.appendChild(menuRow('Browser', '', 'browser', function () {
       closeTabMenu();
       openStatic('browser');
     }));
-    box.appendChild(menuRow('Custom CLI\u2026', 'command', 'command', function () {
+    box.appendChild(menuRow('Custom CLI\u2026', '', 'command', function () {
       closeTabMenu();
       openCmdModal();
     }));
@@ -638,7 +688,7 @@
       box.appendChild(el('div', 'menu-empty', 'No agent CLIs detected on PATH.'));
     }
     box.appendChild(el('div', 'menu-sep'));
-    box.appendChild(menuRow('Agent settings\u2026', 'settings', 'gear', openAgentSettings));
+    box.appendChild(menuRow('Agent Settings\u2026', '', 'gear', openAgentSettings));
   }
 
   /* ---------- terminal ---------- */
@@ -679,7 +729,7 @@
     var existing = byPaneKey(paneKey);
     if (existing) {
       activate(existing);
-      toast('warn', 'pane already open: ' + paneKey);
+      toast('warn', 'This pane is already open: ' + paneKey);
       return existing;
     }
 
@@ -703,13 +753,13 @@
     pane.appendChild(controls);
     var panes = $('panes');
     if (!panes) {
-      toast('error', 'panes container missing');
+      toast('error', 'Pane container is missing.');
       return null;
     }
     var anchor = opts.split ? activeTab : null;
     if (anchor && (anchor.kind !== 'terminal' || !anchor.el)) anchor = null;
     if (anchor && anchor.group && anchor.group.panes.length >= maxPanes()) {
-      toast('warn', 'split limit reached (' + maxPanes() + ' panes)');
+      toast('warn', 'Split limit reached: ' + maxPanes() + ' panes.');
       return null;
     }
     var splitWrap = null;
@@ -733,7 +783,7 @@
 
     var title = opts.title ||
       (opts.agent ? opts.agent + ' ' + shortId(opts.sessionId)
-        : (splitWrap ? 'terminal ' + splitWrap.children.length : 'terminal'));
+        : (splitWrap ? 'Terminal ' + splitWrap.children.length : 'Terminal'));
 
     var tab = {
       id: 'tab' + (++tabSeq),
@@ -770,7 +820,7 @@
 
     if (typeof window.Terminal !== 'function') {
       host.appendChild(el('div', 'side-empty', 'xterm.js global Terminal is missing'));
-      toast('error', 'xterm.js failed to load (window.Terminal missing)');
+      toast('error', 'Terminal engine failed to load.');
       return tab;
     }
 
@@ -793,7 +843,7 @@
         theme: termTheme()
       });
     } catch (err) {
-      toast('error', 'terminal init failed: ' + message(err));
+      toast('error', 'Terminal failed to start: ' + message(err));
       return tab;
     }
     tab.term = term;
@@ -804,16 +854,16 @@
         term.loadAddon(tab.fit);
       } catch (err) {
         tab.fit = null;
-        toast('warn', 'fit addon unavailable: ' + message(err));
+        toast('warn', 'Terminal fit is unavailable: ' + message(err));
       }
     } else {
-      toast('warn', 'window.FitAddon.FitAddon missing; terminal will not auto-fit');
+      toast('warn', 'Terminal auto-fit is unavailable.');
     }
 
     try {
       term.open(host);
     } catch (err) {
-      toast('error', 'terminal mount failed: ' + message(err));
+      toast('error', 'Terminal failed to mount: ' + message(err));
       return tab;
     }
 
@@ -887,7 +937,7 @@
         tab.term.write('\x1b[38;5;244m[omnix] handoff brief: ' +
           tab.handoffBrief + '\x1b[0m\r\n');
       }
-      if (res.pid != null) setLast('ptySpawn ' + paneKey + ' pid ' + res.pid);
+      if (res.pid != null) setLast('Terminal started (PID ' + res.pid + ')');
     });
 
     return tab;
@@ -935,7 +985,7 @@
       for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
       return out;
     } catch (err) {
-      toast('error', 'ptyData: invalid base64');
+      toast('error', 'Terminal data is not valid base64.');
       return null;
     }
   }
@@ -969,7 +1019,7 @@
     var colon = value.indexOf(':');
     var scheme = value.slice(0, colon).toLowerCase();
     if (scheme !== 'http' && scheme !== 'https') {
-      toast('error', 'only http and https URLs are allowed');
+      toast('error', 'Only http and https URLs are allowed.');
       return null;
     }
     return value;
@@ -977,12 +1027,12 @@
 
   function openBrowserNative() {
     if (!browser.url) {
-      toast('warn', 'no URL to open');
+      toast('warn', 'Open a URL first.');
       return Promise.resolve(null);
     }
     var rect = browserRect();
     if (rect.width < 8 || rect.height < 8) {
-      toast('warn', 'browser area is not laid out yet');
+      toast('warn', 'Browser area is not ready yet.');
       return Promise.resolve(null);
     }
     return call('browserOpen', { url: browser.url, rect: rect }).then(function (res) {
@@ -990,7 +1040,7 @@
       browser.open = true;
       browser.visible = true;
       browser.lastRect = rect;
-      setLast('browserOpen ' + (res.url || browser.url));
+      setLast('Browser: ' + (res.url || browser.url));
       return res;
     });
   }
@@ -1029,7 +1079,7 @@
   function onBrowserOpen() {
     var url = normalizeUrl($('browser-url').value);
     if (!url) {
-      toast('warn', 'enter an http or https URL');
+      toast('warn', 'Enter an http or https URL.');
       return Promise.resolve(null);
     }
     $('browser-url').value = url;
@@ -1039,16 +1089,16 @@
       var pre = $('browser-text');
       if (!pre) return Promise.resolve(null);
       pre.hidden = false;
-      pre.textContent = 'fetching ' + url + ' ...';
-      setLast('browserFetch ' + url);
+      pre.textContent = 'Fetching ' + url + '…';
+      setLast('Fetching ' + url);
       return call('browserFetch', { url: url, dump: 'markdown' }).then(function (res) {
         if (!res) {
-          pre.textContent = 'fetch failed: ' + url;
+          pre.textContent = 'Fetch failed: ' + url;
           return null;
         }
         var text = typeof res.text === 'string' ? res.text : JSON.stringify(res, null, 2);
         pre.textContent = text || '(empty document)';
-        setLast('browserFetch ok ' + url);
+        setLast('Fetched ' + url);
         return res;
       });
     }
@@ -1066,7 +1116,7 @@
       pre.hidden = true;
       pre.textContent = '';
     }
-    setLast('engine ' + engine);
+    setLast('Engine: ' + engine);
     if (engine === 'native' && activeTab && activeTab.kind === 'browser' && browser.url) {
       openBrowserNative();
     }
@@ -1099,7 +1149,7 @@
       renderAgentSettings(res);
       return res;
     }).catch(function (err) {
-      toast('error', 'agent settings: ' + message(err));
+      toast('error', 'Agent settings: ' + message(err));
     });
   }
 
@@ -1184,7 +1234,7 @@
     title.appendChild(iconNode(agent.name, 'agent-mark'));
     title.appendChild(el('span', 'agent-name', agentLabel(agent.name)));
     title.appendChild(el('span', 'tag agent-kind', 'CLI'));
-    if (!installed) title.appendChild(el('span', 'agent-missing-tag', 'not detected'));
+    if (!installed) title.appendChild(el('span', 'agent-missing-tag', 'Not Detected'));
     main.appendChild(title);
     var cmd = el('code', 'agent-cmd mono', agentCmdLine(agent, defaults));
     main.appendChild(cmd);
@@ -1236,7 +1286,7 @@
       function () { saveLaunch(agent, argsInput, envInput, state, cmd); },
       'Merged into the agent process environment.');
     var foot = el('div', 'agent-detail-foot');
-    foot.appendChild(el('span', 'set-path mono', 'command overrides apply on the next launch'));
+    foot.appendChild(el('span', 'set-path mono', 'Command overrides apply on the next launch.'));
     foot.appendChild(state);
     details.appendChild(foot);
     row.appendChild(details);
@@ -1314,7 +1364,7 @@
 
   function resumeSession(s) {
     if (!s || !s.agent || !s.sessionId) {
-      toast('warn', 'session has no agent or id');
+      toast('warn', 'This session has no agent or ID.');
       return null;
     }
     return createTerminal({
@@ -1332,7 +1382,7 @@
     var top = el('div', 'hit-top');
     top.appendChild(el('span', 'hit-agent', hit.agent || '?'));
     top.appendChild(el('span', 'hit-title', hit.title || '(untitled)'));
-    var resume = button('resume', 'btn sm', function () {
+    var resume = button('Resume', 'btn sm', function () {
       resumeSession(hit);
     });
     top.appendChild(resume);
@@ -1358,7 +1408,7 @@
     if (ev && typeof ev.preventDefault === 'function') ev.preventDefault();
     var query = $('search-query').value.trim();
     if (!query) {
-      toast('warn', 'search query is empty');
+      toast('warn', 'Enter a search query.');
       return Promise.resolve(null);
     }
     var args = { query: query, limit: 20 };
@@ -1366,13 +1416,13 @@
     if (agent) args.agent = agent;
     if ($('search-conversation').checked) args.conversation = true;
 
-    setLast('historySearch ' + query);
+    setLast('Search: ' + query);
     return call('historySearch', args).then(function (res) {
       var list = $('search-results');
       var meta = $('search-meta');
       list.textContent = '';
       if (!res) {
-        meta.textContent = 'search failed';
+        meta.textContent = 'Search failed';
         return null;
       }
       var hits = Array.isArray(res.hits) ? res.hits : [];
@@ -1565,18 +1615,18 @@
 
   function startHandoff() {
     if (!handoffSource) {
-      toast('warn', 'choose a session from Agents history first');
+      toast('warn', 'Choose a session from Agents history first.');
       return Promise.resolve(null);
     }
     var select = $('handoff-target');
     var agent = select ? select.value : '';
     if (!agent) {
-      toast('warn', 'pick a target agent');
+      toast('warn', 'Pick a target agent.');
       return Promise.resolve(null);
     }
     var start = $('handoff-start');
     if (start) start.disabled = true;
-    setLast('handoffAgent ' + agent);
+    setLast('Handoff to ' + agent);
     return call('handoffAgent', {
       agent: agent,
       sourceAgent: handoffSource.agent,
@@ -1594,8 +1644,8 @@
         title: agent + ' handoff',
         handoffBrief: res.brief
       });
-      toast('ok', 'handoff to ' + agent + ' \u00b7 ' + res.messages + ' messages');
-      setLast('brief ' + res.brief);
+      toast('ok', 'Handoff to ' + agent + ' \u00b7 ' + res.messages + ' messages');
+      setLast('Handoff brief ready');
       return res;
     }, function (err) {
       if (start) start.disabled = false;
@@ -1622,7 +1672,7 @@
     var err = $('cmd-error');
     var command = line ? line.value.trim() : '';
     if (!command) {
-      if (err) err.textContent = 'command is required';
+      if (err) err.textContent = 'Command is required.';
       return;
     }
     if (err) err.textContent = '';
@@ -1651,7 +1701,7 @@
       var parts = ['omnix ' + version];
       if (info.root) parts.push(info.root);
       parts.push('lightpanda ' + (engine.lightpanda ? (engine.version || 'ready') : 'unavailable'));
-      $('status-left').textContent = parts.join('   ');
+      $('status-left').textContent = parts.join(' \u00b7 ');
       return info;
     });
   }
@@ -1671,7 +1721,7 @@
       renderWorkspaceCount(list);
       var db = typeof res.dbBytes === 'number' ? (res.dbBytes / 1048576).toFixed(1) + ' MiB' : '?';
       $('status-right').textContent =
-        'sessions ' + num(res.sessions) + '   messages ' + num(res.messages) + '   db ' + db;
+        'Sessions ' + num(res.sessions) + ' \u00b7 Messages ' + num(res.messages) + ' \u00b7 Index ' + db;
       return res;
     });
   }
@@ -1789,7 +1839,7 @@
     for (var i = 0; i < panes.length; i++) {
       var pane = panes[i] || {};
       list.appendChild(memoryRow(
-        String(pane.label || 'terminal'),
+        String(pane.label || 'Terminal'),
         'PID ' + pane.pid + (pane.cwd ? ' \u00b7 ' + baseName(pane.cwd) : ''),
         Number(pane.rss) || 0,
         Number(pane.processes) || 0,
@@ -1911,7 +1961,7 @@
       renderProjects(savedProjects);
       return hist;
     }).catch(function (err) {
-      toast('error', 'projects: ' + message(err));
+      toast('error', 'Projects: ' + message(err));
       return null;
     });
   }
@@ -1935,7 +1985,7 @@
         openProject({ path: path, name: baseName(path) });
       });
     }, function (err) {
-      toast('error', 'add project: ' + message(err));
+      toast('error', 'Add project: ' + message(err));
       throw err;
     });
   }
@@ -1945,7 +1995,7 @@
     var err = $('project-error');
     var path = input ? input.value.trim() : '';
     if (!path) {
-      if (err) err.textContent = 'folder path is required';
+      if (err) err.textContent = 'Folder path is required.';
       return;
     }
     if (err) err.textContent = '';
@@ -1963,7 +2013,7 @@
       if (!path) return null;
       return addProjectPath(path);
     }).catch(function (err) {
-      toast('error', 'add project: ' + message(err));
+      toast('error', 'Add project: ' + message(err));
       return null;
     });
   }
@@ -1975,7 +2025,7 @@
       renderProjects(savedProjects);
       toast('ok', 'Removed ' + (p.name || baseName(p.path)) + ' from the sidebar');
     }).catch(function (err) {
-      toast('error', 'remove project: ' + message(err));
+      toast('error', 'Remove project: ' + message(err));
     });
   }
 
@@ -2070,9 +2120,10 @@
   function renderWorkspaceCount(list) {
     var n = String(list.length);
     var a = $('workspace-count');
-    var b = $('project-count');
-    if (a) a.textContent = n;
-    if (b) b.textContent = n;
+    if (a) {
+      a.textContent = n;
+      a.hidden = n === '0';
+    }
   }
 
   function renderProjects(list) {
@@ -2157,7 +2208,7 @@
       var meta = el('div', 'proj-meta');
       meta.appendChild(el('span', null, fmtNum(count) + (count === 1 ? ' session' : ' sessions')));
       if (ws && ws.branch) meta.appendChild(el('span', 'tag branch', ws.branch));
-      if (ws && ws.sleeping) meta.appendChild(el('span', 'ws-state sleeping', 'sleeping'));
+      if (ws && ws.sleeping) meta.appendChild(el('span', 'ws-state sleeping', 'Sleeping'));
       var agents = Array.isArray(stat.agents) ? stat.agents : (Array.isArray(p.agents) ? p.agents : []);
       if (!agents.length && sessions.length) {
         agents = sessions.map(function (s) { return s.agent; });
@@ -2319,7 +2370,7 @@
       agentListSig = sig;
       box.textContent = '';
 
-      var all = el('button', 'chip', 'All agents');
+      var all = el('button', 'chip', 'All Agents');
       all.type = 'button';
       all.dataset.agent = '';
       all.addEventListener('click', guard(function () {
@@ -2365,7 +2416,7 @@
     }
     var updated = Number(hist.scan.files) || 0;
     var unchanged = Number(hist.scan.unchanged) || 0;
-    var parts = [fmtNum(updated) + ' updated'];
+    var parts = ['Updated ' + fmtNum(updated)];
     if (unchanged) parts.push(fmtNum(unchanged) + ' unchanged');
     var messages = fmtNum(hist.scan.messages || 0) + (unchanged ? ' new messages' : ' messages');
     parts.push(messages);
@@ -2473,13 +2524,13 @@
       hist.sessions = res && Array.isArray(res.sessions) ? res.sessions : [];
       if (hist.sessions.length) hist.lastSession = hist.sessions[0];
       hist.listError = null;
-      setLast('historySessions ok');
+      setLast('History loaded');
       return res;
     }, function (err) {
       hist.sessions = [];
       hist.listError = 'History listing failed: ' + message(err);
-      toast('error', 'historySessions: ' + message(err));
-      setLast('historySessions failed');
+      toast('error', 'History sessions: ' + message(err));
+      setLast('History could not load');
       return null;
     });
   }
@@ -2497,12 +2548,12 @@
     return rpc('historyScan', {}, SCAN_TIMEOUT_MS).then(function (scan) {
       hist.scan = scan || null;
       hist.scannedAt = Date.now();
-      setLast('historyScan ok');
+      setLast('History scan complete');
       renderHistory();
     }, function (err) {
       hist.scanError = 'History scan failed: ' + message(err);
-      toast('error', 'historyScan: ' + message(err));
-      setLast('historyScan failed');
+      toast('error', 'History scan: ' + message(err));
+      setLast('History scan failed');
       renderHistory();
     }).then(function () {
       return loadSessions();
@@ -2531,24 +2582,24 @@
   /* ---------- command palette ---------- */
 
   var paletteItems = [
-    { label: 'New Terminal', hint: 'pty', run: function () { createTerminal({ title: 'terminal' }); } },
-    { label: 'New Browser', hint: 'web', run: function () { openStatic('browser'); } },
-    { label: 'New Agent Session', hint: 'agent', run: function () { toggleTabMenu(); } },
-    { label: 'Custom CLI', hint: 'agent', run: openCmdModal },
-    { label: 'Search History', hint: 'panel', run: function () {
+    { label: 'New Terminal', hint: '', run: function () { createTerminal({ title: 'Terminal' }); } },
+    { label: 'New Browser', hint: '', run: function () { openStatic('browser'); } },
+    { label: 'New Agent Session', hint: '', run: function () { toggleTabMenu(); } },
+    { label: 'Custom CLI', hint: '', run: openCmdModal },
+    { label: 'Search History', hint: '', run: function () {
       openStatic('search');
       var input = $('search-query');
       if (input) input.focus();
     } },
-    { label: 'Hand off to another agent', hint: 'agent', run: function () { openHandoff(null); } },
-    { label: 'Docs', hint: 'panel', run: function () { openStatic('docs'); } },
-    { label: 'Agent settings', hint: 'settings', run: openAgentSettings },
+    { label: 'Hand Off to Another Agent', hint: '', run: function () { openHandoff(null); } },
+    { label: 'Docs', hint: '', run: function () { openStatic('docs'); } },
+    { label: 'Agent Settings', hint: '', run: openAgentSettings },
     { label: 'Split Terminal', hint: 'Ctrl+Shift+D', run: splitActive },
-    { label: 'Usage and memory', hint: 'usage', run: openUsage },
-    { label: 'Add Project Folder', hint: 'folder', run: pickProject },
-    { label: 'Add Project by Path', hint: 'workspace', run: openProjectModal },
-    { label: 'Rescan History', hint: 'history', run: function () { return loadHistory(); } },
-    { label: 'Resume last session', hint: 'history', run: resumeLastSession }
+    { label: 'Usage and Memory', hint: '', run: openUsage },
+    { label: 'Add Project Folder', hint: '', run: pickProject },
+    { label: 'Add Project by Path', hint: '', run: openProjectModal },
+    { label: 'Rescan History', hint: '', run: function () { return loadHistory(); } },
+    { label: 'Resume Last Session', hint: '', run: resumeLastSession }
   ];
 
   var paletteReturn = null;
@@ -2702,32 +2753,38 @@
     paletteFilter(input ? input.value : '');
   }
 
+  /* Capture phase: xterm stops keydown at its textarea, so a bubble listener
+     never sees app shortcuts while a terminal has focus. */
   function onGlobalKey(ev) {
     var key = ev && ev.key ? String(ev.key) : '';
     var mod = ev && (ev.ctrlKey || ev.metaKey);
-    if (mod && (key === 'k' || key === 'K')) {
+    function take() {
       ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+    }
+    if (mod && (key === 'k' || key === 'K')) {
+      take();
       if (paletteVisible()) paletteClose();
       else paletteOpen();
       return;
     }
     if (mod && ev.shiftKey && (key === 'p' || key === 'P')) {
-      ev.preventDefault();
+      take();
       paletteOpen();
       return;
     }
     if (mod && ev.shiftKey && (key === 'd' || key === 'D')) {
-      ev.preventDefault();
+      take();
       splitActive();
       return;
     }
     if (key === 'Escape') {
-      if (paletteVisible()) paletteClose();
-      else if (!$('handoff-modal').hidden) hideModal($('handoff-modal'));
-      else if (!$('project-modal').hidden) hideModal($('project-modal'));
-      else if (!$('cmd-modal').hidden) hideModal($('cmd-modal'));
-      else if (!$('usage-modal').hidden) hideModal($('usage-modal'));
-      else if (!($('tab-new-menu') || {}).hidden) closeTabMenu();
+      if (paletteVisible()) { take(); paletteClose(); }
+      else if (!$('handoff-modal').hidden) { take(); hideModal($('handoff-modal')); }
+      else if (!$('project-modal').hidden) { take(); hideModal($('project-modal')); }
+      else if (!$('cmd-modal').hidden) { take(); hideModal($('cmd-modal')); }
+      else if (!$('usage-modal').hidden) { take(); hideModal($('usage-modal')); }
+      else if (!($('tab-new-menu') || {}).hidden) { take(); closeTabMenu(); }
     }
   }
 
@@ -2784,7 +2841,7 @@
     tab.title = tab.title + ' (exited)';
     renderTabs();
     updateWorkingMarks();
-    setLast('ptyExit ' + payload.paneKey + ' code ' + code);
+    setLast('Terminal exited (code ' + code + ')');
   };
 
   EVENTS.browserNav = function (payload) {
@@ -2793,7 +2850,7 @@
       var input = $('browser-url');
       if (input) input.value = browser.url;
     }
-    if (payload.title) setLast('browser: ' + payload.title);
+    if (payload.title) setLast('Browser: ' + payload.title);
   };
 
   EVENTS.toast = function (payload) {
@@ -2854,7 +2911,7 @@
     var emptyBtn = $('pane-empty-terminal');
     if (emptyBtn) {
       emptyBtn.addEventListener('click', guard(function () {
-        createTerminal({ title: 'terminal' });
+        createTerminal({ title: 'Terminal' });
       }));
     }
 
@@ -3064,7 +3121,7 @@
       if (ev && ev.target === $('palette')) paletteClose();
     }));
 
-    document.addEventListener('keydown', guard(onGlobalKey));
+    document.addEventListener('keydown', guard(onGlobalKey), true);
 
     window.addEventListener('resize', guard(function () {
       for (var j = 0; j < tabs.length; j++) {

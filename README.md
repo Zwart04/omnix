@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.5.1_amd64.deb` | `sudo apt install ./omnix_0.5.1_amd64.deb` |
+| Linux x86_64 | `omnix_0.5.2_amd64.deb` | `sudo apt install ./omnix_0.5.2_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.5.1-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.5.1-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.5.2-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.5.2-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -39,10 +39,11 @@ Yang sudah jalan dan dites di repo ini:
   `~/.claude/projects` (tanpa `subagents/`), dan `~/.local/share/opencode/opencode.db`
   read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
-- GUI satu jendela bergaya macOS: chrome translulen, aksen biru sistem,
-  sudut membulat, dan permukaan berlapis, tetap dirender WebView Rust tanpa
-  Electron/React. Sidebar workspace dengan brand `Omnix`,
-  satu baris ikon (Search, Handoff, Docs, Agents), lalu satu grup workspace
+- GUI satu jendela bergaya macOS: chrome solid, aksen biru sistem, radius
+  kecil yang konsisten, dan permukaan berlapis, tetap dirender WebView Rust
+  tanpa Electron/React. Aturan visual dan copy ada di `DESIGN.md`.
+  Sidebar workspace dengan brand `Omnix`, satu baris ikon (Search, Handoff,
+  Docs, Agents), lalu satu grup workspace
   yang bisa dilipat dan judulnya bisa diganti langsung. Grup itu hanya berisi
   folder yang kamu pin lewat `+ Project`; indexed history cuma memperkaya baris
   yang path-nya cocok (jumlah sesi, logo agent, waktu), tidak menambah folder.
@@ -70,7 +71,7 @@ Yang sudah jalan dan dites di repo ini:
   dan tombol split baru dinonaktifkan saat grup sudah berisi empat pane.
 - Status bar menampilkan RAM proses Omnix dan RAM semua terminal/agent yang
   dijalankannya: `App X · AI Y`. Klik chip itu (atau palette
-  `Usage and memory`) untuk modal usage: total process tree Omnix, bagian
+  `Usage and Memory`) untuk modal usage: total process tree Omnix, bagian
   app shell + WebKit, dan baris per-pane berisi label, PID, cwd, jumlah proses,
   serta nama proses anak terberat. Semua child process agent ikut dihitung,
   bukan hanya shell PTY. Di Linux pembacaan langsung dari `/proc`; macOS lewat

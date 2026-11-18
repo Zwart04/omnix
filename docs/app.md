@@ -10,18 +10,20 @@ Kontrak internal jendela ada di `docs/gui.md`; arsitektur data ada di
 > Linux: `omnix` tanpa argumen membuka jendela, terminal memakai PTY asli, dan
 > seluruh alur IPC lulus selftest otomatis (lihat bagian Selftest).
 
-Tampilan memakai bahasa visual macOS: font sistem per platform, permukaan
-translulen, aksen biru, sudut membulat, dan pemisah tipis. Palet terminal tetap
+Tampilan memakai bahasa visual macOS dengan kepadatan Orca: font sistem per
+platform, chrome solid, satu aksen biru, sudut kecil yang konsisten, dan
+pemisah tipis. Tidak ada gradient dekoratif, label ALL CAPS, atau pill di
+tombol dan chip. Aturan lengkapnya ada di `DESIGN.md`. Palet terminal tetap
 palet ANSI masing-masing platform supaya warna TUI agent tidak berubah.
-Di Linux, efek blur `backdrop-filter` dimatikan karena WebKitGTK salah
-memposisikan lapisan blur: menu bisa tergambar di sidebar dan tidak menerima
-klik. Permukaan tetap translulen; hanya blur-nya yang dilewati.
+Overlay seperti menu dan palette memakai permukaan opaque; `backdrop-filter`
+tidak dipakai karena WebKitGTK pernah salah memposisikan lapisan blur sehingga
+menu tergambar di sidebar dan tidak menerima klik.
 
 ## Pemantauan RAM
 
 Chip di status bar menunjukkan dua angka: total proses Omnix (`App`) dan total
 semua terminal/agent yang dijalankan dari Omnix (`AI`). Klik chip atau buka
-palette `Usage and memory` untuk rincian:
+palette `Usage and Memory` untuk rincian:
 
 - total process tree Omnix beserta jumlah proses;
 - app shell + WebKit dihitung terpisah dari terminal;

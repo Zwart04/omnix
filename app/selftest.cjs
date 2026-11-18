@@ -84,7 +84,7 @@ const byId = new Map();
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
   'project-tree', 'project-refresh', 'project-add-icon', 'cmd-btn', 'side-settings', 'rail-agents',
   'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
-  'workspace-count', 'workspace-refresh', 'project-count', 'rail-agents-count',
+  'workspace-count', 'workspace-refresh', 'rail-agents-count',
   'usage-chip', 'usage-modal', 'usage-close', 'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
@@ -156,7 +156,7 @@ global.document = {
     if (sel.indexOf('.panel-btn') === 0) return panelButtons;
     return [];
   },
-  addEventListener(type, fn) { docHandlers[type] = fn; }
+  addEventListener(type, fn, capture) { docHandlers[type] = fn; docHandlers[type + ':capture'] = !!capture; }
 };
 document.activeElement = byId.get('cmd-btn');
 
@@ -255,7 +255,7 @@ require('./app.js');
     '108 sessions', 'saved project carries its indexed session count');
   assert.strictEqual(all(bootRows[0], (n) => n.className === 'proj-time')[0].textContent, '2m ago',
     'saved project carries its indexed relative time');
-  assert.strictEqual(byId.get('project-count').textContent, '2', 'project count follows the list');
+  assert.strictEqual(byId.get('workspace-count').textContent, '2', 'workspace count follows the list');
   const bootIcons = byClass('workspace-list', 'icon');
   assert.strictEqual(bootIcons.length, 7, 'two folder marks plus five agent marks');
   assert.ok(bootIcons.every((n) => /^<svg viewBox=/.test(n.innerHTML || '')), 'icons are inline SVGs');
@@ -361,7 +361,7 @@ require('./app.js');
 
   assert.strictEqual(byId.get('history-count').textContent, '290 sessions', 'session count text');
   assert.match(byId.get('history-meta').textContent,
-    /^290 updated \u00b7 288 unchanged \u00b7 44,846 new messages \u00b7 /,
+    /^Updated 290 \u00b7 288 unchanged \u00b7 44,846 new messages \u00b7 /,
     'incremental scan status line');
   assert.strictEqual(byId.get('rail-agents-count').hidden, false, 'agents badge appears with history');
   assert.strictEqual(byId.get('rail-agents-count').textContent, '290', 'badge carries the session total');
@@ -598,6 +598,8 @@ require('./app.js');
   byId.get('settings-search').handlers.input(noop);
 
   // keyboard: arrows move the active row, escape closes, focus returns
+  assert.strictEqual(docHandlers['keydown:capture'], true,
+    'app shortcuts listen before xterm swallows the key');
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, false, 'Ctrl+K opens the palette');
   const rows = byId.get('palette-list').children;

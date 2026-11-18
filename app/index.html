@@ -105,7 +105,6 @@
           <div class="ws-group-body" id="workspace-group-body">
             <div class="ws-subhead">
               <span class="ws-subtitle">Projects</span>
-              <span class="side-count" id="project-count">0</span>
             </div>
             <div id="project-tree" class="tree">
               <div id="workspace-list" class="tree-body side-list"></div>
@@ -115,7 +114,7 @@
                    stroke-linecap="round" aria-hidden="true">
                 <path d="M12 5v14M5 12h14" />
               </svg>
-              Add project
+              Add Project
             </button>
           </div>
         </section>
@@ -149,7 +148,7 @@
               <path d="m7 9 3 3-3 3M13 15h4" />
             </svg>
           </span>
-          <p class="pane-empty-title">Nothing open</p>
+          <p class="pane-empty-title">Nothing Open</p>
           <p class="hint">Start a terminal in this workspace, or open a browser tab.</p>
           <div class="pane-empty-actions">
             <button class="btn primary" type="button" id="pane-empty-terminal">New Terminal</button>
@@ -170,7 +169,7 @@
           </div>
           <div class="browser-body">
             <div id="browser-native" class="browser-rect">
-              <p class="rect-note">native WebView renders over this area</p>
+              <p class="rect-note">Native WebView renders over this area.</p>
             </div>
             <pre id="browser-text" class="browser-text mono" hidden></pre>
           </div>
@@ -178,14 +177,14 @@
 
         <section class="pane pane-search" data-kind="search" hidden aria-label="History search">
           <div class="panel-head">
-            <h2>History search</h2>
+            <h2>History Search</h2>
             <p class="hint">Full-text search over indexed agent transcripts.</p>
           </div>
           <form class="search-bar" id="search-form">
             <label class="sr-only" for="search-query">Search query</label>
             <input id="search-query" class="input grow mono" type="text" placeholder="query, e.g. blank restore"
                    spellcheck="false" autocomplete="off" />
-            <label class="check"><input type="checkbox" id="search-conversation" /> conversation</label>
+            <label class="check"><input type="checkbox" id="search-conversation" /> Conversation</label>
             <select id="search-agent" class="input" aria-label="Agent filter"></select>
             <button class="btn primary" type="submit">Search</button>
           </form>
@@ -218,15 +217,15 @@
               </label>
 
               <div class="settings-nav-group">
-                <span class="settings-nav-label">AI capabilities</span>
+                <span class="settings-nav-label">AI Capabilities</span>
                 <button class="settings-nav-item is-active" type="button" data-settings="agents">
                   <span>Agents</span><span class="tag">CLI</span>
                 </button>
                 <button class="settings-nav-item" type="button" disabled>
-                  <span>Skills</span><span class="tag">soon</span>
+                  <span>Skills</span><span class="tag">Soon</span>
                 </button>
                 <button class="settings-nav-item" type="button" disabled>
-                  <span>MCP servers</span><span class="tag">soon</span>
+                  <span>MCP Servers</span><span class="tag">Soon</span>
                 </button>
               </div>
 
@@ -261,7 +260,7 @@
               <div class="settings-scroll">
                 <div class="settings-perms">
                   <div class="settings-perms-text">
-                    <span class="settings-perms-title">New agents permissions</span>
+                    <span class="settings-perms-title">New Agent Permissions</span>
                     <span class="hint">Applied when a new agent session starts without an explicit override.</span>
                   </div>
                   <select id="agent-default-perms" class="input settings-perms-select"
@@ -398,7 +397,7 @@
   <div id="project-modal" class="modal" hidden>
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="project-title">
       <header class="modal-head">
-        <h2 id="project-title">Add project</h2>
+        <h2 id="project-title">Add Project</h2>
         <button class="icon-btn" type="button" id="project-close" aria-label="Close">
           <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"
                stroke-linecap="round" aria-hidden="true">
@@ -465,7 +464,7 @@
       <section class="mem-block">
         <header class="mem-head">
           <div>
-            <h3 class="mem-title">Process memory</h3>
+            <h3 class="mem-title">Process Memory</h3>
             <p class="mem-sub" id="memory-total">Memory data unavailable</p>
           </div>
           <span class="mem-ai-tag mono" id="memory-ai">AI -</span>
