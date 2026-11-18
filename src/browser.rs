@@ -31,15 +31,6 @@ fn lightpanda(args: &[&str]) -> Result<std::process::ExitStatus> {
     })
 }
 
-/// True when the binary runs at all; used by the GUI engine badge.
-pub fn available() -> bool {
-    Command::new(binary())
-        .arg("version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
-
 pub fn version() -> Option<String> {
     let out = Command::new(binary()).arg("version").output().ok()?;
     if !out.status.success() {

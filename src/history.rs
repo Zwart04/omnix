@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const MAX_MESSAGE_CHARS: usize = 8_000;
 
 const SCHEMA: &str = r#"
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS messages(
 CREATE INDEX IF NOT EXISTS messages_session ON messages(session_row_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
   user_text, assistant_text, tool_text, identifiers,
-  tokenize="unicode61 tokenchars '_.-/+'", detail=full
+  tokenize="unicode61 tokenchars '_.-/+'", detail=column
 );
 "#;
 
@@ -67,13 +67,62 @@ pub fn open(db_path: &Path) -> Result<Connection> {
     // Panel reads and a background rescan can overlap; wait instead of failing.
     conn.busy_timeout(std::time::Duration::from_secs(10))?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    let prior: i64 = conn
+        .query_row(
+            "SELECT CAST(value AS INTEGER) FROM meta WHERE key='schema_version'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
     conn.execute_batch(SCHEMA)?;
+    if prior < 2 {
+        migrate_fts(&conn)?;
+    }
     conn.execute(
         "INSERT INTO meta(key,value) VALUES('schema_version', ?1)
          ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value <> excluded.value",
         params![SCHEMA_VERSION.to_string()],
     )?;
     Ok(conn)
+}
+
+/// `detail=full` stores a position for every token; `detail=column` keeps
+/// enough positions for snippets and phrase queries at a fraction of the
+/// index size. Rebuild once, copying content before the swap so a failed
+/// migration never loses transcript text.
+fn migrate_fts(conn: &Connection) -> Result<()> {
+    let sql: Option<String> = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages_fts'",
+            [],
+            |r| r.get(0),
+        )
+        .ok();
+    let Some(sql) = sql else {
+        return Ok(());
+    };
+    if !sql.to_ascii_lowercase().contains("detail=full") {
+        return Ok(());
+    }
+    conn.execute_batch(
+        r#"
+        DROP TABLE IF EXISTS messages_fts_v2;
+        CREATE VIRTUAL TABLE messages_fts_v2 USING fts5(
+          user_text, assistant_text, tool_text, identifiers,
+          tokenize="unicode61 tokenchars '_.-/+'", detail=column
+        );
+        INSERT INTO messages_fts_v2(rowid,user_text,assistant_text,tool_text,identifiers)
+          SELECT rowid,user_text,assistant_text,tool_text,identifiers FROM messages_fts;
+        BEGIN IMMEDIATE;
+        DROP TABLE messages_fts;
+        ALTER TABLE messages_fts_v2 RENAME TO messages_fts;
+        COMMIT;
+        "#,
+    )?;
+    // The freed pages stay in the file until a vacuum. One pass after the
+    // one-time migration is cheaper than a smaller index that never shrinks.
+    conn.execute_batch("VACUUM")?;
+    Ok(())
 }
 
 fn jsonl_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
@@ -670,6 +719,60 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn migrates_full_fts_to_column_and_keeps_search() {
+        let dir = temp_dir("fts-migrate");
+        let db = dir.join("history.db");
+        {
+            let conn = Connection::open(&db).unwrap();
+            let old_schema = SCHEMA.replace("detail=column", "detail=full");
+            conn.execute_batch(&old_schema).unwrap();
+            conn.execute(
+                "INSERT INTO meta(key,value) VALUES('schema_version','1')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO sessions(id,agent,session_id,file_path,title,resume_command)
+                 VALUES(1,'codex','s1','/tmp/transcript.jsonl','t','codex resume s1')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages(id,session_row_id,role,text_truncated)
+                 VALUES(1,1,'assistant',0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages_fts(rowid,user_text,assistant_text,tool_text,identifiers)
+                 VALUES(1,'','blank restore needle','','needle')",
+                [],
+            )
+            .unwrap();
+        }
+        let conn = open(&db).unwrap();
+        let sql: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE name='messages_fts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(sql.contains("detail=column"));
+        let hits = search(&conn, "blank", None, false, false, 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].snippet.contains("blank"));
+        let version: String = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key='schema_version'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(version, "2");
     }
 
     #[test]

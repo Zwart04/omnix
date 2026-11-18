@@ -341,7 +341,7 @@
     <span id="status-left" class="mono">omnix</span>
     <span id="status-right" class="mono"></span>
     <button id="usage-chip" class="status-chip mono" type="button" title="Usage and memory">
-      RAM -
+      App - · AI -
     </button>
     <span id="status-last" class="mono"></span>
   </footer>
@@ -462,6 +462,17 @@
           </svg>
         </button>
       </header>
+      <section class="mem-block">
+        <header class="mem-head">
+          <div>
+            <h3 class="mem-title">Process memory</h3>
+            <p class="mem-sub" id="memory-total">Memory data unavailable</p>
+          </div>
+          <span class="mem-ai-tag mono" id="memory-ai">AI -</span>
+        </header>
+        <div class="mem-list" id="memory-list"></div>
+        <p class="mem-note">Every terminal Omnix owns is counted here, including all agent child processes.</p>
+      </section>
       <div class="usage-ram" id="usage-ram">Memory -</div>
       <div class="usage-list" id="usage-list"></div>
       <div class="modal-foot">

@@ -177,6 +177,13 @@ function tick() {
   return new Promise((r) => setImmediate(r));
 }
 
+function lastReq(cmd) {
+  for (let i = posted.length - 1; i >= 0; i--) {
+    if (posted[i].cmd === cmd) return posted[i];
+  }
+  return null;
+}
+
 require('./app.js');
 
 (async function () {
@@ -205,8 +212,8 @@ require('./app.js');
     '{"sessions":0,"messages":0,"dbBytes":0,"workspaces":[]}');
   await tick();
 
-  const bootProjectsReq = posted[posted.length - 1];
-  assert.strictEqual(bootProjectsReq.cmd, 'projects', 'boot lists the saved projects');
+  const bootProjectsReq = lastReq('projects');
+  assert.ok(bootProjectsReq, 'boot lists the saved projects');
   window.__omnix.reply(bootProjectsReq.id, true, JSON.stringify({
     projects: [
       { path: '/home/zwart/git/omnix', name: 'omnix' },
@@ -215,9 +222,9 @@ require('./app.js');
   }));
   await tick();
 
-  // saved projects render immediately; history only decorates them
-  const bootHistReq = posted[posted.length - 1];
-  assert.strictEqual(bootHistReq.cmd, 'historyProjects', 'history fills in session stats');
+  // saved projects and history settle together, then the sidebar renders once
+  const bootHistReq = lastReq('historyProjects');
+  assert.ok(bootHistReq, 'history fills in session stats');
   window.__omnix.reply(bootHistReq.id, true, JSON.stringify({
     root: '/repo',
     projects: [
@@ -705,8 +712,9 @@ require('./app.js');
     ]
   }));
   await tick();
-  assert.strictEqual(posted[posted.length - 1].cmd, 'projects', 'add refreshes the list');
-  window.__omnix.reply(posted[posted.length - 1].id, true, JSON.stringify({
+  const addProjectsReq = lastReq('projects');
+  assert.ok(addProjectsReq, 'add refreshes the list');
+  window.__omnix.reply(addProjectsReq.id, true, JSON.stringify({
     projects: [
       { path: '/home/zwart/git/omnix', name: 'omnix' },
       { path: '/home/zwart/git/newrepo', name: 'newrepo' }

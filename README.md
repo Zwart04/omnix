@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.4.2_amd64.deb` | `sudo apt install ./omnix_0.4.2_amd64.deb` |
+| Linux x86_64 | `omnix_0.5.0_amd64.deb` | `sudo apt install ./omnix_0.5.0_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.4.2-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.4.2-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.5.0-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.5.0-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -39,7 +39,9 @@ Yang sudah jalan dan dites di repo ini:
   `~/.claude/projects` (tanpa `subagents/`), dan `~/.local/share/opencode/opencode.db`
   read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
-- GUI satu jendela bergaya Orca: sidebar workspace dengan brand `Omnix`,
+- GUI satu jendela bergaya macOS: chrome translulen, aksen biru sistem,
+  sudut membulat, dan permukaan berlapis, tetap dirender WebView Rust tanpa
+  Electron/React. Sidebar workspace dengan brand `Omnix`,
   satu baris ikon (Search, Handoff, Docs, Agents), lalu satu grup workspace
   yang bisa dilipat dan judulnya bisa diganti langsung. Grup itu hanya berisi
   folder yang kamu pin lewat `+ Project`; indexed history cuma memperkaya baris
@@ -66,12 +68,16 @@ Yang sudah jalan dan dites di repo ini:
   close menutup pty itu dan pane terakhir kembali menjadi satu pane penuh.
   Tombol pane muncul saat hover atau focus-within supaya tidak menutupi teks,
   dan tombol split baru dinonaktifkan saat grup sudah berisi empat pane.
-- Status bar menampilkan RAM terpakai dan window kuota agent yang paling ketat.
-  Klik chip itu (atau palette `Usage and memory`) untuk modal usage: memori
-  sistem plus per-provider plan, progress bar, dan waktu reset. Saat ini kuota
-  Codex dibaca dari snapshot `rate_limits` terakhir di rollout
-  `~/.codex/sessions`; provider yang tidak menyimpan data lokal tidak
-  ditampilkan supaya tidak ada angka karangan. Data dipoll tiap 30 detik.
+- Status bar menampilkan RAM proses Omnix dan RAM semua terminal/agent yang
+  dijalankannya: `App X · AI Y`. Klik chip itu (atau palette
+  `Usage and memory`) untuk modal usage: total process tree Omnix, bagian
+  app shell + WebKit, dan baris per-pane berisi label, PID, cwd, jumlah proses,
+  serta nama proses anak terberat. Semua child process agent ikut dihitung,
+  bukan hanya shell PTY. Di Linux pembacaan langsung dari `/proc`; macOS lewat
+  `ps`, Windows lewat CIM. Snapshot hanya diambil saat jendela terlihat: tiap
+  3,5 detik di Linux (baca `/proc` murah), 8 detik di macOS/Windows (hindari
+  spawn proses polling terlalu sering). Modal yang sama tetap
+  menampilkan memori sistem dan kuota provider yang punya data lokal.
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
   sama. Panel `Agents` default tertutup dan index baru dipindai saat dibuka.
@@ -98,7 +104,8 @@ Yang sudah jalan dan dites di repo ini:
   `~/.cargo/bin`, nvm, npm global).
 - WebView mengambil fokus keyboard sendiri saat jendela aktif (WebKitGTK di
   compositor tertentu sempat membiarkan fokus di body, jadi ketikan pty hilang).
-- 20 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
+- 22 unit test, termasuk test yang membuat git repo dan worktree sungguhan,
+  plus test migrasi FTS5 dari `detail=full` ke `detail=column`.
 
 Belum dibangun (sengaja, biar tidak jadi kerangka kosong):
 

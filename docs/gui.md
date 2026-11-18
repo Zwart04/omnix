@@ -63,14 +63,11 @@ Error: `{"code":"...","message":"..."}` dengan code salah satu
 | `historyProjects` | `{limit?}` | `{root,projects:[{path,name,sessions,messages,updatedAt,agents}]}` |
 | `historySessions` | `{scope:"workspace"\|"project"\|"all",agent?,query?,limit?}` | `{scope,root,sessions:[sessionRow]}` |
 | `historySearch` | `{query,agent?,conversation?,newest?,limit?}` | `{hits:[hit]}` |
-| `agentTrack` | `{agent,session,paneKey?,cwd?}` | `{paneKey,agent,sessionId,cwd,resumeCommand}` |
-| `sleep` | `{workspace?}` | `{path,sessions}` |
-| `resume` | `{workspace?}` | `{path,sessions:[{paneKey,agent,sessionId,cwd,resumeCommand}]}` |
-| `handoff` | `{name,prompt,agent?,base?}` | `{outcome,worktree,branch,brief,record,launch?}` |
-| `ptySpawn` | `{paneKey,cwd?,shell?,agent?,sessionId?}` | `{paneKey,pid}` |
+| `ptySpawn` | `{paneKey,cwd?,shell?,agent?,sessionId?,command?,label?}` | `{paneKey,pid}` |
 | `ptyWrite` | `{paneKey,data}` | `{ok}` |
 | `ptyResize` | `{paneKey,cols,rows}` | `{ok}` |
 | `ptyKill` | `{paneKey}` | `{ok}` |
+| `memory` | `{}` | `{available,pid,app:{rss,processes},ai:{rss,processes},other:{rss,processes},panes:[{key,label,cwd,pid,rss,processes,top:[name]}]}` |
 | `browserOpen` | `{url,rect:{x,y,width,height}}` | `{url}` |
 | `browserBounds` | `{rect,visible}` | `{ok}` |
 | `browserClose` | `{}` | `{ok}` |
@@ -84,6 +81,11 @@ Error: `{"code":"...","message":"..."}` dengan code salah satu
 read-only (`XDG_DATA_HOME`). Files whose mtime already matches the stored row
 are skipped, so a rescan is cheap.
 `session` = `{paneKey,agent,sessionId,cwd,resumeCommand,savedAt}`.
+
+`memory.app` adalah seluruh process tree Omnix; `memory.ai` menjumlahkan tree
+setiap pane PTY (agent + child process), `memory.other` adalah sisa app shell
+dan WebKit. Ketiganya memakai satu snapshot `/proc` (Linux), `ps` (macOS), atau
+CIM (Windows) supaya tidak ada proses yang dihitung dua kali.
 `rect` dalam piksel logis relatif jendela, `x/y` sudut kiri atas.
 
 ## Event

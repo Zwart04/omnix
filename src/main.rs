@@ -6,12 +6,15 @@ mod browser;
 mod gui;
 mod handoff;
 mod history;
+#[cfg(feature = "gui")]
+mod procs;
 mod projects;
+#[cfg(feature = "gui")]
 mod pty;
-mod usage;
 #[cfg(feature = "gui")]
 mod selftest;
 mod sources;
+mod usage;
 mod workspace;
 
 use anyhow::{Context, Result, bail};

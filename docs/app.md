@@ -10,6 +10,26 @@ Kontrak internal jendela ada di `docs/gui.md`; arsitektur data ada di
 > Linux: `omnix` tanpa argumen membuka jendela, terminal memakai PTY asli, dan
 > seluruh alur IPC lulus selftest otomatis (lihat bagian Selftest).
 
+Tampilan memakai bahasa visual macOS: font sistem per platform, permukaan
+translulen, aksen biru, sudut membulat, dan pemisah tipis. Palet terminal tetap
+palet ANSI masing-masing platform supaya warna TUI agent tidak berubah.
+
+## Pemantauan RAM
+
+Chip di status bar menunjukkan dua angka: total proses Omnix (`App`) dan total
+semua terminal/agent yang dijalankan dari Omnix (`AI`). Klik chip atau buka
+palette `Usage and memory` untuk rincian:
+
+- total process tree Omnix beserta jumlah proses;
+- app shell + WebKit dihitung terpisah dari terminal;
+- satu baris per pane terminal: label, PID, cwd, jumlah proses, dan nama proses
+  anak yang paling banyak memakai RAM;
+- memori sistem dan kuota provider yang menyimpan data lokal.
+
+Angka AI menjumlahkan seluruh keturunan proses shell PTY, jadi agent, language
+server, dan child process lain ikut masuk. Snapshot berhenti saat jendela
+tersembunyi dan diperbarui tiap 3,5 detik di Linux atau 8 detik di macOS/Windows.
+
 ## Instalasi
 
 Omnix adalah satu binary Rust bernama `omnix`. Subcommand tetap berjalan di

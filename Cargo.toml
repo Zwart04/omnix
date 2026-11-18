@@ -1,6 +1,6 @@
 [package]
 name = "omnix"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
 description = "A light Rust desktop workbench for terminals, worktrees, agent sessions, and a swappable browser."
 license = "MIT"
@@ -9,7 +9,7 @@ rust-version = "1.85"
 
 [features]
 default = ["gui"]
-gui = ["dep:wry", "dep:tao", "dep:portable-pty"]
+gui = ["dep:wry", "dep:tao", "dep:portable-pty", "dep:gtk"]
 
 [dependencies]
 anyhow = "1"
@@ -22,7 +22,7 @@ tao = { version = "0.37", optional = true }
 portable-pty = { version = "0.9", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-gtk = "0.18"
+gtk = { version = "0.18", optional = true }
 
 [profile.release]
 lto = "thin"

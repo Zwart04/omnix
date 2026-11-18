@@ -4,6 +4,21 @@
 //! through `window.ipc`, so the WebView, the IPC bridge, the assets and every Rust
 //! command run together without needing a screenshot or a human.
 
+use std::fs;
+use std::path::Path;
+
+/// The GUI check needs one transcript it can index and search no matter what
+/// the developer's real history looks like. Seeded only under OMNIX_SELFTEST.
+pub fn seed(root: &Path) {
+    let dir = root.join(".omnix").join("transcripts").join("codex");
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    let body = "{\"role\":\"user\",\"text\":\"selftest needle\"}\n\
+                {\"role\":\"assistant\",\"text\":\"blank restore path\"}\n";
+    let _ = fs::write(dir.join("selftest.jsonl"), body);
+}
+
 pub const JS: &str = r#"
 (async () => {
   const outer = window.__omnix || {};
@@ -91,8 +106,8 @@ pub const JS: &str = r#"
 
     const search = await ask('historySearch', { query: 'selftest needle', limit: 5 });
     const hits = (search.ok && search.payload.hits) || [];
-    record('historySearch', hits.length === 1 && hits[0].resumeCommand.indexOf('resume') >= 0,
-      hits.length ? hits[0].resumeCommand : 'no hits');
+    record('historySearch', search.ok && hits.some((h) => h.resumeCommand.indexOf('resume') >= 0),
+      hits.length ? hits.map((h) => h.resumeCommand).join(' | ') : 'no hits');
 
     const blocked = await ask('browserOpen', { url: 'file:///etc/passwd', rect: { x: 0, y: 0, width: 10, height: 10 } });
     record('browserBlockedScheme', blocked.ok && blocked.payload.ok === false && blocked.payload.code === 'blocked_scheme',
@@ -102,6 +117,11 @@ pub const JS: &str = r#"
     record('ptySpawn', spawn.ok && spawn.payload.pid > 0, spawn.ok ? 'pid=' + spawn.payload.pid : spawn.payload);
 
     if (spawn.ok) {
+      const mem = await ask('memory', {});
+      const panes = (mem.ok && mem.payload.panes) || [];
+      const own = panes.filter((p) => p.pid === spawn.payload.pid);
+      record('memory', mem.ok && mem.payload.app.rss > 0 && own.length === 1,
+        mem.ok ? 'app=' + mem.payload.app.rss + ' panes=' + panes.length : mem.payload);
       await ask('ptyWrite', { paneKey: ptyKey, data: "printf 'selftest-pty-marker\\n'\n" });
       await new Promise((r) => setTimeout(r, 1200));
       const text = ptyChunks.join('');
@@ -124,24 +144,6 @@ pub const JS: &str = r#"
     await new Promise((r) => setTimeout(r, 800));
     const closed = await ask('browserClose', {});
     record('browserClose', closed.ok === true, JSON.stringify(closed.payload));
-
-    const handoff = await ask('handoff', {
-      name: 'selftest-' + Date.now(),
-      prompt: 'selftest prompt',
-      agent: 'codex',
-    });
-    record('handoff', handoff.ok && handoff.payload.outcome === 'not-delivered',
-      handoff.ok ? handoff.payload.worktree : handoff.payload);
-
-    const tracked = await ask('agentTrack', { agent: 'codex', session: '2026-01-01T00-00-00-selftest', paneKey: 'selftest-pane-2' });
-    record('agentTrack', tracked.ok, JSON.stringify(tracked.payload));
-
-    const sleep = await ask('sleep', {});
-    record('sleep', sleep.ok && sleep.payload.sessions >= 1, sleep.ok ? 'sessions=' + sleep.payload.sessions : sleep.payload);
-
-    const resume = await ask('resume', {});
-    record('resume', resume.ok && resume.payload.sessions.length >= 1,
-      resume.ok ? 'sessions=' + resume.payload.sessions.length : resume.payload);
 
     const failed = steps.filter((s) => !s.ok).length;
     record('done', failed === 0, failed + ' failed of ' + steps.length);

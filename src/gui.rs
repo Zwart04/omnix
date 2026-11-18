@@ -1,4 +1,4 @@
-use crate::{browser, handoff, history, projects, pty, sources, workspace};
+use crate::{browser, history, procs, projects, pty, sources, workspace};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -41,6 +41,12 @@ enum Msg {
     PtyExit { key: String },
 }
 
+struct PaneProc {
+    pid: u32,
+    label: String,
+    cwd: String,
+}
+
 struct App {
     content: Option<WebView>,
     ui: WebView,
@@ -50,6 +56,7 @@ struct App {
     content_rect: (f64, f64, f64, f64),
     content_visible: bool,
     ptys: HashMap<String, pty::Pty>,
+    pane_procs: HashMap<String, PaneProc>,
 }
 
 fn px_rect(w: u32, h: u32) -> Rect {
@@ -236,14 +243,22 @@ fn native_pick_folder(_app: &App, start: Option<PathBuf>) -> Result<Option<Strin
         return Ok(None);
     }
     let picked = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    Ok(if picked.is_empty() { None } else { Some(picked) })
+    Ok(if picked.is_empty() {
+        None
+    } else {
+        Some(picked)
+    })
 }
 
 #[cfg(target_os = "macos")]
 fn native_pick_folder(_app: &App, start: Option<PathBuf>) -> Result<Option<String>> {
-    let mut script = String::from("POSIX path of (choose folder with prompt \"Add project folder\"");
+    let mut script =
+        String::from("POSIX path of (choose folder with prompt \"Add project folder\"");
     if let Some(dir) = start {
-        let dir = dir.to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"");
+        let dir = dir
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
         script.push_str(&format!(" default location POSIX file \"{dir}\""));
     }
     script.push(')');
@@ -255,8 +270,15 @@ fn native_pick_folder(_app: &App, start: Option<PathBuf>) -> Result<Option<Strin
     if !out.status.success() {
         return Ok(None);
     }
-    let picked = String::from_utf8_lossy(&out.stdout).trim().trim_end_matches('/').to_string();
-    Ok(if picked.is_empty() { None } else { Some(picked) })
+    let picked = String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    Ok(if picked.is_empty() {
+        None
+    } else {
+        Some(picked)
+    })
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -283,10 +305,14 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
     let result = match cmd {
         "appInfo" => Ok({
             let saved = crate::agent::load_settings(&app.root);
+            let engine_version = browser::version();
             json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "root": app.root.to_string_lossy(),
-                "engine": { "lightpanda": browser::available(), "version": browser::version() },
+                "engine": {
+                    "lightpanda": engine_version.is_some(),
+                    "version": engine_version,
+                },
                 "platform": std::env::consts::OS,
                 "traceKeys": app.root.join(".trace-keys").exists(),
                 "agents": crate::agent::AGENTS
@@ -394,20 +420,25 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 .get("fullAccess")
                 .and_then(Value::as_bool)
                 .ok_or_else(|| anyhow!("fullAccess must be a boolean"))?;
-            crate::agent::save_defaults(
-                &app.root,
-                &crate::agent::AgentDefaults { full_access },
-            )?;
+            crate::agent::save_defaults(&app.root, &crate::agent::AgentDefaults { full_access })?;
             Ok(json!({ "ok": true, "defaults": { "fullAccess": full_access } }))
         })(),
         "uiTrace" => {
             // Opt-in keyboard diagnostics: only writes when <root>/.trace-keys exists.
             let root = app.root.clone();
-            let line = args.get("line").and_then(Value::as_str).unwrap_or("").to_string();
+            let line = args
+                .get("line")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
             if root.join(".trace-keys").exists() {
                 use std::io::Write as _;
                 let path = root.join("keys.log");
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
                     let _ = writeln!(f, "{line}");
                 }
             }
@@ -587,57 +618,6 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 .collect();
             Ok(json!({ "hits": hits }))
         })(),
-        "agentTrack" => (|| {
-            let agent = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
-            let session = as_str(&args, "session").ok_or_else(|| anyhow!("session is required"))?;
-            let pane = as_str(&args, "paneKey").unwrap_or_else(|| "pane:1".into());
-            let cwd =
-                as_str(&args, "cwd").unwrap_or_else(|| app.root.to_string_lossy().to_string());
-            let record = workspace::track(
-                &app.root,
-                &app.root,
-                &agent,
-                &session,
-                &PathBuf::from(&cwd),
-                &pane,
-            )?;
-            Ok(json!({
-                "paneKey": record.pane_key,
-                "agent": record.agent,
-                "sessionId": record.session_id,
-                "cwd": record.cwd,
-                "resumeCommand": record.resume_command,
-            }))
-        })(),
-        "sleep" => (|| {
-            let ws = as_str(&args, "workspace")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| app.root.clone());
-            let state = workspace::sleep(&app.root, &ws)?;
-            Ok(json!({ "path": state.path, "sessions": state.sessions.len() }))
-        })(),
-        "resume" => (|| {
-            let ws = as_str(&args, "workspace")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| app.root.clone());
-            let state = workspace::wake(&app.root, &ws, false)?;
-            Ok(json!({ "path": state.path, "sessions": state.sessions }))
-        })(),
-        "handoff" => (|| {
-            let name = as_str(&args, "name").ok_or_else(|| anyhow!("name is required"))?;
-            let prompt = as_str(&args, "prompt").ok_or_else(|| anyhow!("prompt is required"))?;
-            let agent = as_str(&args, "agent").unwrap_or_else(|| "codex".into());
-            let base = as_str(&args, "base");
-            let (record, _) =
-                handoff::create(&app.root, &name, &agent, &prompt, base.as_deref(), false)?;
-            Ok(json!({
-                "outcome": record.outcome,
-                "worktree": record.worktree,
-                "branch": record.branch,
-                "brief": record.brief,
-                "launch": format!("cd {} && {}", record.worktree, record.agent),
-            }))
-        })(),
         "ptySpawn" => (|| {
             let key = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
             if key.len() > 64
@@ -654,6 +634,17 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let agent = as_str(&args, "agent");
             let session = as_str(&args, "sessionId");
             let command = as_str(&args, "command");
+            let label = as_str(&args, "label")
+                .or_else(|| agent.clone())
+                .or_else(|| {
+                    command
+                        .as_deref()
+                        .and_then(|line| line.split_whitespace().next())
+                        .map(str::to_string)
+                })
+                .or_else(|| shell.clone())
+                .unwrap_or_else(|| "terminal".into());
+            let label: String = label.chars().filter(|c| !c.is_control()).take(48).collect();
             let spawned = match (agent, session, command) {
                 (_, _, Some(line)) => {
                     if line.len() > 240 {
@@ -692,6 +683,14 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 let _ = proxy_data.send_event(UserEvent::Wake);
             });
             app.ptys.insert(key.clone(), spawned.pty);
+            app.pane_procs.insert(
+                key.clone(),
+                PaneProc {
+                    pid,
+                    label,
+                    cwd: cwd.to_string_lossy().into_owned(),
+                },
+            );
             Ok(json!({ "paneKey": key, "pid": pid }))
         })(),
         "ptyWrite" => (|| {
@@ -735,7 +734,50 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             if let Some(mut session) = app.ptys.remove(&key) {
                 let _ = session.child.kill();
             }
+            app.pane_procs.remove(&key);
             Ok(json!({ "ok": true }))
+        })(),
+        "memory" => (|| {
+            let table = procs::snapshot();
+            let pid = std::process::id();
+            let (app_rss, app_count) = table.sum_tree(pid);
+            let mut rows = Vec::new();
+            let mut ai_rss = 0u64;
+            let mut ai_count = 0usize;
+            for (key, pane) in &app.pane_procs {
+                let (rss, count) = table.sum_tree(pane.pid);
+                let top = table.top_names(pane.pid, 3);
+                if count == 0 {
+                    continue;
+                }
+                ai_rss = ai_rss.saturating_add(rss);
+                ai_count += count;
+                rows.push((
+                    rss,
+                    json!({
+                        "key": key,
+                        "label": pane.label,
+                        "cwd": pane.cwd,
+                        "pid": pane.pid,
+                        "rss": rss,
+                        "processes": count,
+                        "top": top,
+                    }),
+                ));
+            }
+            rows.sort_by(|a, b| b.0.cmp(&a.0));
+            let panes: Vec<Value> = rows.into_iter().map(|(_, row)| row).collect();
+            Ok(json!({
+                "available": !table.is_empty(),
+                "pid": pid,
+                "app": { "rss": app_rss, "processes": app_count },
+                "ai": { "rss": ai_rss, "processes": ai_count },
+                "other": {
+                    "rss": app_rss.saturating_sub(ai_rss),
+                    "processes": app_count.saturating_sub(ai_count),
+                },
+                "panes": panes,
+            }))
         })(),
         "browserOpen" => (|| {
             let url = as_str(&args, "url").ok_or_else(|| anyhow!("url is required"))?;
@@ -803,20 +845,26 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 .map(PathBuf::from)
                 .unwrap_or_else(|| app.root.clone());
 
-            let (body, title, messages, source_cwd) = if source_agent.is_empty() || session.is_empty() {
-                (String::from("_(no source session selected)_"), String::new(), 0, None)
-            } else {
-                let conn = history::open(&history_db(&app.root))?;
-                match history::transcript(&conn, &source_agent, &session, focused) {
-                    Ok(t) => (t.text, t.title, t.messages, t.cwd),
-                    Err(err) => (
-                        format!("_(transcript unavailable: {err:#})_"),
+            let (body, title, messages, source_cwd) =
+                if source_agent.is_empty() || session.is_empty() {
+                    (
+                        String::from("_(no source session selected)_"),
                         String::new(),
                         0,
                         None,
-                    ),
-                }
-            };
+                    )
+                } else {
+                    let conn = history::open(&history_db(&app.root))?;
+                    match history::transcript(&conn, &source_agent, &session, focused) {
+                        Ok(t) => (t.text, t.title, t.messages, t.cwd),
+                        Err(err) => (
+                            format!("_(transcript unavailable: {err:#})_"),
+                            String::new(),
+                            0,
+                            None,
+                        ),
+                    }
+                };
 
             let dir = cwd.join(".omnix").join("handoffs");
             std::fs::create_dir_all(&dir)?;
@@ -992,12 +1040,13 @@ fn resample(tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
 
 static SAMPLED: AtomicBool = AtomicBool::new(false);
 
-fn start_selftest(ui: &WebView) {
+fn start_selftest(ui: &WebView, root: &std::path::Path) {
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_secs(240));
         eprintln!("selftest: TIMEOUT");
         std::process::exit(1);
     });
+    crate::selftest::seed(root);
     let _ = ui.evaluate_script(crate::selftest::JS);
 }
 
@@ -1026,7 +1075,7 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
             }
             Msg::PtyExit { key } => exited.push(key),
             Msg::Probe(url) => probe(&app.ui, &url),
-            Msg::StartTest => start_selftest(&app.ui),
+            Msg::StartTest => start_selftest(&app.ui, &app.root),
             Msg::Reply(id, result) => reply(&app.ui, id, result),
             Msg::DeepCheck => {
                 let _ = app.ui.evaluate_script(DEEP_JS);
@@ -1054,6 +1103,7 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
             }
             let _ = session.child.kill();
         }
+        app.pane_procs.remove(&key);
         emit(&app.ui, "ptyExit", &json!({ "paneKey": key, "code": code }));
     }
 }
@@ -1128,9 +1178,9 @@ pub fn run() -> Result<()> {
         .with_url("omnix://localhost/");
 
     /* build_as_child on X11 hosts the page in a separate GtkWindow, and some
-       window managers never give that child keyboard focus: clicks work while
-       every keystroke is dropped. Hosting the page in the tao window's own
-       GtkBox with a gtk::Fixed keeps one focus chain. */
+    window managers never give that child keyboard focus: clicks work while
+    every keystroke is dropped. Hosting the page in the tao window's own
+    GtkBox with a gtk::Fixed keeps one focus chain. */
     #[cfg(target_os = "linux")]
     let ui = {
         use gtk::prelude::*;
@@ -1156,7 +1206,7 @@ pub fn run() -> Result<()> {
         .context("create ui webview: is WEBKIT_DISABLE_COMPOSITING_MODE needed?")?;
 
     /* build_as_child leaves keyboard focus on the GtkWindow on some
-       compositors; without this the pty never receives keystrokes. */
+    compositors; without this the pty never receives keystrokes. */
     let _ = ui.focus();
 
     let mut app = App {
@@ -1168,6 +1218,7 @@ pub fn run() -> Result<()> {
         content_rect: (0.0, 0.0, w, h),
         content_visible: false,
         ptys: HashMap::new(),
+        pane_procs: HashMap::new(),
     };
 
     event_loop.run(move |event, _, control_flow| {

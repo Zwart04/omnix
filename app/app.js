@@ -2,12 +2,6 @@
 (function () {
   'use strict';
 
-  var AGENTS = [
-    'claude', 'codex', 'opencode', 'opencode2', 'cursor', 'gemini', 'grok',
-    'copilot', 'qwen-code', 'pi', 'kimi', 'kiro', 'antigravity', 'rovo',
-    'command-code'
-  ];
-
   var RPC_TIMEOUT_MS = 20000;
   var SCAN_TIMEOUT_MS = 180000;
   var HISTORY_LIMIT = 80;
@@ -649,8 +643,9 @@
 
   /* ---------- terminal ---------- */
 
-  function spawnArgs(opts, paneKey) {
+  function spawnArgs(opts, paneKey, label) {
     var args = { paneKey: paneKey };
+    if (label) args.label = label;
     if (opts.cwd) args.cwd = opts.cwd;
     if (opts.shell) args.shell = opts.shell;
     if (opts.agent) args.agent = opts.agent;
@@ -874,7 +869,7 @@
 
     scheduleFit(tab);
 
-    call('ptySpawn', spawnArgs(opts, paneKey)).then(function (res) {
+    call('ptySpawn', spawnArgs(opts, paneKey, title)).then(function (res) {
       if (!res || tab.closed) {
         if (tab.closed) call('ptyKill', { paneKey: paneKey }, { quiet: true });
         return;
@@ -1463,9 +1458,7 @@
     return AGENT_LABEL[name] || name;
   }
 
-  var agentsInfo = AGENTS.map(function (name) {
-    return { name: name, bin: name, available: true };
-  });
+  var agentsInfo = [];
   var appRoot = '';
   var handoffSource = null;
   var handoffContext = 'focused';
@@ -1490,6 +1483,7 @@
         };
       });
     fillAgentSelect($('handoff-target'), 'opencode2');
+    fillAgents($('search-agent'), 'any agent', '');
   }
 
   function fillAgentSelect(select, preferred) {
@@ -1696,6 +1690,118 @@
     });
   }
 
+  var memData = null;
+  var memoryTimer = null;
+  var memoryBusy = false;
+
+  function refreshMemory() {
+    if (memoryBusy) return Promise.resolve(memData);
+    memoryBusy = true;
+    return call('memory', {}, { quiet: true }).then(function (res) {
+      memoryBusy = false;
+      if (!res) return null;
+      memData = res;
+      renderMemory();
+      return res;
+    }, function () {
+      memoryBusy = false;
+      return null;
+    });
+  }
+
+  function startMemoryPoll() {
+    if (memoryTimer) return;
+    setTimeout(refreshMemory, 1200);
+    var interval = PLATFORM === 'linux' ? 3500 : 8000;
+    memoryTimer = setInterval(function () {
+      if (!document.hidden) refreshMemory();
+    }, interval);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) refreshMemory();
+    });
+  }
+
+  function memoryRow(label, sub, rss, processes, total, tone, names) {
+    var row = el('div', 'mem-row' + (tone ? ' ' + tone : ''));
+    var head = el('div', 'mem-row-head');
+    head.appendChild(el('span', 'mem-name', label));
+    head.appendChild(el('span', 'mem-value mono', fmtBytes(rss)));
+    row.appendChild(head);
+    var detail = [];
+    if (sub) detail.push(sub);
+    if (Array.isArray(names) && names.length) detail.push(names.join(', '));
+    var meta = el('div', 'mem-meta mono',
+      processes + (processes === 1 ? ' process' : ' processes') +
+      (detail.length ? ' \u00b7 ' + detail.join(' \u00b7 ') : ''));
+    row.appendChild(meta);
+    var bar = el('div', 'mem-bar');
+    var fill = el('span');
+    fill.style.width = (total > 0 ? Math.max(2, Math.min(100, rss / total * 100)) : 0) + '%';
+    bar.appendChild(fill);
+    row.appendChild(bar);
+    return row;
+  }
+
+  function renderMemory() {
+    var res = memData || {};
+    var app = res.app || {};
+    var ai = res.ai || {};
+    var other = res.other || {};
+    var appRss = Number(app.rss) || 0;
+    var aiRss = Number(ai.rss) || 0;
+
+    var chip = $('usage-chip');
+    if (chip) {
+      if (appRss > 0) {
+        chip.textContent = 'App ' + fmtBytes(appRss) + ' \u00b7 AI ' + fmtBytes(aiRss);
+        chip.title = 'Omnix total ' + fmtBytes(appRss) + ' (' + (app.processes || 0) +
+          ' processes), AI terminals ' + fmtBytes(aiRss) + ' (' + (ai.processes || 0) + ')';
+      } else {
+        chip.textContent = 'RAM -';
+        chip.title = 'process memory unavailable';
+      }
+    }
+
+    var totalNode = $('memory-total');
+    if (totalNode) {
+      totalNode.textContent = appRss > 0
+        ? fmtBytes(appRss) + ' in ' + (app.processes || 0) + ' processes'
+        : 'Memory data unavailable';
+    }
+    var aiNode = $('memory-ai');
+    if (aiNode) {
+      aiNode.textContent = 'AI ' + fmtBytes(aiRss) + ' \u00b7 ' + (ai.processes || 0) +
+        (ai.processes === 1 ? ' process' : ' processes');
+    }
+
+    var list = $('memory-list');
+    if (!list) return;
+    list.textContent = '';
+    if (!(appRss > 0)) {
+      list.appendChild(el('div', 'usage-empty', 'Process memory is unavailable on this platform.'));
+      return;
+    }
+    list.appendChild(memoryRow('App shell + WebKit',
+      'Omnix process tree minus terminals', Number(other.rss) || 0,
+      Number(other.processes) || 0, appRss, 'is-app'));
+
+    var panes = Array.isArray(res.panes) ? res.panes : [];
+    for (var i = 0; i < panes.length; i++) {
+      var pane = panes[i] || {};
+      list.appendChild(memoryRow(
+        String(pane.label || 'terminal'),
+        'PID ' + pane.pid + (pane.cwd ? ' \u00b7 ' + baseName(pane.cwd) : ''),
+        Number(pane.rss) || 0,
+        Number(pane.processes) || 0,
+        appRss,
+        'is-ai',
+        pane.top));
+    }
+    if (!panes.length) {
+      list.appendChild(el('div', 'usage-empty', 'No terminal process is running right now.'));
+    }
+  }
+
   function fmtBytes(bytes) {
     var n = Number(bytes) || 0;
     if (n <= 0) return '-';
@@ -1728,27 +1834,6 @@
     var used = Number(ram.usedBytes) || 0;
     var pct = total > 0 ? Math.round(used / total * 100) : null;
     var agents = Array.isArray(usageData.agents) ? usageData.agents : [];
-
-    /* the compact chip warns with the tightest window it can see */
-    var tightest = null;
-    for (var a = 0; a < agents.length; a++) {
-      var wins = Array.isArray(agents[a].windows) ? agents[a].windows : [];
-      for (var w = 0; w < wins.length; w++) {
-        var usedPct = Number(wins[w].usedPercent) || 0;
-        if (!tightest || usedPct > tightest.percent) {
-          tightest = { agent: agents[a].agent, percent: usedPct };
-        }
-      }
-    }
-    var chip = $('usage-chip');
-    if (chip) {
-      var text = 'RAM ' + (pct == null ? '-' : pct + '%');
-      if (tightest) text += ' \u00b7 ' + tightest.agent + ' ' + Math.round(tightest.percent) + '%';
-      chip.textContent = text;
-      chip.title = total > 0
-        ? fmtBytes(used) + ' of ' + fmtBytes(total) + ' in use'
-        : 'memory data unavailable';
-    }
 
     var ramNode = $('usage-ram');
     if (ramNode) {
@@ -1794,31 +1879,37 @@
 
   function openUsage() {
     renderUsage();
+    renderMemory();
     showModal($('usage-modal'));
+    refreshMemory();
     return refreshUsage();
   }
 
   function startUsagePoll() {
     if (usageTimer) return;
     setTimeout(function () { refreshUsage(); }, 4000);
-    usageTimer = setInterval(function () { refreshUsage(); }, 30000);
+    usageTimer = setInterval(function () {
+      if (!document.hidden) refreshUsage();
+    }, 60000);
   }
 
   /* The sidebar lists the projects the user added, like Orca. Indexed history
      only fills in the session count and agent marks for those paths. */
   function refreshProjects() {
-    return call('projects', {}).then(function (res) {
+    return Promise.all([
+      call('projects', {}),
+      call('historyProjects', { limit: 200 }).catch(function () { return null; })
+    ]).then(function (both) {
+      var res = both[0];
+      var hist = both[1];
       savedProjects = res && Array.isArray(res.projects) ? res.projects.slice() : [];
+      var list = hist && Array.isArray(hist.projects) ? hist.projects : [];
+      projectStats = {};
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].path) projectStats[list[i].path] = list[i];
+      }
       renderProjects(savedProjects);
-      return call('historyProjects', { limit: 200 }).then(function (hist) {
-        var list = hist && Array.isArray(hist.projects) ? hist.projects : [];
-        projectStats = {};
-        for (var i = 0; i < list.length; i++) {
-          if (list[i] && list[i].path) projectStats[list[i].path] = list[i];
-        }
-        renderProjects(savedProjects);
-        return hist;
-      });
+      return hist;
     }).catch(function (err) {
       toast('error', 'projects: ' + message(err));
       return null;
@@ -2017,6 +2108,20 @@
       let key = normPath(p.path);
       var expanded = !!projExpanded[key];
       var live = liveTabsAt(p.path);
+      var running = sessions.slice();
+      for (var l = 0; l < live.length; l++) {
+        var lt = live[l];
+        if (sessions.some(function (x) { return x.paneKey === lt.paneKey; })) continue;
+        running.push({
+          paneKey: lt.paneKey,
+          agent: lt.agent || 'terminal',
+          sessionId: lt.sessionId || lt.paneKey,
+          cwd: lt.cwd || p.path,
+          saved_at: Math.floor(Date.now() / 1000),
+          live: true,
+          title: lt.title
+        });
+      }
 
       var wrap = el('div', 'proj' + (live.length ? ' is-working' : ''));
       var row = el('div', 'proj-row');
@@ -2028,7 +2133,7 @@
       var chev = el('span', 'proj-chev', '\u25b8');
       chev.setAttribute('aria-hidden', 'true');
       chev.classList.add('is-empty');
-      if (sessions.length) {
+      if (running.length) {
         chev.classList.remove('is-empty');
         chev.setAttribute('role', 'button');
         chev.title = expanded ? 'Hide sessions' : 'Show sessions';
@@ -2048,7 +2153,7 @@
       top.appendChild(el('span', 'proj-time', relTime(stat.updatedAt || p.updatedAt)));
       body.appendChild(top);
 
-      var count = sessions.length || Number(stat.sessions || p.sessions || 0);
+      var count = running.length || Number(stat.sessions || p.sessions || 0);
       var meta = el('div', 'proj-meta');
       meta.appendChild(el('span', null, fmtNum(count) + (count === 1 ? ' session' : ' sessions')));
       if (ws && ws.branch) meta.appendChild(el('span', 'tag branch', ws.branch));
@@ -2098,25 +2203,31 @@
       }));
       wrap.appendChild(row);
 
-      if (sessions.length) {
+      if (running.length) {
         var kids = el('div', 'proj-kids');
         kids.hidden = !expanded;
-        for (var s = 0; s < sessions.length; s++) {
+        for (var s = 0; s < running.length; s++) {
           (function (session) {
             var liveTab = byPaneKey(session.paneKey);
             var line = el('button', 'sess-row');
             line.type = 'button';
-            line.title = session.resumeCommand || session.sessionId || '';
+            line.title = session.live ? 'Running in this window'
+              : (session.resumeCommand || session.sessionId || '');
             line.appendChild(iconNode(session.agent));
-            line.appendChild(el('span', 'inv-title',
-              agentLabel(session.agent) + ' ' + shortId(session.sessionId)));
+            var label = session.live
+              ? (session.title || agentLabel(session.agent))
+              : agentLabel(session.agent) + ' ' + shortId(session.sessionId);
+            line.appendChild(el('span', 'inv-title', label));
             if (liveTab && liveTab.spawned && !liveTab.exited) {
               line.appendChild(workingGlyph('agent running'));
             }
             line.appendChild(el('span', 'proj-time', relTime(session.saved_at)));
-            line.addEventListener('click', guard(function () { resumeSession(session); }));
+            line.addEventListener('click', guard(function () {
+              if (session.live && liveTab) activate(liveTab);
+              else resumeSession(session);
+            }));
             kids.appendChild(line);
-          })(sessions[s]);
+          })(running[s]);
         }
         wrap.appendChild(kids);
       }
@@ -2699,9 +2810,9 @@
       any.value = '';
       select.appendChild(any);
     }
-    for (var i = 0; i < AGENTS.length; i++) {
-      var opt = el('option', null, AGENTS[i]);
-      opt.value = AGENTS[i];
+    for (var i = 0; i < agentsInfo.length; i++) {
+      var opt = el('option', null, agentLabel(agentsInfo[i].name));
+      opt.value = agentsInfo[i].name;
       select.appendChild(opt);
     }
     select.value = fallback || '';
@@ -2754,16 +2865,6 @@
       }));
     }
 
-    var projectRefresh = $('project-refresh');
-    if (projectRefresh) {
-      projectRefresh.addEventListener('click', guard(function () {
-        refreshAppInfo();
-        refreshStatus();
-        return refreshProjects();
-      }));
-    }
-
-
     var projectAddIcon = $('project-add-icon');
     if (projectAddIcon) projectAddIcon.addEventListener('click', guard(pickProject));
 
@@ -2773,7 +2874,10 @@
     var usageChip = $('usage-chip');
     if (usageChip) usageChip.addEventListener('click', guard(openUsage));
     var usageRefresh = $('usage-refresh');
-    if (usageRefresh) usageRefresh.addEventListener('click', guard(refreshUsage));
+    if (usageRefresh) usageRefresh.addEventListener('click', guard(function () {
+      refreshMemory();
+      return refreshUsage();
+    }));
     var usageClose = $('usage-close');
     if (usageClose) usageClose.addEventListener('click', guard(function () {
       hideModal($('usage-modal'));
@@ -2997,6 +3101,7 @@
 
     refreshAppInfo();
     refreshStatus().then(refreshProjects);
+    startMemoryPoll();
     startUsagePoll();
   }
 
