@@ -3071,3 +3071,20 @@ select.input { background-position: right 9px center; }
   line-height: 1.45;
   color: var(--meta);
 }
+
+/* WebKitGTK's accelerated compositing misplaces and smears backdrop-filter
+   layers, so menus painted over terminals land in the sidebar and swallow
+   clicks. Linux keeps the same translucent surfaces without the blur. */
+html[data-platform="linux"] #sidebar,
+html[data-platform="linux"] #agents-panel,
+html[data-platform="linux"] #tabstrip,
+html[data-platform="linux"] #statusbar,
+html[data-platform="linux"] .settings-nav,
+html[data-platform="linux"] .menu,
+html[data-platform="linux"] .palette-box,
+html[data-platform="linux"] .modal,
+html[data-platform="linux"] .modal-box,
+html[data-platform="linux"] .toast {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}

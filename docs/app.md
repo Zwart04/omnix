@@ -13,6 +13,9 @@ Kontrak internal jendela ada di `docs/gui.md`; arsitektur data ada di
 Tampilan memakai bahasa visual macOS: font sistem per platform, permukaan
 translulen, aksen biru, sudut membulat, dan pemisah tipis. Palet terminal tetap
 palet ANSI masing-masing platform supaya warna TUI agent tidak berubah.
+Di Linux, efek blur `backdrop-filter` dimatikan karena WebKitGTK salah
+memposisikan lapisan blur: menu bisa tergambar di sidebar dan tidak menerima
+klik. Permukaan tetap translulen; hanya blur-nya yang dilewati.
 
 ## Pemantauan RAM
 

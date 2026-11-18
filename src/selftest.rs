@@ -82,6 +82,26 @@ pub const JS: &str = r#"
     record('appInfo', info.ok && !!(info.payload && info.payload.version),
       JSON.stringify(info.payload));
 
+    /* Linux WebKitGTK smears and unlinks backdrop-filter layers. Keep the
+       blur off there, and prove the tab menu still sits above the terminal. */
+    const layers = (function () {
+      const strip = document.getElementById('tabstrip');
+      const menu = document.getElementById('tab-new-menu');
+      const btn = document.getElementById('tab-new');
+      const cs = getComputedStyle(strip);
+      const blur = cs.backdropFilter || cs.webkitBackdropFilter || '';
+      btn.click();
+      const item = menu.querySelector('.menu-item');
+      const rect = item ? item.getBoundingClientRect() : null;
+      const hit = rect ? document.elementFromPoint(rect.left + 10, rect.top + 10) : null;
+      const onTop = !!(item && (hit === item || item.contains(hit)));
+      menu.hidden = true;
+      return { blur: blur, onTop: onTop };
+    })();
+    const noBlur = !info.payload || info.payload.platform !== 'linux' || layers.blur === 'none';
+    record('layers', noBlur && layers.onTop,
+      'tabstrip=' + layers.blur + ' menuHit=' + layers.onTop);
+
     const status = await ask('status', {});
     record('status', status.ok && typeof status.payload.sessions === 'number',
       status.ok ? 'sessions=' + status.payload.sessions : status.payload);
