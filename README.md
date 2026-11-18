@@ -43,12 +43,21 @@ Yang sudah jalan dan dites di repo ini:
   panel `Agents` berisi indexed history semua agent, command palette (Ctrl+K).
   Tab strip punya menu `+` (Terminal, Browser, Custom CLI, lalu **agent yang
   terdeteksi saja** dengan logo aslinya), dan terminal memakai palet/font per OS.
+- Sidebar `Projects` hanya berisi folder yang kamu tambahkan sendiri (`+ Project`
+  di kiri bawah, atau `Add Project` di palette). Folder itu disimpan di
+  `~/.omnix/projects.json`, klik satu baris membuka terminal dengan cwd di sana,
+  dan `×` di baris menghapusnya dari sidebar. Indexed history hanya mengisi
+  jumlah sesi dan logo agent untuk path yang cocok, tidak lagi menambah baris.
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
   sama. Panel `Agents` default tertutup dan index baru dipindai saat dibuka.
 - Terminal fokus otomatis saat tab dibuka (tanpa klik), font UI 15px, dan
-  terminal 13px / line-height 1.42 dengan palet netral kontras tinggi supaya TUI
-  agent tetap enak dibaca.
+  terminal 14px / line-height 1.2 (metrik Orca) dengan cursor block, fontWeight
+  500/700, font chain DejaVu Sans Mono lalu Nerd Font, dan renderer WebGL supaya
+  glyph tetap tajam; fallback ke renderer DOM kalau konteks GL tidak ada.
+- Setiap pty dipaksa `TERM=xterm-256color`, `COLORTERM=truecolor`,
+  `TERM_PROGRAM=omnix` supaya TUI agent (opencode, codex, antigravity) tampil
+  berwarna, bukan monokrom.
 - Agent settings (rail gear atau menu `+`): daftar CLI yang terdeteksi plus
   argumen dan environment per agent, disimpan di `~/.omnix/agents.json` dan
   dipakai saat agent diluncurkan atau di-resume. Deteksi mencari `PATH` lalu
@@ -143,6 +152,8 @@ Semua state ada di `.omnix/` di root project (atau `OMNIX_HOME`):
 ```
 .omnix/
   history.sqlite          FTS5 index
+  projects.json           folder yang ditampilkan di sidebar
+  agents.json             argumen + environment per agent
   workspaces.json         sleeping sessions, per pane
   handoffs/<id>.json      receipt + brief path
   handoffs/<id>.md        prompt untuk agent penerima

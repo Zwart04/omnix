@@ -45,6 +45,7 @@ function fakeEl(tag) {
       return Object.prototype.hasOwnProperty.call(node.attrs, key) ? node.attrs[key] : null;
     },
     removeAttribute(key) { delete node.attrs[key]; },
+    querySelector() { return null; },
     focus() { global.document.activeElement = node; },
     getBoundingClientRect() { return { x: 10, y: 20, width: 400, height: 300 }; }
   };
@@ -63,7 +64,8 @@ function fakeEl(tag) {
 const byId = new Map();
 [
   'app', 'app-version', 'sidebar', 'workspace-list', 'tab-list', 'panes', 'tabstrip',
-  'tabstrip-tabs', 'new-terminal', 'new-browser', 'pane-empty', 'pane-empty-terminal',
+  'tabstrip-tabs', 'new-project', 'pane-empty', 'pane-empty-terminal',
+  'project-modal', 'project-close', 'project-cancel', 'project-add', 'project-path', 'project-error',
   'tab-new', 'tab-new-menu', 'strip-command', 'tab-new-terminal', 'tab-new-browser',
   'browser-url', 'browser-open', 'browser-engine', 'browser-native', 'browser-text',
   'search-form', 'search-query', 'search-conversation', 'search-agent', 'search-results', 'search-meta',
@@ -191,9 +193,65 @@ require('./app.js');
   await tick();
 
   const bootProjectsReq = posted[posted.length - 1];
-  assert.strictEqual(bootProjectsReq.cmd, 'historyProjects', 'boot lists cached projects');
-  window.__omnix.reply(bootProjectsReq.id, true, JSON.stringify({ root: '/repo', projects: [] }));
+  assert.strictEqual(bootProjectsReq.cmd, 'projects', 'boot lists the saved projects');
+  window.__omnix.reply(bootProjectsReq.id, true, JSON.stringify({
+    projects: [
+      { path: '/home/zwart/git/omnix', name: 'omnix' },
+      { path: '/home/zwart/git/crm-sb', name: 'crm-sb' }
+    ]
+  }));
   await tick();
+
+  // saved projects render immediately; history only decorates them
+  const bootHistReq = posted[posted.length - 1];
+  assert.strictEqual(bootHistReq.cmd, 'historyProjects', 'history fills in session stats');
+  window.__omnix.reply(bootHistReq.id, true, JSON.stringify({
+    root: '/repo',
+    projects: [
+      {
+        path: '/home/zwart/git/omnix', name: 'omnix', sessions: 12, messages: 3400,
+        updatedAt: Math.floor(Date.now() / 1000) - 7200, agents: ['claude', 'codex']
+      },
+      {
+        path: '/home/zwart/git/crm-sb', name: 'crm-sb', sessions: 108, messages: 44000,
+        updatedAt: Math.floor(Date.now() / 1000) - 120, agents: ['claude', 'codex', 'opencode']
+      },
+      {
+        path: '/tmp/not-a-project', name: 'ghost', sessions: 3,
+        updatedAt: Math.floor(Date.now() / 1000) - 60, agents: ['codex']
+      }
+    ]
+  }));
+  await tick();
+
+  const bootRows = byClass('workspace-list', 'proj-row');
+  assert.strictEqual(bootRows.length, 2, 'only saved projects render, never every indexed folder');
+  assert.strictEqual(all(bootRows[0], (n) => n.className === 'ws-name')[0].textContent, 'crm-sb',
+    'projects sorted by indexed updatedAt desc');
+  assert.strictEqual(all(bootRows[1], (n) => n.className === 'ws-name')[0].textContent, 'omnix',
+    'older project second');
+  assert.strictEqual(bootRows[0].children[1].children[0].textContent, '108 sessions',
+    'saved project carries its indexed session count');
+  assert.strictEqual(all(bootRows[0], (n) => n.className === 'proj-time')[0].textContent, '2m ago',
+    'saved project carries its indexed relative time');
+  const bootIcons = byClass('workspace-list', 'icon');
+  assert.strictEqual(bootIcons.length, 5, 'agent icons rendered');
+  assert.ok(bootIcons.every((n) => /^<svg viewBox=/.test(n.innerHTML || '')), 'icons are brand SVGs');
+
+  // removing a project only touches the saved list
+  const removeBtn = byClass('workspace-list', 'proj-remove')[0];
+  assert.ok(removeBtn, 'every project row has a remove control');
+  removeBtn.handlers.click({ stopPropagation: noop });
+  await tick();
+  const removeReq = posted[posted.length - 1];
+  assert.strictEqual(removeReq.cmd, 'projectRemove', 'remove asks the host');
+  assert.deepStrictEqual(removeReq.args, { path: '/home/zwart/git/crm-sb' }, 'remove sends the path');
+  window.__omnix.reply(removeReq.id, true, JSON.stringify({
+    projects: [{ path: '/home/zwart/git/omnix', name: 'omnix' }]
+  }));
+  await tick();
+  assert.strictEqual(byClass('workspace-list', 'proj-row').length, 1, 'row disappears after remove');
+
 
   // opening the agents panel starts the index walk
   byId.get('rail-agents').handlers.click(noop());
@@ -263,36 +321,6 @@ require('./app.js');
   assert.deepStrictEqual(metaRow.children.map((c) => c.textContent),
     ['299 msgs', '7m ago', 'claude'], 'card meta row');
 
-  // ---- historyProjects fallback tree ----
-  const projectsReq = posted[posted.length - 1];
-  assert.strictEqual(projectsReq.cmd, 'historyProjects', 'empty workspaces fall back to historyProjects');
-  window.__omnix.reply(projectsReq.id, true, JSON.stringify({
-    root: '/repo',
-    projects: [
-      {
-        path: '/home/zwart/git/omnix', name: 'omnix', sessions: 12, messages: 3400,
-        updatedAt: Math.floor(Date.now() / 1000) - 7200, agents: ['claude', 'codex']
-      },
-      {
-        path: '/home/zwart/git/crm-sb', name: 'crm-sb', sessions: 108, messages: 44000,
-        updatedAt: Math.floor(Date.now() / 1000) - 120, agents: ['claude', 'codex', 'opencode']
-      }
-    ]
-  }));
-  await tick();
-  const projRows = byClass('workspace-list', 'proj-row');
-  assert.strictEqual(projRows.length, 2, 'one row per project');
-  assert.strictEqual(all(projRows[0], (n) => n.className === 'ws-name')[0].textContent, 'crm-sb',
-    'projects sorted by updatedAt desc');
-  assert.strictEqual(all(projRows[1], (n) => n.className === 'ws-name')[0].textContent, 'omnix',
-    'older project second');
-  assert.strictEqual(projRows[0].children[1].children[0].textContent, '108 sessions',
-    'project row carries its session count');
-  assert.strictEqual(all(projRows[0], (n) => n.className === 'proj-time')[0].textContent, '2m ago',
-    'project row carries relative time');
-  const agentIcons = byClass('workspace-list', 'icon');
-  assert.strictEqual(agentIcons.length, 5, 'agent icons rendered');
-  assert.ok(agentIcons.every((n) => /^<svg viewBox=/.test(n.innerHTML || '')), 'icons are brand SVGs');
 
   // ---- scope chip sends the right scope ----
   const scopeChips = byId.get('history-scope').children;
@@ -425,7 +453,7 @@ require('./app.js');
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, false, 'Ctrl+K opens the palette');
   const rows = byId.get('palette-list').children;
-  assert.strictEqual(rows.length, 10, 'all commands listed with an empty query');
+  assert.strictEqual(rows.length, 11, 'all commands listed with an empty query');
   byId.get('palette-input').handlers.keydown({ key: 'ArrowDown', preventDefault: noop });
   assert.strictEqual(byId.get('palette-list').children[1].getAttribute('aria-selected'), 'true',
     'arrow down moves the selection');
@@ -501,7 +529,8 @@ require('./app.js');
   await tick();
   assert.strictEqual(byId.get('handoff-modal').hidden, true, 'handoff modal closes');
 
-  byId.get('new-browser').handlers.click(noop());
+  byId.get('tab-new').handlers.click(noop());
+  byId.get('tab-new-menu').children[1].handlers.click(noop());
   byId.get('browser-url').value = 'ftp://example.com';
   byId.get('browser-open').handlers.click(noop());
   await tick();
@@ -518,6 +547,40 @@ require('./app.js');
   window.__omnix.reply(openReq.id, true, '{"url":"https://example.com"}');
   await tick();
 
+  // adding a project: modal -> projectAdd -> refresh -> terminal rooted there
+  byId.get('new-project').handlers.click(noop());
+  assert.strictEqual(byId.get('project-modal').hidden, false, '+ Project opens the modal');
+  byId.get('project-path').value = '/home/zwart/git/newrepo';
+  byId.get('project-add').handlers.click(noop());
+  await tick();
+  const addReq = posted[posted.length - 1];
+  assert.strictEqual(addReq.cmd, 'projectAdd', 'add asks the host');
+  assert.deepStrictEqual(addReq.args, { path: '/home/zwart/git/newrepo' }, 'add sends the folder');
+  window.__omnix.reply(addReq.id, true, JSON.stringify({
+    projects: [
+      { path: '/home/zwart/git/omnix', name: 'omnix' },
+      { path: '/home/zwart/git/newrepo', name: 'newrepo' }
+    ]
+  }));
+  await tick();
+  assert.strictEqual(byId.get('project-modal').hidden, true, 'modal closes on success');
+  assert.strictEqual(posted[posted.length - 1].cmd, 'projects', 'add refreshes the list');
+  window.__omnix.reply(posted[posted.length - 1].id, true, JSON.stringify({
+    projects: [
+      { path: '/home/zwart/git/omnix', name: 'omnix' },
+      { path: '/home/zwart/git/newrepo', name: 'newrepo' }
+    ]
+  }));
+  await tick();
+  assert.strictEqual(posted[posted.length - 1].cmd, 'historyProjects', 'add reloads session stats');
+  window.__omnix.reply(posted[posted.length - 1].id, true, JSON.stringify({ projects: [] }));
+  await tick();
+  const spawnReq = posted[posted.length - 1];
+  assert.strictEqual(spawnReq.cmd, 'ptySpawn', 'add opens a terminal for the new project');
+  assert.strictEqual(spawnReq.args.cwd, '/home/zwart/git/newrepo', 'terminal starts in the folder');
+  window.__omnix.reply(spawnReq.id, true, '{"paneKey":"tab:new","pid":90}');
+  await tick();
+  assert.strictEqual(byClass('workspace-list', 'proj-row').length, 2, 'new row is listed');
   console.log('selftest ok: rpc, reply/emit, scan+sessions+projects, chips, resume, palette, tabs');
   process.exit(0);
 })().catch((err) => {

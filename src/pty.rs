@@ -26,6 +26,11 @@ fn default_shell() -> String {
 fn open(cmd: CommandBuilder, cwd: &Path) -> Result<Spawned> {
     let mut cmd = cmd;
     cmd.cwd(cwd);
+    /* A desktop launch inherits no TERM, and a TUI that sees "dumb" or nothing
+       draws monochrome. Every pty we open can do 256 colours and truecolor. */
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("TERM_PROGRAM", "omnix");
     let pair = portable_pty::native_pty_system().openpty(PtySize {
         rows: 24,
         cols: 80,

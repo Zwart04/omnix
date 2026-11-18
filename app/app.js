@@ -1344,14 +1344,21 @@
 
   var lastStatus = null;
 
-  var projects = [];
+  var savedProjects = [];
+  var projectStats = {};
+  var trackedByPath = {};
 
   function refreshStatus() {
     return call('status', {}).then(function (res) {
       if (!res) return null;
       lastStatus = res;
       var list = Array.isArray(res.workspaces) ? res.workspaces : [];
-      renderWorkspaces(list);
+      /* tracked workspace state only decorates sidebar rows now, so the saved
+         project list is what decides which folders are listed */
+      trackedByPath = {};
+      for (var i = 0; i < list.length; i++) {
+        if (list[i] && list[i].path) trackedByPath[list[i].path] = list[i];
+      }
       var db = typeof res.dbBytes === 'number' ? (res.dbBytes / 1048576).toFixed(1) + ' MiB' : '?';
       $('status-right').textContent =
         'sessions ' + num(res.sessions) + '   messages ' + num(res.messages) + '   db ' + db;
@@ -1359,16 +1366,67 @@
     });
   }
 
-  /* no tracked workspaces yet: list indexed projects so the tree is not empty */
+  /* The sidebar lists the projects the user added, like Orca. Indexed history
+     only fills in the session count and agent marks for those paths. */
   function refreshProjects() {
-    return call('historyProjects', { limit: 60 }).then(function (res) {
-      if (!res) return null;
-      projects = Array.isArray(res.projects) ? res.projects.slice() : [];
-      /* contract says updatedAt desc; sorting keeps the tree stable if the host order drifts */
-      projects.sort(function (a, b) { return Number(b.updatedAt || 0) - Number(a.updatedAt || 0); });
-      var tracked = lastStatus && Array.isArray(lastStatus.workspaces) ? lastStatus.workspaces : [];
-      if (!tracked.length) renderProjects(projects);
-      return res;
+    return call('projects', {}).then(function (res) {
+      savedProjects = res && Array.isArray(res.projects) ? res.projects.slice() : [];
+      renderProjects(savedProjects);
+      return call('historyProjects', { limit: 200 }).then(function (hist) {
+        var list = hist && Array.isArray(hist.projects) ? hist.projects : [];
+        projectStats = {};
+        for (var i = 0; i < list.length; i++) {
+          if (list[i] && list[i].path) projectStats[list[i].path] = list[i];
+        }
+        renderProjects(savedProjects);
+        return hist;
+      });
+    }).catch(function (err) {
+      toast('error', 'projects: ' + message(err));
+      return null;
+    });
+  }
+
+  /* ---------- add / remove project ---------- */
+
+  function openProjectModal() {
+    var input = $('project-path');
+    var err = $('project-error');
+    if (err) err.textContent = '';
+    if (input) input.value = appRoot || '';
+    showModal($('project-modal'));
+    if (input && input.focus) input.focus();
+  }
+
+  function submitProject() {
+    var input = $('project-path');
+    var err = $('project-error');
+    var path = input ? input.value.trim() : '';
+    if (!path) {
+      if (err) err.textContent = 'folder path is required';
+      return;
+    }
+    if (err) err.textContent = '';
+    call('projectAdd', { path: path }).then(function (res) {
+      hideModal($('project-modal'));
+      savedProjects = res && Array.isArray(res.projects) ? res.projects : savedProjects;
+      toast('ok', 'Project added');
+      return refreshProjects().then(function () {
+        openProject({ path: path, name: baseName(path) });
+      });
+    }).catch(function (e) {
+      if (err) err.textContent = message(e);
+    });
+  }
+
+  function removeProject(p) {
+    if (!p || !p.path) return;
+    call('projectRemove', { path: p.path }).then(function (res) {
+      savedProjects = res && Array.isArray(res.projects) ? res.projects : [];
+      renderProjects(savedProjects);
+      toast('ok', 'Removed ' + (p.name || baseName(p.path)) + ' from the sidebar');
+    }).catch(function (err) {
+      toast('error', 'remove project: ' + message(err));
     });
   }
 
@@ -1390,24 +1448,40 @@
     if (!box) return;
     if (!list.length) {
       box.textContent = '';
-      box.appendChild(el('div', 'side-empty', 'No projects indexed yet. Press Rescan.'));
+      box.appendChild(el('div', 'side-empty', 'No projects yet. Add one with + Project.'));
       return;
     }
     box.textContent = '';
-    for (var i = 0; i < list.length; i++) {
-      var p = list[i] || {};
+    /* Most recently used first, using the indexed timestamp when the path has
+       history and the stored value otherwise. */
+    var rows = list.slice();
+    rows.sort(function (a, b) {
+      var sa = projectStats[(a || {}).path] || {};
+      var sb = projectStats[(b || {}).path] || {};
+      return Number(sb.updatedAt || (b || {}).updatedAt || 0) -
+        Number(sa.updatedAt || (a || {}).updatedAt || 0);
+    });
+    for (let i = 0; i < rows.length; i++) {
+      let p = rows[i] || {};
+      var ws = trackedByPath[p.path];
+      if (ws) {
+        box.appendChild(renderWorkspace(ws));
+        continue;
+      }
       var row = el('div', 'proj-row');
-      row.title = p.path || '';
+
+      var stat = projectStats[p.path] || {};
+      var name = p.name || stat.name || baseName(p.path);
 
       var top = el('div', 'proj-top');
-      top.appendChild(el('span', 'ws-name', p.name || baseName(p.path)));
-      top.appendChild(el('span', 'proj-time', relTime(p.updatedAt)));
+      top.appendChild(el('span', 'ws-name', name));
+      top.appendChild(el('span', 'proj-time', relTime(stat.updatedAt || p.updatedAt)));
       row.appendChild(top);
 
-      var count = Number(p.sessions || 0);
+      var count = Number(stat.sessions || p.sessions || 0);
       var meta = el('div', 'proj-meta');
       meta.appendChild(el('span', null, fmtNum(count) + (count === 1 ? ' session' : ' sessions')));
-      var agents = Array.isArray(p.agents) ? p.agents : [];
+      var agents = Array.isArray(stat.agents) ? stat.agents : (Array.isArray(p.agents) ? p.agents : []);
       var chips = el('span', 'proj-agents');
       var shown = 0;
       for (var a = 0; a < agents.length && shown < 3; a++) {
@@ -1420,8 +1494,19 @@
       meta.appendChild(chips);
       row.appendChild(meta);
 
+      var remove = el('button', 'icon-btn proj-remove');
+      remove.type = 'button';
+      remove.title = 'Remove from sidebar';
+      remove.setAttribute('aria-label', 'Remove ' + name + ' from the sidebar');
+      remove.textContent = '\u00d7';
+      row.appendChild(remove);
+
       row.tabIndex = 0;
       row.setAttribute('role', 'button');
+      remove.addEventListener('click', guard(function (ev) {
+        ev.stopPropagation();
+        removeProject(p);
+      }));
       row.addEventListener('click', guard(function () { openProject(p); }));
       row.addEventListener('keydown', guard(function (ev) {
         if (ev.key === 'Enter' || ev.key === ' ') {
@@ -1528,18 +1613,7 @@
     return wrap;
   }
 
-  function renderWorkspaces(list) {
-    var box = $('workspace-list');
-    if (!box) return;
-    box.textContent = '';
-    if (!list.length) {
-      box.appendChild(el('div', 'side-empty', 'No workspaces tracked yet.'));
-      return;
-    }
-    for (var i = 0; i < list.length; i++) {
-      box.appendChild(renderWorkspace(list[i]));
-    }
-  }
+
 
   /* ---------- indexed history panel ---------- */
 
@@ -1831,6 +1905,7 @@
     { label: 'Hand off to another agent', hint: 'agent', run: function () { openHandoff(null); } },
     { label: 'Docs', hint: 'panel', run: function () { openStatic('docs'); } },
     { label: 'Agent settings', hint: 'settings', run: openAgentSettings },
+    { label: 'Add Project', hint: 'workspace', run: openProjectModal },
     { label: 'Rescan History', hint: 'history', run: function () { return loadHistory(); } },
     { label: 'Resume last session', hint: 'history', run: resumeLastSession }
   ];
@@ -2003,6 +2078,7 @@
     if (key === 'Escape') {
       if (paletteVisible()) paletteClose();
       else if (!$('handoff-modal').hidden) hideModal($('handoff-modal'));
+      else if (!$('project-modal').hidden) hideModal($('project-modal'));
       else if (!$('cmd-modal').hidden) hideModal($('cmd-modal'));
       else if (!($('tab-new-menu') || {}).hidden) closeTabMenu();
     }
@@ -2103,11 +2179,25 @@
     fillAgents($('search-agent'), 'any agent', '');
     fillAgentSelect($('handoff-target'), 'opencode2');
 
-    $('new-terminal').addEventListener('click', guard(function () {
-      createTerminal({ title: 'terminal' });
+    var newProject = $('new-project');
+    if (newProject) newProject.addEventListener('click', guard(openProjectModal));
+
+    var projectAdd = $('project-add');
+    if (projectAdd) projectAdd.addEventListener('click', guard(submitProject));
+    var projectCancel = $('project-cancel');
+    if (projectCancel) projectCancel.addEventListener('click', guard(function () {
+      hideModal($('project-modal'));
     }));
-    $('new-browser').addEventListener('click', guard(function () {
-      openStatic('browser');
+    var projectClose = $('project-close');
+    if (projectClose) projectClose.addEventListener('click', guard(function () {
+      hideModal($('project-modal'));
+    }));
+    var projectPath = $('project-path');
+    if (projectPath) projectPath.addEventListener('keydown', guard(function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        submitProject();
+      }
     }));
 
     var emptyBtn = $('pane-empty-terminal');

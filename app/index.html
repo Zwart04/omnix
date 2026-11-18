@@ -95,8 +95,7 @@
       </div>
 
       <div class="side-actions">
-        <button class="btn" id="new-terminal" type="button">+ Terminal</button>
-        <button class="btn" id="new-browser" type="button">+ Browser</button>
+        <button class="btn primary" id="new-project" type="button">+ Project</button>
       </div>
 
       <div class="side-foot">
@@ -275,6 +274,33 @@
         <div class="modal-actions">
           <button class="btn" type="button" id="handoff-cancel">Cancel</button>
           <button class="btn primary" type="button" id="handoff-start">Start New Session</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="project-modal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="project-title">
+      <header class="modal-head">
+        <h2 id="project-title">Add project</h2>
+        <button class="icon-btn" type="button" id="project-close" aria-label="Close">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="m5 5 8 8M13 5l-8 8" />
+          </svg>
+        </button>
+      </header>
+      <p class="modal-sub">
+        The folder shows up in the sidebar. Clicking it opens a terminal rooted there.
+      </p>
+      <label class="field-label" for="project-path">Folder path</label>
+      <input class="input mono" id="project-path" type="text" placeholder="/home/zwart/code/app"
+             spellcheck="false" autocomplete="off" />
+      <div class="modal-foot">
+        <span class="modal-note" id="project-error"></span>
+        <div class="modal-actions">
+          <button class="btn" type="button" id="project-cancel">Cancel</button>
+          <button class="btn primary" type="button" id="project-add">Add Project</button>
         </div>
       </div>
     </div>

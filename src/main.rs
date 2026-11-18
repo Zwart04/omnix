@@ -7,6 +7,7 @@ mod gui;
 mod handoff;
 mod history;
 #[cfg(feature = "gui")]
+mod projects;
 mod pty;
 #[cfg(feature = "gui")]
 mod selftest;

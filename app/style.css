@@ -462,8 +462,9 @@ input[type="checkbox"] {
   gap: 1px;
 }
 
-/* leaf project rows: indexed projects with no tracked workspace sessions */
+/* sidebar project rows: one per folder the user added */
 .proj-row {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -476,6 +477,26 @@ input[type="checkbox"] {
   border-color: var(--line-soft);
   background: var(--surface);
 }
+
+/* remove stays out of the way until the row is hovered or focused */
+.proj-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  font-size: 14px;
+  line-height: 1;
+  color: var(--meta);
+  opacity: 0;
+}
+
+.proj-row:hover .proj-remove,
+.proj-row:focus-within .proj-remove,
+.proj-remove:focus-visible { opacity: 1; }
+
+.proj-row:hover .proj-time,
+.proj-row:focus-within .proj-time { opacity: 0; }
 
 .proj-top {
   display: flex;

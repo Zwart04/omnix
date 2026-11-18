@@ -1,4 +1,4 @@
-use crate::{browser, handoff, history, pty, sources, workspace};
+use crate::{browser, handoff, history, projects, pty, sources, workspace};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -205,6 +205,21 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 }))
                 .collect::<Vec<_>>(),
         })),
+        "projects" => Ok(json!({
+            "projects": projects::load(&app.root),
+            "path": projects::store_path(&app.root).to_string_lossy(),
+        })),
+        "projectAdd" => (|| {
+            let path = as_str(&args, "path").ok_or_else(|| anyhow!("path is required"))?;
+            if path.len() > 4096 {
+                return Err(anyhow!("project path is too long"));
+            }
+            Ok(json!({ "projects": projects::add(&app.root, &path)? }))
+        })(),
+        "projectRemove" => (|| {
+            let path = as_str(&args, "path").ok_or_else(|| anyhow!("path is required"))?;
+            Ok(json!({ "projects": projects::remove(&app.root, &path)? }))
+        })(),
         "agentSettings" => (|| {
             let saved = crate::agent::load_settings(&app.root);
             Ok(json!({
