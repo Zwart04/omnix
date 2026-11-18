@@ -4,7 +4,8 @@
 
   var AGENTS = [
     'claude', 'codex', 'opencode', 'opencode2', 'cursor', 'gemini', 'grok',
-    'copilot', 'qwen-code', 'pi', 'kimi', 'kiro', 'antigravity', 'rovo'
+    'copilot', 'qwen-code', 'pi', 'kimi', 'kiro', 'antigravity', 'rovo',
+    'command-code'
   ];
 
   var RPC_TIMEOUT_MS = 20000;
@@ -183,6 +184,21 @@
     if (!path) return 'workspace';
     var parts = String(path).replace(/\/+$/, '').split('/');
     return parts[parts.length - 1] || String(path);
+  }
+
+  /* localStorage is optional in the test stub and in locked-down webviews. */
+  function storeGet(key) {
+    try {
+      return window.localStorage ? window.localStorage.getItem(key) : null;
+    } catch (err) {
+      return null;
+    }
+  }
+
+  function storeSet(key, value) {
+    try {
+      if (window.localStorage) window.localStorage.setItem(key, value);
+    } catch (err) { /* private mode: keep the in-memory title */ }
   }
 
   function shortId(id) {
@@ -380,6 +396,34 @@
     }
   }
 
+  function maxPanes() {
+    return 4;
+  }
+
+  /* All panes in a split share one group wrapper; the wrapper is what the
+     workbench shows or hides, so a group can grow past two panes. */
+  function updateSplitControls(group) {
+    if (!group) return;
+    var full = group.panes.length >= maxPanes();
+    for (var i = 0; i < group.panes.length; i++) {
+      if (group.panes[i].splitCtl) group.panes[i].splitCtl.disabled = full;
+    }
+    if (group.el && group.el.dataset) group.el.dataset.panes = String(group.panes.length);
+  }
+
+  function unwrapGroup(group) {
+    if (!group || !group.el || !group.el.parentNode) return;
+    var wrap = group.el;
+    var survivor = group.panes.length === 1 ? group.panes[0] : null;
+    if (survivor && survivor.el) wrap.parentNode.insertBefore(survivor.el, wrap);
+    wrap.parentNode.removeChild(wrap);
+    if (survivor) {
+      survivor.group = null;
+      if (survivor.splitCtl) survivor.splitCtl.disabled = false;
+    }
+    group.panes = [];
+  }
+
   function activate(tab) {
     if (!tab || !tab.el) return;
     var prev = activeTab;
@@ -388,16 +432,26 @@
       hideBrowser();
     }
     activeTab = tab;
-    var group = [tab];
-    if (tab.splitWith) group.push(tab.splitWith);
+    var activeGroup = tab.kind === 'terminal' ? tab.group : null;
     for (var i = 0; i < tabs.length; i++) {
-      if (tabs[i].el) tabs[i].el.hidden = group.indexOf(tabs[i]) < 0;
-      if (tabs[i].splitEl) tabs[i].splitEl.hidden = group.indexOf(tabs[i]) < 0;
+      var t = tabs[i];
+      if (!t.el) continue;
+      if (t.kind === 'terminal') {
+        if (t.group) {
+          t.el.hidden = false;
+          t.group.el.hidden = t.group !== activeGroup;
+        } else {
+          t.el.hidden = !(tab.kind === 'terminal' && !activeGroup && t === tab);
+        }
+      } else {
+        t.el.hidden = t !== tab;
+      }
     }
     renderTabs();
     markRail();
     if (tab.kind === 'terminal') {
-      scheduleFit(tab);
+      var panes = tab.group ? tab.group.panes : [tab];
+      for (var p = 0; p < panes.length; p++) scheduleFit(panes[p]);
       focusTerm(tab);
     } else if (tab.kind === 'browser') {
       if (browser.engine === 'native' && browser.url) {
@@ -447,17 +501,17 @@
       closeBrowser({ quiet: true });
     }
     if (tab.kind === 'terminal') {
-      var mate = tab.splitWith;
-      if (mate) {
-        var wrap = tab.splitEl;
-        mate.splitWith = null;
-        mate.splitEl = null;
-        if (mate.splitCtl) mate.splitCtl.disabled = false;
-        tab.splitWith = null;
-        tab.splitEl = null;
-        if (wrap && wrap.parentNode) {
-          wrap.parentNode.insertBefore(mate.el, wrap);
-          wrap.parentNode.removeChild(wrap);
+      var group = tab.group;
+      if (group) {
+        group.panes = group.panes.filter(function (p) { return p !== tab; });
+        if (tab.el && tab.el.parentNode) tab.el.parentNode.removeChild(tab.el);
+        tab.group = null;
+        if (!group.panes.length) {
+          if (group.el && group.el.parentNode) group.el.parentNode.removeChild(group.el);
+        } else if (group.panes.length === 1) {
+          unwrapGroup(group);
+        } else {
+          updateSplitControls(group);
         }
       }
       tab.closed = true;
@@ -487,21 +541,23 @@
     } else {
       renderTabs();
     }
+    updateWorkingMarks();
   }
 
-  /* Splits the active terminal in two. Orca keeps both panes on screen and
-     treats them as one group; closing either promotes the survivor. */
+  /* Splits the active terminal into the same group. Orca keeps every pane on
+     screen and treats them as one tab; four panes is the practical ceiling. */
   function splitActive() {
     var t = activeTab;
     if (!t || t.kind !== 'terminal') {
       toast('warn', 'open a terminal before splitting');
       return null;
     }
-    if (t.splitWith) {
-      activate(t.splitWith);
-      return t.splitWith;
+    if (t.group && t.group.panes.length >= maxPanes()) {
+      toast('warn', 'split limit reached (' + maxPanes() + ' panes)');
+      return null;
     }
-    return createTerminal({ split: true, cwd: t.cwd, title: 'terminal 2' });
+    var count = t.group ? t.group.panes.length + 1 : 2;
+    return createTerminal({ split: true, cwd: t.cwd, title: 'terminal ' + count });
   }
 
   /* tab strip "+" menu */
@@ -561,7 +617,9 @@
     }));
     /* Orca lists only the CLIs it can actually launch: an item that would fail
        on click is noise, and most agents are simply not installed. */
-    var detected = agentsInfo.filter(function (a) { return a.available !== false; });
+    var detected = agentsInfo.filter(function (a) {
+      return a.available !== false && a.enabled !== false;
+    });
     box.appendChild(el('div', 'menu-sep'));
     if (detected.length) {
       box.appendChild(el('div', 'menu-label-group', 'Detected agents'));
@@ -654,21 +712,33 @@
       return null;
     }
     var anchor = opts.split ? activeTab : null;
-    if (anchor && (anchor.kind !== 'terminal' || !anchor.el || anchor.splitWith)) anchor = null;
+    if (anchor && (anchor.kind !== 'terminal' || !anchor.el)) anchor = null;
+    if (anchor && anchor.group && anchor.group.panes.length >= maxPanes()) {
+      toast('warn', 'split limit reached (' + maxPanes() + ' panes)');
+      return null;
+    }
     var splitWrap = null;
     if (anchor) {
-      splitWrap = el('div', 'pane-split');
-      if (panes.insertBefore) panes.insertBefore(splitWrap, anchor.el);
-      else panes.appendChild(splitWrap);
-      splitWrap.appendChild(anchor.el);
+      var group = anchor.group;
+      if (!group) {
+        splitWrap = el('div', 'pane-split');
+        splitWrap.dataset.panes = '2';
+        group = { el: splitWrap, panes: [anchor] };
+        anchor.group = group;
+        if (panes.insertBefore) panes.insertBefore(splitWrap, anchor.el);
+        else panes.appendChild(splitWrap);
+        splitWrap.appendChild(anchor.el);
+      }
+      splitWrap = group.el;
       splitWrap.appendChild(pane);
+      group.panes.push(null); /* replaced by tab below */
     } else {
       panes.appendChild(pane);
     }
 
     var title = opts.title ||
       (opts.agent ? opts.agent + ' ' + shortId(opts.sessionId)
-        : (splitWrap ? 'terminal 2' : 'terminal'));
+        : (splitWrap ? 'terminal ' + splitWrap.children.length : 'terminal'));
 
     var tab = {
       id: 'tab' + (++tabSeq),
@@ -689,16 +759,16 @@
       closed: false,
       exited: false,
       handoffBrief: opts.handoffBrief || null,
-      splitEl: splitWrap,
-      splitWith: anchor,
+      group: anchor ? anchor.group : null,
       splitCtl: splitCtl,
       closeCtl: closeCtl
     };
-    splitCtl.disabled = !!tab.splitWith;
     if (anchor) {
-      anchor.splitEl = splitWrap;
-      anchor.splitWith = tab;
-      if (anchor.splitCtl) anchor.splitCtl.disabled = true;
+      var g = anchor.group;
+      g.panes[g.panes.length - 1] = tab;
+      updateSplitControls(g);
+    } else {
+      splitCtl.disabled = false;
     }
     tabs.push(tab);
     activate(tab);
@@ -811,6 +881,7 @@
       }
       tab.spawned = true;
       pushResize(tab);
+      updateWorkingMarks();
       if (tab.pendingWrites) {
         var queued = tab.pendingWrites;
         tab.pendingWrites = '';
@@ -1008,6 +1079,8 @@
 
   /* ---------- agent settings ---------- */
 
+  var agentSettingsData = null;
+
   function openAgentSettings() {
     closeTabMenu();
     var tab = openStatic('settings');
@@ -1017,6 +1090,17 @@
 
   function loadAgentSettings() {
     return call('agentSettings', {}).then(function (res) {
+      if (!res) return null;
+      agentSettingsData = res;
+      var perms = $('agent-default-perms');
+      if (perms) {
+        perms.value = res.defaults && res.defaults.fullAccess ? 'full' : 'ask';
+      }
+      var path = $('agent-settings-path');
+      if (path) {
+        path.textContent = res.path || '';
+        path.title = res.path || '';
+      }
       renderAgentSettings(res);
       return res;
     }).catch(function (err) {
@@ -1024,42 +1108,191 @@
     });
   }
 
+  function agentCmdLine(agent, defaults) {
+    var parts = [agent.bin || agent.name];
+    if (agent.args) parts.push(String(agent.args).trim());
+    if (defaults && defaults.fullAccess && agent.fullAccessFlag) parts.push(agent.fullAccessFlag);
+    return '$ ' + parts.join(' ');
+  }
+
+  function agentMatches(agent, query) {
+    if (!query) return true;
+    var hay = (agentLabel(agent.name) + ' ' + agent.name + ' ' + (agent.bin || '')).toLowerCase();
+    return hay.indexOf(query.toLowerCase()) >= 0;
+  }
+
+  function settingsGroup(title, hint) {
+    var head = el('div', 'set-group');
+    head.appendChild(el('span', 'set-group-title', title));
+    if (hint) head.appendChild(el('span', 'set-group-hint', hint));
+    return head;
+  }
+
   function renderAgentSettings(res) {
     var box = $('agent-settings');
     if (!box) return;
     box.textContent = '';
-    var list = res && Array.isArray(res.agents) ? res.agents : [];
-    var installed = list.filter(function (a) { return a && a.available !== false; });
+    var data = res || agentSettingsData || {};
+    var list = Array.isArray(data.agents) ? data.agents : [];
+    var defaults = data.defaults || {};
+    var search = $('settings-search');
+    var query = search ? String(search.value || '').trim() : '';
 
-    var about = el('div', 'set-card set-about');
-    var aboutHead = el('div', 'set-head');
-    aboutHead.appendChild(iconNode('gear'));
-    aboutHead.appendChild(el('span', 'set-name', 'Launch overrides'));
-    about.appendChild(aboutHead);
-    about.appendChild(el('p', 'set-help',
-      'Extra arguments and environment variables are appended when Omnix starts an agent. ' +
-      'Every card saves automatically; no restart is needed.'));
-    if (res && res.path) {
-      var path = el('div', 'set-path', 'Settings file: ' + res.path);
-      path.title = res.path;
-      about.appendChild(path);
-    }
-    box.appendChild(about);
+    var installed = list.filter(function (a) {
+      return a && a.available !== false && agentMatches(a, query);
+    });
+    var missing = list.filter(function (a) {
+      return a && a.available === false && agentMatches(a, query);
+    });
+    var installedAll = list.filter(function (a) { return a && a.available !== false; });
+    var missingAll = list.filter(function (a) { return a && a.available === false; });
 
     var meta = $('agent-settings-meta');
     if (meta) {
-      meta.textContent = installed.length + ' ' +
-        (installed.length === 1 ? 'agent detected' : 'agents detected') +
-        ' on this machine';
+      meta.textContent = installedAll.length + ' installed \u00b7 ' +
+        missingAll.length + ' available to install' +
+        (query ? ' \u00b7 filtered by "' + query + '"' : '') +
+        '. Changes save automatically.';
     }
+
+    box.appendChild(settingsGroup('Installed',
+      installedAll.length + ' CLI' + (installedAll.length === 1 ? '' : 's') + ' on this machine'));
     if (!installed.length) {
       box.appendChild(el('p', 'side-empty',
-        'No agent CLIs detected. Install one, then press Refresh.'));
-      return;
+        query ? 'No installed agent matches "' + query + '".'
+          : 'No agent CLIs detected. Install one, then press Refresh.'));
     }
     for (var i = 0; i < installed.length; i++) {
-      box.appendChild(agentSettingsCard(installed[i]));
+      box.appendChild(agentSettingsRow(installed[i], defaults, true));
     }
+
+    box.appendChild(settingsGroup('Available to install',
+      'Install the CLI, then press Refresh'));
+    if (!missing.length) {
+      box.appendChild(el('p', 'side-empty',
+        missingAll.length ? 'No available agent matches "' + query + '".'
+          : 'Every known agent CLI is already installed.'));
+    }
+    for (var j = 0; j < missing.length; j++) {
+      box.appendChild(agentSettingsRow(missing[j], defaults, false));
+    }
+  }
+
+  function agentSettingsRow(agent, defaults, installed) {
+    var row = el('div', 'agent-row' +
+      (agent.enabled === false ? ' is-disabled' : '') +
+      (installed ? '' : ' is-missing'));
+    row.dataset.name = agent.name;
+
+    var main = el('div', 'agent-main');
+    var title = el('div', 'agent-title');
+    title.appendChild(iconNode(agent.name, 'agent-mark'));
+    title.appendChild(el('span', 'agent-name', agentLabel(agent.name)));
+    title.appendChild(el('span', 'tag agent-kind', 'CLI'));
+    if (!installed) title.appendChild(el('span', 'agent-missing-tag', 'not detected'));
+    main.appendChild(title);
+    var cmd = el('code', 'agent-cmd mono', agentCmdLine(agent, defaults));
+    main.appendChild(cmd);
+    row.appendChild(main);
+
+    if (!installed) {
+      row.appendChild(el('span', 'agent-install-hint', 'Install to enable'));
+      return row;
+    }
+
+    var more = el('button', 'icon-btn agent-more');
+    more.type = 'button';
+    more.title = 'Launch options';
+    more.setAttribute('aria-label', 'Launch options for ' + agentLabel(agent.name));
+    more.setAttribute('aria-expanded', 'false');
+    more.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+      '<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/>' +
+      '<circle cx="12" cy="19" r="1.7"/></svg>';
+    row.appendChild(more);
+
+    var sw = el('label', 'switch');
+    sw.title = agent.enabled === false ? 'Enable ' + agentLabel(agent.name)
+      : 'Disable ' + agentLabel(agent.name);
+    var cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = agent.enabled !== false;
+    cb.setAttribute('aria-label', sw.title);
+    sw.appendChild(cb);
+    sw.appendChild(el('span', 'switch-track'));
+    cb.addEventListener('change', guard(function () {
+      return setAgentEnabled(agent, !!cb.checked, row, cb);
+    }));
+    row.appendChild(sw);
+
+    var details = el('div', 'agent-details');
+    details.hidden = true;
+    more.addEventListener('click', guard(function () {
+      details.hidden = !details.hidden;
+      more.setAttribute('aria-expanded', details.hidden ? 'false' : 'true');
+    }));
+
+    var state = el('span', 'set-state is-saved', agent.enabled === false ? 'Disabled' : 'Enabled');
+    var argsInput = settingsField(details, 'Arguments', agent.args,
+      '--dangerously-skip-permissions',
+      function () { saveLaunch(agent, argsInput, envInput, state, cmd); },
+      'Whitespace separates arguments. Stored per workspace.');
+    var envInput = settingsField(details, 'Environment', agent.env,
+      'KEY=value KEY=value',
+      function () { saveLaunch(agent, argsInput, envInput, state, cmd); },
+      'Merged into the agent process environment.');
+    var foot = el('div', 'agent-detail-foot');
+    foot.appendChild(el('span', 'set-path mono', 'command overrides apply on the next launch'));
+    foot.appendChild(state);
+    details.appendChild(foot);
+    row.appendChild(details);
+    return row;
+  }
+
+  function saveLaunch(agent, argsInput, envInput, state, cmd) {
+    state.textContent = 'Saving';
+    state.className = 'set-state is-saving';
+    rpc('agentSettingsSave', {
+      agent: agent.name,
+      args: argsInput ? argsInput.value : '',
+      env: envInput ? envInput.value : ''
+    }).then(function (res) {
+      if (!res) return;
+      agent.args = argsInput ? argsInput.value : '';
+      agent.env = envInput ? envInput.value : '';
+      if (cmd) cmd.textContent = agentCmdLine(agent,
+        (agentSettingsData && agentSettingsData.defaults) || {});
+      state.textContent = 'Saved';
+      state.className = 'set-state is-saved';
+    }, function (err) {
+      state.textContent = 'Not saved';
+      state.className = 'set-state is-error';
+      toast('error', 'Save failed: ' + message(err));
+    });
+  }
+
+  function setAgentEnabled(agent, enabled, row, cb) {
+    return rpc('agentEnable', { agent: agent.name, enabled: enabled }).then(function (res) {
+      if (!res) {
+        if (cb) cb.checked = !enabled;
+        return null;
+      }
+      agent.enabled = enabled;
+      if (row && row.classList) {
+        if (enabled) row.classList.remove('is-disabled');
+        else row.classList.add('is-disabled');
+      }
+      for (var i = 0; i < agentsInfo.length; i++) {
+        if (agentsInfo[i].name === agent.name) agentsInfo[i].enabled = enabled;
+      }
+      fillAgentSelect($('handoff-target'), 'opencode2');
+      toast('ok', agentLabel(agent.name) + (enabled ? ' enabled' : ' disabled'));
+      renderAgentSettings(agentSettingsData);
+      return res;
+    }, function (err) {
+      if (cb) cb.checked = !enabled;
+      toast('error', 'Enable failed: ' + message(err));
+      return null;
+    });
   }
 
   function settingsField(card, label, value, placeholder, save, help) {
@@ -1080,54 +1313,6 @@
     if (help) wrap.appendChild(el('span', 'set-field-help', help));
     card.appendChild(wrap);
     return input;
-  }
-
-  function agentSettingsCard(agent) {
-    var card = el('div', 'set-card');
-    var head = el('div', 'set-head');
-    head.appendChild(iconNode(agent.name));
-    head.appendChild(el('span', 'set-name', agentLabel(agent.name)));
-    var bin = el('span', 'set-bin', agent.bin || agent.name);
-    bin.title = agent.bin || agent.name;
-    head.appendChild(bin);
-    var state = el('span', 'set-state', 'Detected');
-    head.appendChild(state);
-    card.appendChild(head);
-    card.appendChild(el('p', 'set-help',
-      'Appended after ' + (agent.bin || agent.name) + ' when this agent is launched.'));
-
-    var argsInput = null;
-    var envInput = null;
-    var resetTimer = null;
-    var save = function () {
-      if (resetTimer) clearTimeout(resetTimer);
-      state.textContent = 'Saving';
-      state.className = 'set-state is-saving';
-      rpc('agentSettingsSave', {
-        agent: agent.name,
-        args: argsInput ? argsInput.value : '',
-        env: envInput ? envInput.value : ''
-      }).then(function () {
-        state.textContent = 'Saved';
-        state.className = 'set-state is-saved';
-        resetTimer = setTimeout(function () {
-          state.textContent = 'Detected';
-          state.className = 'set-state';
-        }, 1800);
-      }, function (err) {
-        state.textContent = 'Not saved';
-        state.className = 'set-state is-error';
-        toast('error', 'Save failed: ' + message(err));
-      });
-    };
-
-    argsInput = settingsField(card, 'Arguments', agent.args,
-      '--dangerously-skip-permissions', save,
-      'Whitespace separates arguments. Stored per workspace.');
-    envInput = settingsField(card, 'Environment', agent.env,
-      'KEY=value KEY=value', save,
-      'Merged into the agent process environment.');
-    return card;
   }
 
   /* ---------- search ---------- */
@@ -1300,7 +1485,8 @@
         return {
           name: String(a.name),
           bin: String(a.bin || a.name),
-          available: a.available !== false
+          available: a.available !== false,
+          enabled: a.enabled !== false
         };
       });
     fillAgentSelect($('handoff-target'), 'opencode2');
@@ -1314,16 +1500,18 @@
     for (var i = 0; i < agentsInfo.length; i++) {
       var agent = agentsInfo[i];
       var opt = el('option', null,
-        agentLabel(agent.name) + ' (CLI)' + (agent.available ? '' : ' \u00b7 not found'));
+        agentLabel(agent.name) + ' (CLI)' +
+        (agent.available ? '' : ' \u00b7 not found') +
+        (agent.enabled ? '' : ' \u00b7 disabled'));
       opt.value = agent.name;
-      if (!agent.available) opt.disabled = true;
+      if (!agent.available || !agent.enabled) opt.disabled = true;
       else if (!fallback) fallback = agent.name;
       select.appendChild(opt);
     }
     var pick = current || preferred || fallback;
     var usable = false;
     for (var j = 0; j < agentsInfo.length; j++) {
-      if (agentsInfo[j].name === pick && agentsInfo[j].available) usable = true;
+      if (agentsInfo[j].name === pick && agentsInfo[j].available && agentsInfo[j].enabled) usable = true;
     }
     select.value = usable ? pick : fallback;
   }
@@ -1463,11 +1651,7 @@
       $('app-version').textContent = 'v' + version;
       applyPlatform(info.platform);
       appRoot = info.root || '';
-      var workspace = $('side-workspace');
-      if (workspace && appRoot) {
-        workspace.textContent = baseName(appRoot) || 'Workspace';
-        workspace.title = appRoot;
-      }
+      applyWorkspaceTitle();
       TRACE_KEYS = !!info.traceKeys;
       setAgents(info.agents);
       var parts = ['omnix ' + version];
@@ -1488,7 +1672,9 @@
       if (!res) return null;
       lastStatus = res;
       var list = Array.isArray(res.workspaces) ? res.workspaces : [];
-      renderTrackedWorkspaces(list);
+      applyWorkspaceTitle();
+      renderProjects(savedProjects);
+      renderWorkspaceCount(list);
       var db = typeof res.dbBytes === 'number' ? (res.dbBytes / 1048576).toFixed(1) + ' MiB' : '?';
       $('status-right').textContent =
         'sessions ' + num(res.sessions) + '   messages ' + num(res.messages) + '   db ' + db;
@@ -2075,44 +2261,162 @@
     createTerminal({ title: name, cwd: p.path });
   }
 
+  function normPath(path) {
+    return String(path || '').replace(/\/+$/, '');
+  }
+
+  function pathMatches(cwd, path) {
+    var a = normPath(cwd);
+    var b = normPath(path);
+    if (!a || !b) return false;
+    return a === b || a.indexOf(b + '/') === 0;
+  }
+
+  function liveTabsAt(path) {
+    var out = [];
+    for (var i = 0; i < tabs.length; i++) {
+      var t = tabs[i];
+      if (t.kind !== 'terminal' || !t.spawned || t.exited || t.closed) continue;
+      if (pathMatches(t.cwd || appRoot, path)) out.push(t);
+    }
+    return out;
+  }
+
+  function workingGlyph(label) {
+    var node = el('span', 'work-spin');
+    node.setAttribute('role', 'status');
+    node.setAttribute('aria-label', label || 'working');
+    node.title = label || 'working';
+    return node;
+  }
+
+  var projExpanded = {};
+  var wsCollapsed = storeGet('omnix.workspaceCollapsed') === '1';
+
+  function trackedByPath() {
+    var map = {};
+    var list = lastStatus && Array.isArray(lastStatus.workspaces) ? lastStatus.workspaces : [];
+    for (var i = 0; i < list.length; i++) {
+      if (list[i] && list[i].path) map[normPath(list[i].path)] = list[i];
+    }
+    return map;
+  }
+
+  function applyWorkspaceTitle() {
+    var title = $('side-workspace');
+    var root = (lastStatus && lastStatus.root) || appRoot || '';
+    var saved = root ? storeGet('omnix.workspaceTitle:' + normPath(root)) : '';
+    if (title && !title.isEditing) title.textContent = saved || baseName(root) || 'Workspace';
+    if (title && root) title.title = root;
+
+    var body = $('workspace-group-body');
+    if (body) body.hidden = !!wsCollapsed;
+    var btn = $('workspace-collapse');
+    if (btn) {
+      btn.setAttribute('aria-expanded', wsCollapsed ? 'false' : 'true');
+      btn.title = wsCollapsed ? 'Expand workspace' : 'Collapse workspace';
+      btn.setAttribute('aria-label', btn.title);
+    }
+  }
+
+  function toggleWorkspace() {
+    wsCollapsed = !wsCollapsed;
+    storeSet('omnix.workspaceCollapsed', wsCollapsed ? '1' : '0');
+    applyWorkspaceTitle();
+  }
+
+  function saveWorkspaceTitle() {
+    var title = $('side-workspace');
+    var root = (lastStatus && lastStatus.root) || appRoot || '';
+    if (!title || !root) return;
+    title.isEditing = false;
+    var name = String(title.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!name) name = baseName(root) || 'Workspace';
+    title.textContent = name;
+    storeSet('omnix.workspaceTitle:' + normPath(root), name);
+  }
+
+  function renderWorkspaceCount(list) {
+    var n = String(list.length);
+    var a = $('workspace-count');
+    var b = $('project-count');
+    if (a) a.textContent = n;
+    if (b) b.textContent = n;
+  }
+
   function renderProjects(list) {
+    savedProjects = Array.isArray(list) ? list : [];
     var box = $('workspace-list');
     if (!box) return;
-    var countNode = $('project-count');
-    if (countNode) countNode.textContent = String(list.length);
-    if (!list.length) {
+    var rows = savedProjects.slice();
+    renderWorkspaceCount(rows);
+    if (!rows.length) {
       box.textContent = '';
       box.appendChild(el('div', 'side-empty', 'No projects yet. Add the folders you work in.'));
       return;
     }
     box.textContent = '';
+    var tracked = trackedByPath();
+
     /* Most recently used first, using the indexed timestamp when the path has
        history and the stored value otherwise. */
-    var rows = list.slice();
     rows.sort(function (a, b) {
       var sa = projectStats[(a || {}).path] || {};
       var sb = projectStats[(b || {}).path] || {};
       return Number(sb.updatedAt || (b || {}).updatedAt || 0) -
         Number(sa.updatedAt || (a || {}).updatedAt || 0);
     });
-    for (let i = 0; i < rows.length; i++) {
+
+    for (var i = 0; i < rows.length; i++) {
       let p = rows[i] || {};
+      if (!p.path) continue;
+      var stat = projectStats[p.path] || {};
+      var ws = tracked[normPath(p.path)] || null;
+      var sessions = ws && Array.isArray(ws.sessions) ? ws.sessions : [];
+      var name = p.name || stat.name || baseName(p.path);
+      let key = normPath(p.path);
+      var expanded = !!projExpanded[key];
+      var live = liveTabsAt(p.path);
+
+      var wrap = el('div', 'proj' + (live.length ? ' is-working' : ''));
       var row = el('div', 'proj-row');
+      row.tabIndex = 0;
+      row.setAttribute('role', 'button');
+      row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      row.title = p.path;
+
+      var chev = el('span', 'proj-chev', '\u25b8');
+      chev.setAttribute('aria-hidden', 'true');
+      chev.classList.add('is-empty');
+      if (sessions.length) {
+        chev.classList.remove('is-empty');
+        chev.setAttribute('role', 'button');
+        chev.title = expanded ? 'Hide sessions' : 'Show sessions';
+        chev.addEventListener('click', guard(function (ev) {
+          if (ev && ev.stopPropagation) ev.stopPropagation();
+          projExpanded[key] = !projExpanded[key];
+          renderProjects(savedProjects);
+        }));
+      }
+      row.appendChild(chev);
       row.appendChild(iconNode('folder', 'proj-icon'));
 
-      var stat = projectStats[p.path] || {};
-      var name = p.name || stat.name || baseName(p.path);
       var body = el('div', 'proj-body');
-
       var top = el('div', 'proj-top');
       top.appendChild(el('span', 'ws-name', name));
+      if (live.length) top.appendChild(workingGlyph(live.length + ' running'));
       top.appendChild(el('span', 'proj-time', relTime(stat.updatedAt || p.updatedAt)));
       body.appendChild(top);
 
-      var count = Number(stat.sessions || p.sessions || 0);
+      var count = sessions.length || Number(stat.sessions || p.sessions || 0);
       var meta = el('div', 'proj-meta');
       meta.appendChild(el('span', null, fmtNum(count) + (count === 1 ? ' session' : ' sessions')));
+      if (ws && ws.branch) meta.appendChild(el('span', 'tag branch', ws.branch));
+      if (ws && ws.sleeping) meta.appendChild(el('span', 'ws-state sleeping', 'sleeping'));
       var agents = Array.isArray(stat.agents) ? stat.agents : (Array.isArray(p.agents) ? p.agents : []);
+      if (!agents.length && sessions.length) {
+        agents = sessions.map(function (s) { return s.agent; });
+      }
       var chips = el('span', 'proj-agents');
       var shown = 0;
       for (var a = 0; a < agents.length && shown < 3; a++) {
@@ -2133,10 +2437,8 @@
       remove.textContent = '\u00d7';
       row.appendChild(remove);
 
-      row.tabIndex = 0;
-      row.setAttribute('role', 'button');
       remove.addEventListener('click', guard(function (ev) {
-        ev.stopPropagation();
+        if (ev && ev.stopPropagation) ev.stopPropagation();
         removeProject(p);
       }));
       row.addEventListener('click', guard(function () { openProject(p); }));
@@ -2144,155 +2446,50 @@
         if (ev.key === 'Enter' || ev.key === ' ') {
           ev.preventDefault();
           openProject(p);
+        } else if (ev.key === 'ArrowRight' && sessions.length && !projExpanded[key]) {
+          ev.preventDefault();
+          projExpanded[key] = true;
+          renderProjects(savedProjects);
+        } else if (ev.key === 'ArrowLeft' && projExpanded[key]) {
+          ev.preventDefault();
+          projExpanded[key] = false;
+          renderProjects(savedProjects);
         }
       }));
+      wrap.appendChild(row);
 
-      box.appendChild(row);
-    }
-  }
-
-  function chevron() {
-    var node = el('span', 'ws-chev', '\u25b8');
-    node.setAttribute('aria-hidden', 'true');
-    return node;
-  }
-
-  /* Workspaces are the folders `omnix agent track` has seen; Projects are the
-     folders the user pinned. They live in separate sections so a tracked
-     session never makes a folder look like something the user added. */
-  function currentWorkspaceRow(rootPath) {
-    var row = el('button', 'ws-row is-current');
-    row.type = 'button';
-    row.title = rootPath;
-    row.appendChild(iconNode('folder', 'ws-icon'));
-    row.appendChild(el('span', 'ws-name', baseName(rootPath) || rootPath));
-    row.appendChild(el('span', 'tag branch', 'current'));
-    row.addEventListener('click', guard(function () {
-      openProject({ path: rootPath, name: baseName(rootPath) });
-    }));
-    return row;
-  }
-
-  function renderTrackedWorkspaces(list) {
-    var box = $('workspace-list-tracked');
-    var count = $('workspace-count');
-    var rows = Array.isArray(list) ? list : [];
-    var rootPath = (lastStatus && lastStatus.root) || appRoot || '';
-    var hasRoot = false;
-    for (var r = 0; r < rows.length; r++) {
-      if (rows[r] && rows[r].path === rootPath) hasRoot = true;
-    }
-    /* the folder the window was launched in stays visible even after other
-       workspaces have been tracked, so "current" is never missing */
-    var total = rows.length + (rootPath && !hasRoot ? 1 : 0);
-    if (count) count.textContent = String(total);
-    if (!box) return;
-    box.textContent = '';
-
-    if (!total) {
-      box.appendChild(el('div', 'side-empty', 'No workspace yet.'));
-      return;
-    }
-
-    if (rootPath && !hasRoot) box.appendChild(currentWorkspaceRow(rootPath));
-    for (var i = 0; i < rows.length; i++) {
-      if (rows[i] && rows[i].path) {
-        box.appendChild(renderWorkspace(rows[i], rows[i].path === rootPath));
-      }
-    }
-  }
-
-  function renderWorkspace(ws, isCurrent) {
-    var wrap = el('div', 'ws');
-
-    var sessions = Array.isArray(ws.sessions) ? ws.sessions : [];
-    var row = el('button', 'ws-row' + (isCurrent ? ' is-current' : ''));
-    row.type = 'button';
-    row.setAttribute('aria-expanded', 'false');
-    row.title = ws.path || '';
-    row.appendChild(chevron());
-    row.appendChild(iconNode('folder', 'ws-icon'));
-    row.appendChild(el('span', 'ws-name', baseName(ws.path)));
-    row.appendChild(el('span', 'tag branch', isCurrent ? 'current' : (ws.branch || 'no branch')));
-    if (ws.sleeping) {
-      row.appendChild(el('span', 'ws-state sleeping', 'sleeping'));
-    }
-
-    var kids = el('div', 'ws-kids');
-    kids.hidden = true;
-
-    row.addEventListener('click', guard(function () {
-      var open = row.getAttribute('aria-expanded') === 'true';
-      row.setAttribute('aria-expanded', open ? 'false' : 'true');
-      kids.hidden = open;
-    }));
-
-    for (var i = 0; i < sessions.length; i++) {
-      (function (s) {
-        var line = el('button', 'sess-row');
-        line.type = 'button';
-        line.title = s.resumeCommand || s.sessionId || '';
-        line.appendChild(iconNode(s.agent));
-        line.appendChild(el('span', 'inv-title',
-          (s.agent || 'agent') + ' ' + shortId(s.sessionId)));
-        if (s.paneKey) line.appendChild(el('span', 'pane-tag', s.paneKey));
-        line.addEventListener('click', guard(function () { resumeSession(s); }));
-        kids.appendChild(line);
-      })(sessions[i]);
-    }
-
-    if (!sessions.length) {
-      kids.appendChild(el('div', 'side-empty', 'No tracked sessions.'));
-    }
-
-    var actions = el('div', 'ws-actions');
-
-    var sleepBtn = button('sleep', 'btn sm', function () {
-      sleepBtn.disabled = true;
-      return call('sleep', { workspace: ws.path }).then(function (res) {
-        sleepBtn.disabled = false;
-        if (!res) return null;
-        toast('ok', 'sleeping ' + baseName(res.path) + ' (' +
-          (Array.isArray(res.sessions) ? res.sessions.length : 0) + ' session(s))');
-        return refreshStatus();
-      });
-    });
-    sleepBtn.disabled = !!ws.sleeping;
-
-    var resumeBtn = button('resume', 'btn sm', function () {
-      resumeBtn.disabled = true;
-      return call('resume', { workspace: ws.path }).then(function (res) {
-        resumeBtn.disabled = false;
-        if (!res) return null;
-        var list = Array.isArray(res.sessions) ? res.sessions : [];
-        toast('ok', 'resumed ' + baseName(res.path) + ' (' + list.length + ' session(s))');
-        for (var k = 0; k < list.length; k++) {
-          var s = list[k] || {};
-          if (!s.paneKey) continue;
-          if (byPaneKey(s.paneKey)) continue;
-          createTerminal({
-            paneKey: s.paneKey,
-            agent: s.agent,
-            sessionId: s.sessionId,
-            cwd: s.cwd,
-            title: (s.agent || 'agent') + ' ' + shortId(s.sessionId)
-          });
+      if (sessions.length) {
+        var kids = el('div', 'proj-kids');
+        kids.hidden = !expanded;
+        for (var s = 0; s < sessions.length; s++) {
+          (function (session) {
+            var liveTab = byPaneKey(session.paneKey);
+            var line = el('button', 'sess-row');
+            line.type = 'button';
+            line.title = session.resumeCommand || session.sessionId || '';
+            line.appendChild(iconNode(session.agent));
+            line.appendChild(el('span', 'inv-title',
+              agentLabel(session.agent) + ' ' + shortId(session.sessionId)));
+            if (liveTab && liveTab.spawned && !liveTab.exited) {
+              line.appendChild(workingGlyph('agent running'));
+            }
+            line.appendChild(el('span', 'proj-time', relTime(session.saved_at)));
+            line.addEventListener('click', guard(function () { resumeSession(session); }));
+            kids.appendChild(line);
+          })(sessions[s]);
         }
-        return refreshStatus();
-      });
-    });
-    resumeBtn.disabled = !ws.sleeping;
+        wrap.appendChild(kids);
+      }
 
-    actions.appendChild(sleepBtn);
-    actions.appendChild(resumeBtn);
-    kids.appendChild(actions);
-
-    wrap.appendChild(row);
-    wrap.appendChild(kids);
-    return wrap;
+      box.appendChild(wrap);
+    }
   }
 
-
+  /* Live pty state drives the animated marks; a rebuild is cheap and preserves
+     the expanded-project map. */
+  function updateWorkingMarks() {
+    if (savedProjects.length) renderProjects(savedProjects);
+  }
 
   /* ---------- indexed history panel ---------- */
 
@@ -2836,6 +3033,7 @@
     }
     tab.title = tab.title + ' (exited)';
     renderTabs();
+    updateWorkingMarks();
     setLast('ptyExit ' + payload.paneKey + ' code ' + code);
   };
 
@@ -2990,6 +3188,59 @@
 
     var settingsRefresh = $('agent-settings-refresh');
     if (settingsRefresh) settingsRefresh.addEventListener('click', guard(loadAgentSettings));
+
+    var settingsBack = $('settings-back');
+    if (settingsBack) settingsBack.addEventListener('click', guard(function () {
+      var tab = tabByKind('settings');
+      if (tab) closeTab(tab);
+    }));
+
+    var settingsSearch = $('settings-search');
+    if (settingsSearch) settingsSearch.addEventListener('input', guard(function () {
+      renderAgentSettings(agentSettingsData);
+    }));
+
+    var perms = $('agent-default-perms');
+    if (perms) perms.addEventListener('change', guard(function () {
+      var full = perms.value === 'full';
+      return rpc('agentDefaultsSave', { fullAccess: full }).then(function (res) {
+        if (!res) {
+          if (agentSettingsData && agentSettingsData.defaults) {
+            perms.value = agentSettingsData.defaults.fullAccess ? 'full' : 'ask';
+          }
+          return null;
+        }
+        if (agentSettingsData) {
+          agentSettingsData.defaults = { fullAccess: full };
+        }
+        renderAgentSettings(agentSettingsData);
+        toast('ok', full ? 'New agents start with full access' : 'New agents ask before acting');
+        return res;
+      });
+    }));
+
+    var wsCollapse = $('workspace-collapse');
+    if (wsCollapse) wsCollapse.addEventListener('click', guard(toggleWorkspace));
+
+    var wsTitle = $('side-workspace');
+    if (wsTitle) {
+      wsTitle.addEventListener('focus', guard(function () {
+        wsTitle.isEditing = true;
+      }));
+      wsTitle.addEventListener('blur', guard(saveWorkspaceTitle));
+      wsTitle.addEventListener('keydown', guard(function (ev) {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          if (wsTitle.blur) wsTitle.blur();
+          else saveWorkspaceTitle();
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          wsTitle.isEditing = false;
+          applyWorkspaceTitle();
+          if (wsTitle.blur) wsTitle.blur();
+        }
+      }));
+    }
 
     var stripCmd = $('strip-command');
     if (stripCmd) stripCmd.addEventListener('click', guard(paletteOpen));

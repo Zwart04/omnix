@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -82,7 +82,15 @@ pub fn agent_argv(
     let cfg = crate::agent::load_settings(root)
         .remove(name)
         .unwrap_or_default();
+    if !cfg.enabled {
+        bail!("agent '{name}' is disabled in Settings / Agents");
+    }
     let mut argv = cfg.arg_list();
+    if crate::agent::load_defaults(root).full_access {
+        if let Some(flag) = crate::agent::full_access_flag(name) {
+            argv.push(flag.to_string());
+        }
+    }
     if let Some(id) = session {
         argv.extend(crate::agent::resume_args(name, id)?);
     }
@@ -150,8 +158,45 @@ mod tests {
     }
 
     #[test]
-    fn spawn_shell_and_read_output() {
-        let dir = std::env::temp_dir();
+    fn disabled_agent_is_not_launched() {
+        let root = std::env::temp_dir().join(format!("omnix-argv-off-{}", std::process::id()));
+        let dir = root.join(".omnix");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("agents.json"),
+            r#"{"codex":{"enabled":false}}"#,
+        )
+        .unwrap();
+        assert!(agent_argv(&root, "codex", None).is_err());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn full_access_default_appends_known_flag_only() {
+        let root = std::env::temp_dir().join(format!("omnix-argv-full-{}", std::process::id()));
+        let dir = root.join(".omnix");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("agents.json"), r#"{"codex":{"args":"--fast"}}"#).unwrap();
+        std::fs::write(dir.join("agent-defaults.json"), r#"{"full_access":true}"#).unwrap();
+        let (_, argv, _) = agent_argv(&root, "codex", Some("abc")).unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "--fast",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "resume",
+                "abc"
+            ]
+        );
+        // an agent without a known flag is left untouched
+        std::fs::write(dir.join("agents.json"), r#"{}"#).unwrap();
+        let (_, argv, _) = agent_argv(&root, "kiro", None).unwrap();
+        assert!(argv.is_empty(), "unknown flag must not be guessed: {argv:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn spawn_shell_and_read_output() {        let dir = std::env::temp_dir();
         let mut spawned = spawn(None, &dir, None).expect("spawn shell");
         let mut reader = spawned.reader;
         {

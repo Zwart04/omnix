@@ -197,21 +197,25 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
     let args = parsed.get("args").cloned().unwrap_or_else(|| json!({}));
 
     let result = match cmd {
-        "appInfo" => Ok(json!({
-            "version": env!("CARGO_PKG_VERSION"),
-            "root": app.root.to_string_lossy(),
-            "engine": { "lightpanda": browser::available(), "version": browser::version() },
-            "platform": std::env::consts::OS,
-            "traceKeys": app.root.join(".trace-keys").exists(),
-            "agents": crate::agent::AGENTS
-                .iter()
-                .map(|a| json!({
-                    "name": a,
-                    "bin": crate::agent::launch_cmd(a),
-                    "available": crate::agent::available(a),
-                }))
-                .collect::<Vec<_>>(),
-        })),
+        "appInfo" => Ok({
+            let saved = crate::agent::load_settings(&app.root);
+            json!({
+                "version": env!("CARGO_PKG_VERSION"),
+                "root": app.root.to_string_lossy(),
+                "engine": { "lightpanda": browser::available(), "version": browser::version() },
+                "platform": std::env::consts::OS,
+                "traceKeys": app.root.join(".trace-keys").exists(),
+                "agents": crate::agent::AGENTS
+                    .iter()
+                    .map(|a| json!({
+                        "name": a,
+                        "bin": crate::agent::launch_cmd(a),
+                        "available": crate::agent::available(a),
+                        "enabled": saved.get(*a).map(|c| c.enabled).unwrap_or(true),
+                    }))
+                    .collect::<Vec<_>>(),
+            })
+        }),
         "projects" => Ok(json!({
             "projects": projects::load(&app.root),
             "path": projects::store_path(&app.root).to_string_lossy(),
@@ -336,8 +340,10 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
         "usage" => Ok(crate::usage::snapshot(home_dir().as_path())),
         "agentSettings" => (|| {
             let saved = crate::agent::load_settings(&app.root);
+            let defaults = crate::agent::load_defaults(&app.root);
             Ok(json!({
                 "path": crate::agent::settings_path(&app.root).to_string_lossy(),
+                "defaults": { "fullAccess": defaults.full_access },
                 "agents": crate::agent::AGENTS
                     .iter()
                     .map(|name| {
@@ -346,8 +352,10 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                             "name": name,
                             "bin": crate::agent::launch_cmd(name),
                             "available": crate::agent::available(name),
+                            "enabled": cfg.map(|c| c.enabled).unwrap_or(true),
                             "args": cfg.map(|c| c.args.clone()).unwrap_or_default(),
                             "env": cfg.map(|c| c.env.clone()).unwrap_or_default(),
+                            "fullAccessFlag": crate::agent::full_access_flag(name),
                         })
                     })
                     .collect::<Vec<_>>(),
@@ -364,16 +372,47 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 return Err(anyhow!("agent settings are too long"));
             }
             let mut saved = crate::agent::load_settings(&app.root);
-            if extra_args.trim().is_empty() && env.trim().is_empty() {
-                saved.remove(&name);
+            let mut cfg = saved.remove(&name).unwrap_or_default();
+            cfg.args = extra_args;
+            cfg.env = env;
+            if cfg.args.trim().is_empty() && cfg.env.trim().is_empty() && cfg.enabled {
+                // nothing custom left: fall back to the implicit defaults
             } else {
-                saved.insert(
-                    name.clone(),
-                    crate::agent::AgentConfig { args: extra_args, env },
-                );
+                saved.insert(name.clone(), cfg);
             }
             crate::agent::save_settings(&app.root, &saved)?;
             Ok(json!({ "ok": true }))
+        })(),
+        "agentEnable" => (|| {
+            let name = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
+            if !crate::agent::AGENTS.contains(&name.as_str()) {
+                return Err(anyhow!("unknown agent '{name}'"));
+            }
+            let enabled = args
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| anyhow!("enabled must be a boolean"))?;
+            let mut saved = crate::agent::load_settings(&app.root);
+            let mut cfg = saved.remove(&name).unwrap_or_default();
+            cfg.enabled = enabled;
+            if cfg.args.trim().is_empty() && cfg.env.trim().is_empty() && enabled {
+                // enabled is the default; keep the store empty
+            } else {
+                saved.insert(name.clone(), cfg);
+            }
+            crate::agent::save_settings(&app.root, &saved)?;
+            Ok(json!({ "ok": true, "enabled": enabled }))
+        })(),
+        "agentDefaultsSave" => (|| {
+            let full_access = args
+                .get("fullAccess")
+                .and_then(Value::as_bool)
+                .ok_or_else(|| anyhow!("fullAccess must be a boolean"))?;
+            crate::agent::save_defaults(
+                &app.root,
+                &crate::agent::AgentDefaults { full_access },
+            )?;
+            Ok(json!({ "ok": true, "defaults": { "fullAccess": full_access } }))
         })(),
         "uiTrace" => {
             // Opt-in keyboard diagnostics: only writes when <root>/.trace-keys exists.

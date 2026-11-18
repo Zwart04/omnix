@@ -27,12 +27,43 @@ pub const AGENTS: &[&str] = &[
 /// app root. `args` is appended before any resume flags; `env` is
 /// whitespace-separated `KEY=VALUE` pairs. Values containing spaces are not
 /// supported (ponytail: quote-aware split the day someone needs it).
-#[derive(Default, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
     #[serde(default)]
     pub args: String,
     #[serde(default)]
     pub env: String,
+    #[serde(default = "yes")]
+    pub enabled: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            args: String::new(),
+            env: String::new(),
+            enabled: true,
+        }
+    }
+}
+
+/// App-wide launch defaults, persisted next to the per-agent settings. The
+/// permissions switch mirrors Orca: a new agent either asks or starts with the
+/// agent's own full-access flag.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct AgentDefaults {
+    #[serde(default)]
+    pub full_access: bool,
+}
+
+impl Default for AgentDefaults {
+    fn default() -> Self {
+        Self { full_access: false }
+    }
 }
 
 impl AgentConfig {
@@ -60,6 +91,38 @@ fn valid_env_key(key: &str) -> bool {
 
 pub fn settings_path(root: &Path) -> PathBuf {
     root.join(".omnix").join("agents.json")
+}
+
+pub fn defaults_path(root: &Path) -> PathBuf {
+    root.join(".omnix").join("agent-defaults.json")
+}
+
+pub fn load_defaults(root: &Path) -> AgentDefaults {
+    std::fs::read(defaults_path(root))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_defaults(root: &Path, defaults: &AgentDefaults) -> Result<()> {
+    let path = defaults_path(root);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(path, serde_json::to_vec_pretty(defaults)?)?;
+    Ok(())
+}
+
+/// Full-access launch flag each CLI understands. An unknown CLI gets no flag
+/// rather than a guessed one, so enabling the default never breaks a launch.
+pub fn full_access_flag(agent: &str) -> Option<&'static str> {
+    Some(match agent {
+        "claude" => "--dangerously-skip-permissions",
+        "codex" => "--dangerously-bypass-approvals-and-sandbox",
+        "gemini" | "qwen-code" => "--yolo",
+        "copilot" => "--allow-all-tools",
+        _ => return None,
+    })
 }
 
 pub fn load_settings(root: &Path) -> BTreeMap<String, AgentConfig> {
@@ -267,6 +330,7 @@ mod tests {
         let cfg = AgentConfig {
             args: "--dangerously-skip-permissions --fast".into(),
             env: "FOO=1 NOPE BAR=two=3 9X=y".into(),
+            enabled: true,
         };
         assert_eq!(cfg.arg_list().len(), 2);
         assert_eq!(

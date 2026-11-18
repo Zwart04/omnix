@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.4.0_amd64.deb` | `sudo apt install ./omnix_0.4.0_amd64.deb` |
+| Linux x86_64 | `omnix_0.4.1_amd64.deb` | `sudo apt install ./omnix_0.4.1_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.4.0-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.4.0-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.4.1-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.4.1-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -39,15 +39,18 @@ Yang sudah jalan dan dites di repo ini:
   `~/.claude/projects` (tanpa `subagents/`), dan `~/.local/share/opencode/opencode.db`
   read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
-- GUI satu jendela bergaya Orca: sidebar workspace (Search, Handoff, Docs,
-  Agents di atas, lalu bagian `Workspaces` dan `Projects`), tab strip di atas,
-  panel `Agents` berisi indexed history semua agent, command palette (Ctrl+K).
-  Tidak ada rail ganda; brand, command palette, dan setelan agent ada di header
-  sidebar. `Workspaces` menampilkan folder yang sudah dilacak `omnix agent
-  track`; selama belum ada, baris root saat ini tetap tampil supaya bagiannya
-  tidak kosong. `Projects` terpisah dan hanya berisi folder yang kamu pin.
+- GUI satu jendela bergaya Orca: sidebar workspace dengan brand `Omnix`,
+  satu baris ikon (Search, Handoff, Docs, Agents), lalu satu grup workspace
+  yang bisa dilipat dan judulnya bisa diganti langsung. Grup itu hanya berisi
+  folder yang kamu pin lewat `+ Project`; indexed history cuma memperkaya baris
+  yang path-nya cocok (jumlah sesi, logo agent, waktu), tidak menambah folder.
+  Baris proyek bisa dibuka menjadi daftar sesi agent, dan spinner kecil muncul
+  selama ada pty hidup dengan cwd di folder itu. Tab strip di atas, panel
+  `Agents` berisi indexed history semua agent, command palette (Ctrl+K).
+  Tidak ada rail ganda; command palette dan setelan ada di header sidebar.
   Tab strip punya menu `+` (Terminal, Browser, Custom CLI, lalu **agent yang
-  terdeteksi saja** dengan logo aslinya), dan terminal memakai palet/font per OS.
+  terdeteksi dan enabled saja** dengan logo aslinya), dan terminal memakai
+  palet/font per OS.
 - `+ Project` membuka folder picker bawaan Omnix, bukan dialog OS: rail Places
   (Home, Desktop, Documents, Downloads, Computer), breadcrumb yang bisa diklik,
   kolom Name/Size/Type/Modified dengan sort, dan tombol `Select folder`.
@@ -58,12 +61,13 @@ Yang sudah jalan dan dites di repo ini:
   dan `×` di baris menghapusnya dari sidebar. Path manual tetap tersedia lewat
   `Add Project by Path` di palette. Indexed history hanya mengisi jumlah sesi
   dan logo agent untuk path yang cocok, tidak menambah baris.
-- Terminal bisa di-split: `Ctrl+Shift+D`, menu `+`, palette `Split Terminal`,
-  atau tombol split di sudut kanan atas pane. Dua pane tampil berdampingan,
-  masing-masing punya pty sendiri; tombol close di sudut pane menutup pty itu,
-  dan menutup salah satu pane mengembalikan sisanya jadi satu pane penuh.
-  Tombol pane muncul saat hover atau focus-within supaya tidak menutupi teks.
-  Split dinonaktifkan saat pane sudah berpasangan.
+- Terminal bisa di-split sampai empat pane dalam satu grup: `Ctrl+Shift+D`,
+  menu `+`, palette `Split Terminal`, atau tombol split di sudut kanan atas
+  pane. Dua pane tampil berdampingan, tiga pane jadi dua di atas plus satu
+  lebar di bawah, empat pane jadi grid 2x2. Tiap pane punya pty sendiri; tombol
+  close menutup pty itu dan pane terakhir kembali menjadi satu pane penuh.
+  Tombol pane muncul saat hover atau focus-within supaya tidak menutupi teks,
+  dan tombol split baru dinonaktifkan saat grup sudah berisi empat pane.
 - Status bar menampilkan RAM terpakai dan window kuota agent yang paling ketat.
   Klik chip itu (atau palette `Usage and memory`) untuk modal usage: memori
   sistem plus per-provider plan, progress bar, dan waktu reset. Saat ini kuota
@@ -83,15 +87,20 @@ Yang sudah jalan dan dites di repo ini:
 - Setiap pty dipaksa `TERM=xterm-256color`, `COLORTERM=truecolor`,
   `TERM_PROGRAM=omnix` supaya TUI agent (opencode, codex, antigravity) tampil
   berwarna, bukan monokrom.
-- Agent settings (gear di header sidebar atau menu `+`): kartu per CLI yang
-  terdeteksi, masing-masing dengan argumen dan environment yang tersimpan
-  otomatis (badge Detected → Saving → Saved) di `~/.omnix/agents.json` dan
-  dipakai saat agent diluncurkan atau di-resume. Deteksi mencari `PATH` lalu
-  direktori install per-user (`~/.opencode/bin`, `~/.local/bin`, `~/.bun/bin`,
+- Settings / Agents ala Orca (gear di header sidebar atau menu `+`): nav kiri,
+  pencarian, breadcrumb `Settings / Agents`, pilihan `New agents permissions`,
+  lalu daftar `Installed` dan `Available to install`. Tiap baris punya command,
+  tag `CLI`, toggle enable, dan menu launch options untuk argumen/environment.
+  Nilai tersimpan otomatis di `.omnix/agents.json` (per agent) dan
+  `.omnix/agent-defaults.json` (permissions default), lalu dipakai saat agent
+  diluncurkan atau di-resume. Full access memakai flag resmi tiap CLI
+  (`claude`, `codex`, `gemini`/`qwen-code`, `copilot`); CLI yang tidak punya
+  flag dikenal tidak diberi tebakan. Deteksi mencari `PATH` lalu direktori
+  install per-user (`~/.opencode/bin`, `~/.local/bin`, `~/.bun/bin`,
   `~/.cargo/bin`, nvm, npm global).
 - WebView mengambil fokus keyboard sendiri saat jendela aktif (WebKitGTK di
   compositor tertentu sempat membiarkan fokus di body, jadi ketikan pty hilang).
-- 18 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
+- 20 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
 
 Belum dibangun (sengaja, biar tidak jadi kerangka kosong):
 
@@ -179,7 +188,8 @@ Semua state ada di `.omnix/` di root project (atau `OMNIX_HOME`):
 .omnix/
   history.sqlite          FTS5 index
   projects.json           folder yang ditampilkan di sidebar
-  agents.json             argumen + environment per agent
+  agents.json             argumen, environment, enabled per agent
+  agent-defaults.json     permissions default (full access) untuk agent baru
   workspaces.json         sleeping sessions, per pane
   handoffs/<id>.json      receipt + brief path
   handoffs/<id>.md        prompt untuk agent penerima

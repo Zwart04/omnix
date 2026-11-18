@@ -121,15 +121,22 @@ Menurut kontrak `docs/gui.md`, jendela Omnix adalah satu WebView UI ditambah N
 WebView konten untuk tab browser, dan terminal asli lewat PTY. Tata letak yang
 dituju:
 
-- **Sidebar kiri** — bagian `Workspaces` untuk folder yang dilacak `omnix
-  agent track` (ditambah baris root saat ini bila belum ada) dan bagian
-  `Projects` untuk folder yang kamu pin lewat `+ Project`. Folder picker-nya
-  milik Omnix sendiri: rail Places, breadcrumb, kolom Name/Size/Type/Modified,
-  sort, dan tombol `Select folder`; tidak ada dialog OS.
-- **Tab bar** — tab terminal dan tab browser dalam satu jendela.
+- **Sidebar kiri** — brand `Omnix`, satu baris ikon (Search, Handoff, Docs,
+  Agents), lalu satu grup workspace yang bisa dilipat dan judulnya bisa diganti
+  langsung (double-click, Enter simpan, Escape batal). Grup itu hanya berisi
+  folder yang kamu pin lewat `+ Project`; indexed history hanya memperkaya baris
+  yang path-nya cocok. Klik baris membuka terminal di folder itu; twisty
+  membuka daftar sesi agent yang dilacak, dan spinner kecil menandai pty yang
+  masih hidup. Folder picker-nya milik Omnix sendiri: rail Places, breadcrumb,
+  kolom Name/Size/Type/Modified, sort, dan tombol `Select folder`; tidak ada
+  dialog OS.
+- **Tab bar** — tab terminal, browser, docs, search, dan settings dalam satu
+  jendela.
 - **Area konten** — xterm untuk tab terminal; WebView konten hanya dibuat saat
   tab browser aktif dan ditutup saat tab lain dipilih. Tiap pane terminal punya
-  tombol split dan close di sudut kanan atas (muncul saat hover/focus).
+  tombol split dan close di sudut kanan atas (muncul saat hover/focus). Satu
+  grup menampung sampai empat pane: 2 berdampingan, 3 dengan satu pane lebar di
+  bawah, 4 dalam grid 2x2.
 - **Bar status/URL** — alamat halaman, indikator engine browser, dan toast
   singkat untuk hasil aksi.
 

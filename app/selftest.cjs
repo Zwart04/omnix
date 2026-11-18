@@ -83,12 +83,13 @@ const byId = new Map();
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
   'project-tree', 'project-refresh', 'project-add-icon', 'cmd-btn', 'side-settings', 'rail-agents',
-  'side-workspace', 'workspace-list-tracked', 'workspace-count', 'workspace-refresh',
-  'project-count', 'rail-agents-count',
+  'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
+  'workspace-count', 'workspace-refresh', 'project-count', 'rail-agents-count',
   'usage-chip', 'usage-modal', 'usage-close', 'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
   'agent-settings', 'agent-settings-meta', 'agent-settings-refresh',
+  'agent-settings-path', 'agent-default-perms', 'settings-back', 'settings-search',
   'picker-modal', 'picker-close', 'picker-cancel', 'picker-select', 'picker-up',
   'picker-refresh', 'picker-list', 'picker-places', 'picker-crumbs', 'picker-selected',
   'picker-error', 'picker-title',
@@ -246,20 +247,22 @@ require('./app.js');
     'projects sorted by indexed updatedAt desc');
   assert.strictEqual(all(bootRows[1], (n) => n.className === 'ws-name')[0].textContent, 'omnix',
     'older project second');
-  assert.strictEqual(bootRows[0].children[1].children[1].children[0].textContent, '108 sessions',
-    'saved project carries its indexed session count');
+  assert.strictEqual(
+    all(bootRows[0], (n) => n.className === 'proj-meta')[0].children[0].textContent,
+    '108 sessions', 'saved project carries its indexed session count');
   assert.strictEqual(all(bootRows[0], (n) => n.className === 'proj-time')[0].textContent, '2m ago',
     'saved project carries its indexed relative time');
   assert.strictEqual(byId.get('project-count').textContent, '2', 'project count follows the list');
   const bootIcons = byClass('workspace-list', 'icon');
   assert.strictEqual(bootIcons.length, 7, 'two folder marks plus five agent marks');
   assert.ok(bootIcons.every((n) => /^<svg viewBox=/.test(n.innerHTML || '')), 'icons are inline SVGs');
-  // no tracked workspaces yet: the current root still gets a workspace row
-  assert.strictEqual(byClass('workspace-list-tracked', 'ws-row').length, 1,
-    'current workspace fallback row');
+  // one workspace title, editable and collapsible; history only decorates projects
   assert.strictEqual(byId.get('side-workspace').textContent, 'repo', 'sidebar names the root');
+  byId.get('workspace-collapse').handlers.click(noop);
+  assert.strictEqual(byId.get('workspace-group-body').hidden, true, 'workspace collapses');
+  byId.get('workspace-collapse').handlers.click(noop);
+  assert.strictEqual(byId.get('workspace-group-body').hidden, false, 'workspace expands');
 
-  // tracked workspaces list alongside the current root, without duplicating it
   byId.get('workspace-refresh').handlers.click(noop);
   await tick();
   const wsReq = posted[posted.length - 1];
@@ -267,14 +270,23 @@ require('./app.js');
   window.__omnix.reply(wsReq.id, true, JSON.stringify({
     root: '/repo', sessions: 0, messages: 0, dbBytes: 0,
     workspaces: [
-      { path: '/repo', branch: 'main', sleeping: false, sessions: [] },
-      { path: '/home/zwart/git/other', branch: 'feat', sleeping: true, sessions: [] }
+      { path: '/home/zwart/git/omnix', branch: 'main', sleeping: false, sessions: [
+        { paneKey: 'x:1', agent: 'codex', sessionId: 'sess-1', cwd: '/home/zwart/git/omnix',
+          resumeCommand: 'codex resume sess-1', saved_at: Math.floor(Date.now() / 1000) - 90 }
+      ] },
+      { path: '/tmp/not-a-project', branch: 'ghost', sleeping: true, sessions: [] }
     ]
   }));
   await tick();
-  assert.strictEqual(byClass('workspace-list-tracked', 'ws-row').length, 2,
-    'tracked workspaces render, current root not duplicated');
-  assert.strictEqual(byId.get('workspace-count').textContent, '2', 'workspace count follows the list');
+  assert.strictEqual(byClass('workspace-list', 'proj-row').length, 2,
+    'unpinned tracked folders never join the sidebar');
+  assert.strictEqual(byId.get('workspace-count').textContent, '2', 'workspace count follows projects');
+  const projChev = byClass('workspace-list', 'proj-chev')
+    .find((n) => !n.classList.contains('is-empty'));
+  assert.ok(projChev, 'tracked sessions expose a twisty');
+  projChev.handlers.click({ stopPropagation: noop });
+  assert.strictEqual(byClass('workspace-list', 'sess-row').length, 1,
+    'project expands into its tracked session');
 
   // removing a project only touches the saved list
   const removeBtn = byClass('workspace-list', 'proj-remove')[0];
@@ -507,15 +519,80 @@ require('./app.js');
   assert.strictEqual(splitWraps[0].children.length, 2, 'both terminals stay mounted');
   const paneControls = byClass('panes', 'pane-controls');
   assert.strictEqual(paneControls.length, 2, 'each pane carries split and close controls');
-  assert.strictEqual(paneControls[0].children[0].disabled, true, 'split is disabled once paired');
-  const paneClose = paneControls[1].children[1];
-  paneClose.handlers.click({ stopPropagation: noop() });
+  assert.strictEqual(paneControls[0].children[0].disabled, false, 'a pair can split again');
+  // a third pane joins the same group
+  byId.get('cmd-btn').handlers.click(noop);
+  byId.get('palette-input').value = 'Split Terminal';
+  byId.get('palette-input').handlers.input(noop);
+  byId.get('palette-input').handlers.keydown({ key: 'Enter', preventDefault: noop });
+  await tick();
+  const thirdSpawn = posted[posted.length - 1];
+  assert.strictEqual(thirdSpawn.cmd, 'ptySpawn', 'third pane spawns');
+  window.__omnix.reply(thirdSpawn.id, true, '{"paneKey":"tab:3","pid":80}');
+  await tick();
+  assert.strictEqual(splitWraps[0].children.length, 3, 'three panes share one wrapper');
+  assert.strictEqual(splitWraps[0].dataset.panes, '3', 'wrapper records the pane count');
+  const thirdControls = byClass('panes', 'pane-controls')[2];
+  thirdControls.children[1].handlers.click({ stopPropagation: noop });
   await tick();
   const splitKill = posted[posted.length - 1];
   assert.strictEqual(splitKill.cmd, 'ptyKill', 'pane close control kills its pty');
-  assert.strictEqual(byClass('panes', 'pane-split').length, 0, 'closing one pane unsplits');
-  window.__omnix.reply(posted[posted.length - 1].id, true, '{"ok":true}');
+  assert.strictEqual(splitWraps[0].children.length, 2, 'closing keeps the remaining pair');
+  window.__omnix.reply(splitKill.id, true, '{"ok":true}');
   await tick();
+
+  // ---- settings / agents ----
+  panelButtons[3].handlers.click(noop());
+  await tick();
+  const settingsReq = posted[posted.length - 1];
+  assert.strictEqual(settingsReq.cmd, 'agentSettings', 'settings pane loads agent settings');
+  window.__omnix.reply(settingsReq.id, true, JSON.stringify({
+    path: '/repo/.omnix/agents.json',
+    defaults: { fullAccess: false },
+    agents: [
+      { name: 'claude', bin: 'claude', available: true, enabled: true, args: '', env: '',
+        fullAccessFlag: '--dangerously-skip-permissions' },
+      { name: 'codex', bin: 'codex', available: true, enabled: false, args: '--fast', env: '',
+        fullAccessFlag: '--dangerously-bypass-approvals-and-sandbox' },
+      { name: 'gemini', bin: 'gemini', available: false, enabled: true, args: '', env: '',
+        fullAccessFlag: '--yolo' }
+    ]
+  }));
+  await tick();
+  assert.strictEqual(byClass('agent-settings', 'agent-row').length, 3,
+    'installed and available agents both render');
+  assert.match(byId.get('agent-settings-meta').textContent, /2 installed .* 1 available/,
+    'meta counts installed and missing');
+  assert.match(byId.get('agent-settings-path').textContent, /agents\.json/, 'settings path shown');
+  const codexRow = all(byId.get('agent-settings'),
+    (n) => n.dataset && n.dataset.name === 'codex')[0];
+  assert.ok(String(codexRow.className).indexOf('is-disabled') >= 0, 'disabled agent row dims');
+  const codexToggle = all(codexRow, (n) => n.type === 'checkbox')[0];
+  assert.strictEqual(codexToggle.checked, false, 'toggle mirrors disabled state');
+  codexToggle.checked = true;
+  codexToggle.handlers.change(noop);
+  await tick();
+  const enableReq = posted[posted.length - 1];
+  assert.strictEqual(enableReq.cmd, 'agentEnable', 'toggle asks the host');
+  assert.deepStrictEqual(enableReq.args, { agent: 'codex', enabled: true }, 'toggle sends agent state');
+  window.__omnix.reply(enableReq.id, true, '{"ok":true,"enabled":true}');
+  await tick();
+
+  byId.get('agent-default-perms').value = 'full';
+  byId.get('agent-default-perms').handlers.change(noop);
+  await tick();
+  const defaultsReq = posted[posted.length - 1];
+  assert.strictEqual(defaultsReq.cmd, 'agentDefaultsSave', 'permissions select saves');
+  assert.deepStrictEqual(defaultsReq.args, { fullAccess: true }, 'full access forwarded');
+  window.__omnix.reply(defaultsReq.id, true, '{"ok":true,"defaults":{"fullAccess":true}}');
+  await tick();
+
+  byId.get('settings-search').value = 'gemini';
+  byId.get('settings-search').handlers.input(noop);
+  assert.strictEqual(byClass('agent-settings', 'agent-row').length, 1,
+    'settings search filters both lists');
+  byId.get('settings-search').value = '';
+  byId.get('settings-search').handlers.input(noop);
 
   // keyboard: arrows move the active row, escape closes, focus returns
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
@@ -671,7 +748,7 @@ require('./app.js');
   window.__omnix.reply(spawnReq.id, true, '{"paneKey":"tab:new","pid":90}');
   await tick();
   assert.strictEqual(byClass('workspace-list', 'proj-row').length, 2, 'new row is listed');
-  console.log('selftest ok: rpc, reply/emit, scan+sessions+projects, chips, resume, palette, tabs');
+  console.log('selftest ok: rpc, reply/emit, sidebar, projects+sessions, settings, splits, palette, tabs');
   process.exit(0);
 })().catch((err) => {
   console.error(err && err.stack ? err.stack : err);
