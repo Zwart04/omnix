@@ -6,8 +6,6 @@ mod browser;
 mod gui;
 mod handoff;
 mod history;
-#[cfg(feature = "gui")]
-mod picker;
 mod projects;
 mod pty;
 mod usage;

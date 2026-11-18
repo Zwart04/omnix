@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.3.9_amd64.deb` | `sudo apt install ./omnix_0.3.9_amd64.deb` |
+| Linux x86_64 | `omnix_0.4.0_amd64.deb` | `sudo apt install ./omnix_0.4.0_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.3.9-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.3.9-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.4.0-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.4.0-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -40,23 +40,30 @@ Yang sudah jalan dan dites di repo ini:
   read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
 - GUI satu jendela bergaya Orca: sidebar workspace (Search, Handoff, Docs,
-  Agents di atas, lalu header `Projects`), tab strip di atas, panel `Agents`
-  berisi indexed history semua agent, command palette (Ctrl+K). Tidak ada rail
-  ganda; brand, command palette, dan setelan agent ada di header sidebar.
+  Agents di atas, lalu bagian `Workspaces` dan `Projects`), tab strip di atas,
+  panel `Agents` berisi indexed history semua agent, command palette (Ctrl+K).
+  Tidak ada rail ganda; brand, command palette, dan setelan agent ada di header
+  sidebar. `Workspaces` menampilkan folder yang sudah dilacak `omnix agent
+  track`; selama belum ada, baris root saat ini tetap tampil supaya bagiannya
+  tidak kosong. `Projects` terpisah dan hanya berisi folder yang kamu pin.
   Tab strip punya menu `+` (Terminal, Browser, Custom CLI, lalu **agent yang
   terdeteksi saja** dengan logo aslinya), dan terminal memakai palet/font per OS.
-- Sidebar `Projects` hanya berisi folder yang kamu tambahkan sendiri. `+ Project`
-  membuka dialog folder bawaan OS (GTK di Linux, `osascript` di macOS, folder
-  browser PowerShell di Windows), lalu folder itu langsung dibuka di terminal.
-  Kalau dialog dibatalkan tidak ada yang berubah; input path manual tetap
-  tersedia lewat `Add Project by Path` di palette. Folder disimpan di
+- `+ Project` membuka folder picker bawaan Omnix, bukan dialog OS: rail Places
+  (Home, Desktop, Documents, Downloads, Computer), breadcrumb yang bisa diklik,
+  kolom Name/Size/Type/Modified dengan sort, dan tombol `Select folder`.
+  Single click memilih, double click atau Enter masuk folder, Backspace naik,
+  Escape batal; daftar dibatasi 400 entri agar tetap ringan. Ini membuat
+  tampilan dan perilakunya sama di Linux, Windows, dan macOS. Folder disimpan di
   `~/.omnix/projects.json`, klik satu baris membuka terminal dengan cwd di sana,
-  dan `×` di baris menghapusnya dari sidebar. Indexed history hanya mengisi
-  jumlah sesi dan logo agent untuk path yang cocok, tidak menambah baris.
-- Terminal bisa di-split: `Ctrl+Shift+D`, menu `+`, atau palette `Split
-  Terminal`. Dua pane tampil berdampingan, masing-masing punya pty sendiri,
-  tab strip menampilkan keduanya, dan menutup salah satu pane mengembalikan
-  sisanya jadi satu pane penuh.
+  dan `×` di baris menghapusnya dari sidebar. Path manual tetap tersedia lewat
+  `Add Project by Path` di palette. Indexed history hanya mengisi jumlah sesi
+  dan logo agent untuk path yang cocok, tidak menambah baris.
+- Terminal bisa di-split: `Ctrl+Shift+D`, menu `+`, palette `Split Terminal`,
+  atau tombol split di sudut kanan atas pane. Dua pane tampil berdampingan,
+  masing-masing punya pty sendiri; tombol close di sudut pane menutup pty itu,
+  dan menutup salah satu pane mengembalikan sisanya jadi satu pane penuh.
+  Tombol pane muncul saat hover atau focus-within supaya tidak menutupi teks.
+  Split dinonaktifkan saat pane sudah berpasangan.
 - Status bar menampilkan RAM terpakai dan window kuota agent yang paling ketat.
   Klik chip itu (atau palette `Usage and memory`) untuk modal usage: memori
   sistem plus per-provider plan, progress bar, dan waktu reset. Saat ini kuota
@@ -66,15 +73,19 @@ Yang sudah jalan dan dites di repo ini:
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
   sama. Panel `Agents` default tertutup dan index baru dipindai saat dibuka.
-- Terminal fokus otomatis saat tab dibuka (tanpa klik), font UI 15px, dan
+  Index disimpan di `~/.omnix/history.sqlite`; rescan hanya mem-parse transkrip
+  yang baru atau berubah, dan baris meta menampilkan
+  `N updated · M unchanged · X new messages` supaya penghematannya terlihat.
+- Terminal fokus otomatis saat tab dibuka (tanpa klik), font UI 14px, dan
   terminal 14px / line-height 1.2 (metrik Orca) dengan cursor block, fontWeight
   500/700, font chain DejaVu Sans Mono lalu Nerd Font, dan renderer WebGL supaya
   glyph tetap tajam; fallback ke renderer DOM kalau konteks GL tidak ada.
 - Setiap pty dipaksa `TERM=xterm-256color`, `COLORTERM=truecolor`,
   `TERM_PROGRAM=omnix` supaya TUI agent (opencode, codex, antigravity) tampil
   berwarna, bukan monokrom.
-- Agent settings (gear di header sidebar atau menu `+`): daftar CLI yang terdeteksi plus
-  argumen dan environment per agent, disimpan di `~/.omnix/agents.json` dan
+- Agent settings (gear di header sidebar atau menu `+`): kartu per CLI yang
+  terdeteksi, masing-masing dengan argumen dan environment yang tersimpan
+  otomatis (badge Detected → Saving → Saved) di `~/.omnix/agents.json` dan
   dipakai saat agent diluncurkan atau di-resume. Deteksi mencari `PATH` lalu
   direktori install per-user (`~/.opencode/bin`, `~/.local/bin`, `~/.bun/bin`,
   `~/.cargo/bin`, nvm, npm global).
@@ -190,9 +201,10 @@ Semua state ada di `.omnix/` di root project (atau `OMNIX_HOME`):
 
 ```bash
 cargo test
+node app/selftest.cjs
 ```
 
-Test tidak memakai framework tambahan. Satu test membuat git repo, commit, worktree, brief, dan receipt; satu lagi menguji FTS5 phrase fallback + exclusion kolom tool.
+Test tidak memakai framework tambahan. Satu test membuat git repo, commit, worktree, brief, dan receipt; satu lagi menguji FTS5 phrase fallback + exclusion kolom tool. `app/selftest.cjs` men-stub WebView lalu memeriksa RPC, render sidebar/picker/history, split pane, dan resume session tanpa membuka jendela.
 
 ## Nama
 

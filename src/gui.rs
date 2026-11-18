@@ -227,9 +227,111 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let path = as_str(&args, "path").ok_or_else(|| anyhow!("path is required"))?;
             Ok(json!({ "projects": projects::remove(&app.root, &path)? }))
         })(),
-        "pickFolder" => (|| {
-            let picked = crate::picker::folder()?;
-            Ok(json!({ "path": picked.map(|p| p.to_string_lossy().into_owned()) }))
+        "fsList" => (|| {
+            // In-app folder picker. One listing per call keeps the browser
+            // responsive and lets the frontend keep its own breadcrumb state.
+            let requested = as_str(&args, "path")
+                .map(PathBuf::from)
+                .unwrap_or_else(home_dir);
+            if requested.as_os_str().len() > 4096 {
+                return Err(anyhow!("folder path is too long"));
+            }
+            let path = std::fs::canonicalize(&requested)
+                .map_err(|err| anyhow!("cannot open {}: {err}", requested.display()))?;
+            if !path.is_dir() {
+                return Err(anyhow!("not a folder: {}", path.display()));
+            }
+
+            let mut entries = Vec::new();
+            let mut truncated = false;
+            let read = std::fs::read_dir(&path)
+                .map_err(|err| anyhow!("cannot list {}: {err}", path.display()))?;
+            for item in read.flatten() {
+                if entries.len() >= 400 {
+                    truncated = true;
+                    break;
+                }
+                let item_path = item.path();
+                let Ok(meta) = item.metadata() else { continue };
+                let is_dir = meta.is_dir();
+                let modified = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                entries.push(json!({
+                    "name": item.file_name().to_string_lossy(),
+                    "path": item_path.to_string_lossy(),
+                    "isDir": is_dir,
+                    "modified": modified,
+                    "size": if is_dir { 0 } else { meta.len() },
+                }));
+            }
+            entries.sort_by(|a, b| {
+                let ad = a.get("isDir").and_then(Value::as_bool).unwrap_or(false);
+                let bd = b.get("isDir").and_then(Value::as_bool).unwrap_or(false);
+                bd.cmp(&ad).then_with(|| {
+                    a.get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .cmp(&b.get("name").and_then(Value::as_str).unwrap_or("").to_lowercase())
+                })
+            });
+
+            let mut crumbs = Vec::new();
+            for ancestor in path.ancestors() {
+                let name = ancestor
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "Root".to_string());
+                crumbs.push(json!({"name": name, "path": ancestor.to_string_lossy()}));
+            }
+            crumbs.reverse();
+
+            let home = home_dir();
+            let mut places = Vec::new();
+            let candidates = [
+                ("Home", "home", home.clone()),
+                ("Desktop", "desktop", home.join("Desktop")),
+                ("Documents", "documents", home.join("Documents")),
+                ("Downloads", "downloads", home.join("Downloads")),
+            ];
+            for (name, kind, candidate) in candidates {
+                if candidate.is_dir() {
+                    places.push(json!({
+                        "name": name,
+                        "kind": kind,
+                        "path": candidate.to_string_lossy(),
+                    }));
+                }
+            }
+            let root = if cfg!(windows) {
+                path.ancestors()
+                    .last()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| PathBuf::from("C:\\"))
+            } else {
+                PathBuf::from("/")
+            };
+            if !places.iter().any(|p| p.get("path").and_then(Value::as_str) == Some(&*root.to_string_lossy())) {
+                places.push(json!({
+                    "name": "Computer",
+                    "kind": "root",
+                    "path": root.to_string_lossy(),
+                }));
+            }
+
+            Ok(json!({
+                "path": path.to_string_lossy(),
+                "parent": path.parent().map(|p| p.to_string_lossy().into_owned()),
+                "home": home.to_string_lossy(),
+                "crumbs": crumbs,
+                "places": places,
+                "entries": entries,
+                "truncated": truncated,
+            }))
         })(),
         "usage" => Ok(crate::usage::snapshot(home_dir().as_path())),
         "agentSettings" => (|| {
@@ -292,6 +394,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let (sessions, messages, bytes) = history::status(&conn, &db)?;
             let workspaces = workspace::list(&app.root)?;
             Ok(json!({
+                "root": app.root.to_string_lossy(),
                 "sessions": sessions,
                 "messages": messages,
                 "dbBytes": bytes,

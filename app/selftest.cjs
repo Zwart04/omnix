@@ -30,6 +30,9 @@ function fakeEl(tag) {
       contains(c) { return this.set.has(c); }
     },
     appendChild(child) {
+      if (child.parentNode && child.parentNode !== node) {
+        child.parentNode.children = child.parentNode.children.filter((x) => x !== child);
+      }
       child.parentNode = node;
       node.children.push(child);
       return child;
@@ -70,7 +73,7 @@ function fakeEl(tag) {
 const byId = new Map();
 [
   'app', 'app-version', 'sidebar', 'workspace-list', 'tab-list', 'panes', 'tabstrip',
-  'tabstrip-tabs', 'new-project', 'pane-empty', 'pane-empty-terminal',
+  'tabstrip-tabs', 'new-project', 'pane-empty', 'pane-empty-terminal', 'pane-empty-browser',
   'project-modal', 'project-close', 'project-cancel', 'project-add', 'project-path', 'project-error',
   'tab-new', 'tab-new-menu', 'strip-command', 'tab-new-terminal', 'tab-new-browser',
   'browser-url', 'browser-open', 'browser-engine', 'browser-native', 'browser-text',
@@ -80,15 +83,21 @@ const byId = new Map();
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
   'project-tree', 'project-refresh', 'project-add-icon', 'cmd-btn', 'side-settings', 'rail-agents',
+  'side-workspace', 'workspace-list-tracked', 'workspace-count', 'workspace-refresh',
+  'project-count', 'rail-agents-count',
   'usage-chip', 'usage-modal', 'usage-close', 'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
   'agent-settings', 'agent-settings-meta', 'agent-settings-refresh',
+  'picker-modal', 'picker-close', 'picker-cancel', 'picker-select', 'picker-up',
+  'picker-refresh', 'picker-list', 'picker-places', 'picker-crumbs', 'picker-selected',
+  'picker-error', 'picker-title',
   'cmd-modal', 'cmd-close', 'cmd-cancel', 'cmd-start', 'cmd-line', 'cmd-cwd', 'cmd-error',
   'palette', 'palette-input', 'palette-list'
 ].forEach((id) => byId.set(id, fakeEl(id)));
 
 byId.get('palette').hidden = true;
+byId.get('picker-modal').hidden = true;
 
 // scope chips ship in index.html; the stub rebuilds that initial DOM
 ['workspace', 'project', 'all'].forEach((scope) => {
@@ -237,13 +246,35 @@ require('./app.js');
     'projects sorted by indexed updatedAt desc');
   assert.strictEqual(all(bootRows[1], (n) => n.className === 'ws-name')[0].textContent, 'omnix',
     'older project second');
-  assert.strictEqual(bootRows[0].children[1].children[0].textContent, '108 sessions',
+  assert.strictEqual(bootRows[0].children[1].children[1].children[0].textContent, '108 sessions',
     'saved project carries its indexed session count');
   assert.strictEqual(all(bootRows[0], (n) => n.className === 'proj-time')[0].textContent, '2m ago',
     'saved project carries its indexed relative time');
+  assert.strictEqual(byId.get('project-count').textContent, '2', 'project count follows the list');
   const bootIcons = byClass('workspace-list', 'icon');
-  assert.strictEqual(bootIcons.length, 5, 'agent icons rendered');
-  assert.ok(bootIcons.every((n) => /^<svg viewBox=/.test(n.innerHTML || '')), 'icons are brand SVGs');
+  assert.strictEqual(bootIcons.length, 7, 'two folder marks plus five agent marks');
+  assert.ok(bootIcons.every((n) => /^<svg viewBox=/.test(n.innerHTML || '')), 'icons are inline SVGs');
+  // no tracked workspaces yet: the current root still gets a workspace row
+  assert.strictEqual(byClass('workspace-list-tracked', 'ws-row').length, 1,
+    'current workspace fallback row');
+  assert.strictEqual(byId.get('side-workspace').textContent, 'repo', 'sidebar names the root');
+
+  // tracked workspaces list alongside the current root, without duplicating it
+  byId.get('workspace-refresh').handlers.click(noop);
+  await tick();
+  const wsReq = posted[posted.length - 1];
+  assert.strictEqual(wsReq.cmd, 'status', 'workspace refresh asks for status');
+  window.__omnix.reply(wsReq.id, true, JSON.stringify({
+    root: '/repo', sessions: 0, messages: 0, dbBytes: 0,
+    workspaces: [
+      { path: '/repo', branch: 'main', sleeping: false, sessions: [] },
+      { path: '/home/zwart/git/other', branch: 'feat', sleeping: true, sessions: [] }
+    ]
+  }));
+  await tick();
+  assert.strictEqual(byClass('workspace-list-tracked', 'ws-row').length, 2,
+    'tracked workspaces render, current root not duplicated');
+  assert.strictEqual(byId.get('workspace-count').textContent, '2', 'workspace count follows the list');
 
   // removing a project only touches the saved list
   const removeBtn = byClass('workspace-list', 'proj-remove')[0];
@@ -315,7 +346,10 @@ require('./app.js');
 
   assert.strictEqual(byId.get('history-count').textContent, '290 sessions', 'session count text');
   assert.match(byId.get('history-meta').textContent,
-    /^Scanned 290 files \u00b7 44,846 messages \u00b7 /, 'scan status line');
+    /^290 updated \u00b7 288 unchanged \u00b7 44,846 new messages \u00b7 /,
+    'incremental scan status line');
+  assert.strictEqual(byId.get('rail-agents-count').hidden, false, 'agents badge appears with history');
+  assert.strictEqual(byId.get('rail-agents-count').textContent, '290', 'badge carries the session total');
 
   const agentChips = byId.get('history-agents').children;
   assert.strictEqual(agentChips.length, 4, 'All agents plus one chip per scanned agent');
@@ -471,9 +505,14 @@ require('./app.js');
   const splitWraps = byClass('panes', 'pane-split');
   assert.strictEqual(splitWraps.length, 1, 'panes wrapped side by side');
   assert.strictEqual(splitWraps[0].children.length, 2, 'both terminals stay mounted');
-  const splitClose = all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-close')[1];
-  splitClose.handlers.click({ stopPropagation: noop() });
+  const paneControls = byClass('panes', 'pane-controls');
+  assert.strictEqual(paneControls.length, 2, 'each pane carries split and close controls');
+  assert.strictEqual(paneControls[0].children[0].disabled, true, 'split is disabled once paired');
+  const paneClose = paneControls[1].children[1];
+  paneClose.handlers.click({ stopPropagation: noop() });
   await tick();
+  const splitKill = posted[posted.length - 1];
+  assert.strictEqual(splitKill.cmd, 'ptyKill', 'pane close control kills its pty');
   assert.strictEqual(byClass('panes', 'pane-split').length, 0, 'closing one pane unsplits');
   window.__omnix.reply(posted[posted.length - 1].id, true, '{"ok":true}');
   await tick();
@@ -576,13 +615,35 @@ require('./app.js');
   window.__omnix.reply(openReq.id, true, '{"url":"https://example.com"}');
   await tick();
 
-  // adding a project: native picker -> projectAdd -> refresh -> terminal rooted there
+  // adding a project: in-app folder browser -> projectAdd -> refresh -> terminal there
   byId.get('new-project').handlers.click(noop());
   await tick();
   const pickReq = posted[posted.length - 1];
-  assert.strictEqual(pickReq.cmd, 'pickFolder', '+ Project opens the native picker');
-  window.__omnix.reply(pickReq.id, true, JSON.stringify({ path: '/home/zwart/git/newrepo' }));
+  assert.strictEqual(pickReq.cmd, 'fsList', '+ Project opens the in-app folder picker');
+  window.__omnix.reply(pickReq.id, true, JSON.stringify({
+    path: '/home/zwart/git',
+    parent: '/home/zwart',
+    home: '/home/zwart',
+    crumbs: [
+      { name: 'home', path: '/home' },
+      { name: 'zwart', path: '/home/zwart' },
+      { name: 'git', path: '/home/zwart/git' }
+    ],
+    places: [{ name: 'Home', kind: 'home', path: '/home/zwart' }],
+    entries: [{
+      name: 'newrepo', path: '/home/zwart/git/newrepo', isDir: true,
+      modified: Date.now(), size: 0
+    }],
+    truncated: false
+  }));
   await tick();
+  assert.strictEqual(byId.get('picker-modal').hidden, false, 'picker modal is visible');
+  assert.strictEqual(byClass('picker-list', 'picker-row').length, 1, 'folder row rendered');
+  byClass('picker-list', 'picker-row')[0].handlers.click({ stopPropagation: noop() });
+  assert.match(byId.get('picker-selected').textContent, /newrepo/, 'selection label follows the row');
+  byId.get('picker-select').handlers.click(noop());
+  await tick();
+  assert.strictEqual(byId.get('picker-modal').hidden, true, 'picker closes after select');
   const addReq = posted[posted.length - 1];
   assert.strictEqual(addReq.cmd, 'projectAdd', 'picked folder is added');
   assert.deepStrictEqual(addReq.args, { path: '/home/zwart/git/newrepo' }, 'add sends the folder');

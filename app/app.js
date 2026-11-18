@@ -452,6 +452,7 @@
         var wrap = tab.splitEl;
         mate.splitWith = null;
         mate.splitEl = null;
+        if (mate.splitCtl) mate.splitCtl.disabled = false;
         tab.splitWith = null;
         tab.splitEl = null;
         if (wrap && wrap.parentNode) {
@@ -600,6 +601,24 @@
     return args;
   }
 
+  var PANE_ICONS = {
+    split: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>'
+  };
+
+  function paneControl(kind, label, run) {
+    var btn = el('button', 'pane-ctl' + (kind === 'close' ? ' close' : ''));
+    btn.type = 'button';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.innerHTML = PANE_ICONS[kind];
+    btn.addEventListener('click', guard(function (ev) {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      return run();
+    }));
+    return btn;
+  }
+
   function createTerminal(opts) {
     opts = opts || {};
     closeTabMenu();
@@ -615,6 +634,20 @@
     pane.dataset.kind = 'terminal';
     var host = el('div', 'term-host');
     pane.appendChild(host);
+
+    /* Split and close live on the pane itself: the action is where the
+       terminal is, not only in the tab strip or command palette. */
+    var controls = el('div', 'pane-controls');
+    var splitCtl = paneControl('split', 'Split terminal (Ctrl+Shift+D)', function () {
+      activate(tab);
+      return splitActive();
+    });
+    var closeCtl = paneControl('close', 'Close terminal', function () {
+      return closeTab(tab);
+    });
+    controls.appendChild(splitCtl);
+    controls.appendChild(closeCtl);
+    pane.appendChild(controls);
     var panes = $('panes');
     if (!panes) {
       toast('error', 'panes container missing');
@@ -657,11 +690,15 @@
       exited: false,
       handoffBrief: opts.handoffBrief || null,
       splitEl: splitWrap,
-      splitWith: anchor
+      splitWith: anchor,
+      splitCtl: splitCtl,
+      closeCtl: closeCtl
     };
+    splitCtl.disabled = !!tab.splitWith;
     if (anchor) {
       anchor.splitEl = splitWrap;
       anchor.splitWith = tab;
+      if (anchor.splitCtl) anchor.splitCtl.disabled = true;
     }
     tabs.push(tab);
     activate(tab);
@@ -993,13 +1030,31 @@
     box.textContent = '';
     var list = res && Array.isArray(res.agents) ? res.agents : [];
     var installed = list.filter(function (a) { return a && a.available !== false; });
+
+    var about = el('div', 'set-card set-about');
+    var aboutHead = el('div', 'set-head');
+    aboutHead.appendChild(iconNode('gear'));
+    aboutHead.appendChild(el('span', 'set-name', 'Launch overrides'));
+    about.appendChild(aboutHead);
+    about.appendChild(el('p', 'set-help',
+      'Extra arguments and environment variables are appended when Omnix starts an agent. ' +
+      'Every card saves automatically; no restart is needed.'));
+    if (res && res.path) {
+      var path = el('div', 'set-path', 'Settings file: ' + res.path);
+      path.title = res.path;
+      about.appendChild(path);
+    }
+    box.appendChild(about);
+
     var meta = $('agent-settings-meta');
     if (meta) {
-      meta.textContent = installed.length + ' detected' +
-        (res && res.path ? '  \u00b7  ' + res.path : '');
+      meta.textContent = installed.length + ' ' +
+        (installed.length === 1 ? 'agent detected' : 'agents detected') +
+        ' on this machine';
     }
     if (!installed.length) {
-      box.appendChild(el('p', 'side-empty', 'No agent CLIs detected. Install one, then hit Refresh.'));
+      box.appendChild(el('p', 'side-empty',
+        'No agent CLIs detected. Install one, then press Refresh.'));
       return;
     }
     for (var i = 0; i < installed.length; i++) {
@@ -1007,7 +1062,7 @@
     }
   }
 
-  function settingsField(card, label, value, placeholder, save) {
+  function settingsField(card, label, value, placeholder, save, help) {
     var wrap = el('label', 'set-field');
     wrap.appendChild(el('span', 'set-field-label', label));
     var input = el('input', 'input mono set-input');
@@ -1022,6 +1077,7 @@
       timer = setTimeout(save, 500);
     });
     wrap.appendChild(input);
+    if (help) wrap.appendChild(el('span', 'set-field-help', help));
     card.appendChild(wrap);
     return input;
   }
@@ -1031,27 +1087,46 @@
     var head = el('div', 'set-head');
     head.appendChild(iconNode(agent.name));
     head.appendChild(el('span', 'set-name', agentLabel(agent.name)));
-    head.appendChild(el('span', 'tag mono', agent.bin || agent.name));
-    head.appendChild(el('span', 'set-state', 'detected'));
+    var bin = el('span', 'set-bin', agent.bin || agent.name);
+    bin.title = agent.bin || agent.name;
+    head.appendChild(bin);
+    var state = el('span', 'set-state', 'Detected');
+    head.appendChild(state);
     card.appendChild(head);
+    card.appendChild(el('p', 'set-help',
+      'Appended after ' + (agent.bin || agent.name) + ' when this agent is launched.'));
 
     var argsInput = null;
     var envInput = null;
+    var resetTimer = null;
     var save = function () {
-      call('agentSettingsSave', {
+      if (resetTimer) clearTimeout(resetTimer);
+      state.textContent = 'Saving';
+      state.className = 'set-state is-saving';
+      rpc('agentSettingsSave', {
         agent: agent.name,
         args: argsInput ? argsInput.value : '',
         env: envInput ? envInput.value : ''
       }).then(function () {
-        toast('ok', 'Saved ' + agentLabel(agent.name) + ' launch settings');
-      }).catch(function (err) {
+        state.textContent = 'Saved';
+        state.className = 'set-state is-saved';
+        resetTimer = setTimeout(function () {
+          state.textContent = 'Detected';
+          state.className = 'set-state';
+        }, 1800);
+      }, function (err) {
+        state.textContent = 'Not saved';
+        state.className = 'set-state is-error';
         toast('error', 'Save failed: ' + message(err));
       });
     };
 
     argsInput = settingsField(card, 'Arguments', agent.args,
-      'extra arguments, e.g. --dangerously-skip-permissions', save);
-    envInput = settingsField(card, 'Environment', agent.env, 'KEY=value KEY=value', save);
+      '--dangerously-skip-permissions', save,
+      'Whitespace separates arguments. Stored per workspace.');
+    envInput = settingsField(card, 'Environment', agent.env,
+      'KEY=value KEY=value', save,
+      'Merged into the agent process environment.');
     return card;
   }
 
@@ -1142,6 +1217,8 @@
     'claude': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"></path></svg>`,
     'codex': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path></svg>`,
     'command': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.6 8.6 8 4 12.4"/><path d="M9.4 12.4H12.4"/></svg>`,
+    folder: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L12.5 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>`,
+    file: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>`,
     'copilot': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M16.295 5.29l-0.242 0.986h-2.32c-1.721 0-3.22 1.197-3.638 2.902l-2.101 8.593H3.798c-2.44 0-4.229-2.342-3.637-4.761l2.106-8.612c0.557-2.274 2.556-3.87 4.85-3.87h5.54c2.44 0 4.23 2.343 3.638 4.761"></path><path d="M16.295 5.29l-0.242 0.986h-2.32c-1.721 0-3.22 1.197-3.638 2.902l-2.101 8.593H3.798c-2.44 0-4.229-2.342-3.637-4.761l2.106-8.612c0.557-2.274 2.556-3.87 4.85-3.87h5.54c2.44 0 4.23 2.343 3.638 4.761M7.752 18.758l0.242-0.986h2.321c1.72 0 3.22-1.197 3.637-2.903l2.102-8.593h4.196c2.439 0 4.228 2.343 3.637 4.762l-2.107 8.611c-0.556 2.274-2.555 3.87-4.85 3.87h-5.54c-2.44 0-4.229-2.342-3.638-4.761"></path><path d="M7.752 18.758l0.242-0.986h2.321c1.72 0 3.22-1.197 3.637-2.903l2.102-8.593h4.196c2.439 0 4.228 2.343 3.637 4.762l-2.107 8.611c-0.556 2.274-2.555 3.87-4.85 3.87h-5.54c-2.44 0-4.229-2.342-3.638-4.761"></path></svg>`,
     'cursor': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M22.106 5.68L12.5.135a.998.998 0 00-.998 0L1.893 5.68a.84.84 0 00-.419.726v11.186c0 .3.16.577.42.727l9.607 5.547a.999.999 0 00.998 0l9.608-5.547a.84.84 0 00.42-.727V6.407a.84.84 0 00-.42-.726zm-.603 1.176L12.228 22.92c-.063.108-.228.064-.228-.061V12.34a.59.59 0 00-.295-.51l-9.11-5.26c-.107-.062-.063-.228.062-.228h18.55c.264 0 .428.286.296.514z"></path></svg>`,
     'gemini': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M20.616 10.835a14.147 14.147 0 01-4.45-3.001 14.111 14.111 0 01-3.678-6.452.503.503 0 00-.975 0 14.134 14.134 0 01-3.679 6.452 14.155 14.155 0 01-4.45 3.001c-.65.28-1.318.505-2.002.678a.502.502 0 000 .975c.684.172 1.35.397 2.002.677a14.147 14.147 0 014.45 3.001 14.112 14.112 0 013.679 6.453.502.502 0 00.975 0c.172-.685.397-1.351.677-2.003a14.145 14.145 0 013.001-4.45 14.113 14.113 0 016.453-3.678.503.503 0 000-.975 13.245 13.245 0 01-2.003-.678z"></path></svg>`,
@@ -1167,9 +1244,9 @@
 
   /* One icon node for menus, project chips, and session rows: a brand SVG when
      the agent is known, otherwise the agent's initial in the same 16px box. */
-  function iconNode(name) {
+  function iconNode(name, extra) {
     var mark = ICONS[iconKey(name)];
-    var box = el('span', mark ? 'icon' : 'icon is-mono');
+    var box = el('span', (mark ? 'icon' : 'icon is-mono') + (extra ? ' ' + extra : ''));
     if (mark) {
       box.innerHTML = mark;
       box.setAttribute('aria-hidden', 'true');
@@ -1386,6 +1463,11 @@
       $('app-version').textContent = 'v' + version;
       applyPlatform(info.platform);
       appRoot = info.root || '';
+      var workspace = $('side-workspace');
+      if (workspace && appRoot) {
+        workspace.textContent = baseName(appRoot) || 'Workspace';
+        workspace.title = appRoot;
+      }
       TRACE_KEYS = !!info.traceKeys;
       setAgents(info.agents);
       var parts = ['omnix ' + version];
@@ -1400,19 +1482,13 @@
 
   var savedProjects = [];
   var projectStats = {};
-  var trackedByPath = {};
 
   function refreshStatus() {
     return call('status', {}).then(function (res) {
       if (!res) return null;
       lastStatus = res;
       var list = Array.isArray(res.workspaces) ? res.workspaces : [];
-      /* tracked workspace state only decorates sidebar rows now, so the saved
-         project list is what decides which folders are listed */
-      trackedByPath = {};
-      for (var i = 0; i < list.length; i++) {
-        if (list[i] && list[i].path) trackedByPath[list[i].path] = list[i];
-      }
+      renderTrackedWorkspaces(list);
       var db = typeof res.dbBytes === 'number' ? (res.dbBytes / 1048576).toFixed(1) + ' MiB' : '?';
       $('status-right').textContent =
         'sessions ' + num(res.sessions) + '   messages ' + num(res.messages) + '   db ' + db;
@@ -1575,12 +1651,15 @@
   }
 
   function addProjectPath(path) {
-    return call('projectAdd', { path: path }).then(function (res) {
+    return rpc('projectAdd', { path: path }).then(function (res) {
       savedProjects = res && Array.isArray(res.projects) ? res.projects : savedProjects;
       toast('ok', 'Project added');
       return refreshProjects().then(function () {
         openProject({ path: path, name: baseName(path) });
       });
+    }, function (err) {
+      toast('error', 'add project: ' + message(err));
+      throw err;
     });
   }
 
@@ -1600,25 +1679,376 @@
     });
   }
 
-  /* + Project asks the OS for a folder. Cancelling leaves everything alone;
-     only a failed dialog falls back to the typed-path modal. */
-  function pickProject() {
-    return call('pickFolder', {}, { quiet: true, timeout: 600000 }).then(function (res) {
-      if (!res) {
-        openProjectModal();
-        return null;
-      }
-      var path = res.path ? String(res.path).trim() : '';
-      if (!path) return null;
-      return addProjectPath(path).catch(function (e) {
-        openProjectModal();
-        var input = $('project-path');
-        if (input) input.value = path;
-        var err = $('project-error');
-        if (err) err.textContent = message(e);
-        return null;
+  /* ---------- in-app folder picker ---------- */
+
+  var picker = {
+    data: null,
+    path: '',
+    selected: null,
+    loading: false,
+    seq: 0,
+    sortKey: 'name',
+    sortDir: 1
+  };
+
+  function pickerSize(entry) {
+    if (!entry || entry.isDir) return '\u2014';
+    var n = Number(entry.size) || 0;
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return Math.max(1, Math.round(n / 1024)) + ' KB';
+    return (n / 1048576).toFixed(1) + ' MB';
+  }
+
+  function pickerType(entry) {
+    if (!entry || entry.isDir) return 'Folder';
+    var name = String(entry.name || '');
+    var dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot === name.length - 1) return 'File';
+    return name.slice(dot + 1).toUpperCase() + ' file';
+  }
+
+  function pickerWhen(ms) {
+    var n = Number(ms) || 0;
+    if (!n) return '\u2014';
+    try {
+      return new Date(n).toLocaleString(undefined, {
+        day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit'
       });
+    } catch (err) {
+      return '\u2014';
+    }
+  }
+
+  function pickerNote(text, isError) {
+    var node = $('picker-error');
+    if (!node) return;
+    node.textContent = text || '';
+    node.className = 'picker-note' + (isError ? ' is-error' : '');
+  }
+
+  function pickerPlaceIcon(kind) {
+    var box = el('span', 'pick-icon');
+    var key = String(kind || '');
+    var svg;
+    if (key === 'root') {
+      svg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="1.5"/><rect x="3" y="13" width="18" height="7" rx="1.5"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>';
+    } else if (key === 'home') {
+      svg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>';
+    } else if (key === 'desktop') {
+      svg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>';
+    } else if (key === 'documents') {
+      svg = ICONS.file;
+    } else if (key === 'downloads') {
+      svg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
+    } else {
+      svg = ICONS.folder;
+    }
+    box.innerHTML = svg;
+    box.setAttribute('aria-hidden', 'true');
+    return box;
+  }
+
+  function pickerUp() {
+    var parent = picker.data && picker.data.parent;
+    if (!parent || picker.loading) return null;
+    return pickerLoad(parent);
+  }
+
+  function pickerLoad(path) {
+    var seq = ++picker.seq;
+    picker.loading = true;
+    picker.selected = null;
+    pickerNote('');
+    renderPicker();
+    var args = path ? { path: path } : {};
+    return rpc('fsList', args).then(function (res) {
+      if (seq !== picker.seq) return null;
+      picker.loading = false;
+      picker.data = res || null;
+      if (res && res.path) picker.path = String(res.path);
+      picker.selected = null;
+      renderPicker();
+      var list = $('picker-list');
+      if (list && list.focus) {
+        try { list.focus(); } catch (err) { /* not mounted yet */ }
+      }
+      return res;
+    }, function (err) {
+      if (seq !== picker.seq) return null;
+      picker.loading = false;
+      renderPicker();
+      pickerNote(message(err), true);
+      return null;
     });
+  }
+
+  function openPicker(start) {
+    picker.data = null;
+    picker.path = start || appRoot || '';
+    picker.selected = null;
+    picker.sortKey = 'name';
+    picker.sortDir = 1;
+    pickerNote('');
+    showModal($('picker-modal'));
+    renderPicker();
+    return pickerLoad(picker.path);
+  }
+
+  function closePicker() {
+    picker.seq++;
+    picker.loading = false;
+    hideModal($('picker-modal'));
+  }
+
+  function pickerSorted(entries) {
+    var key = picker.sortKey;
+    var dir = picker.sortDir;
+    return entries.slice().sort(function (a, b) {
+      if (!!a.isDir !== !!b.isDir) return a.isDir ? -1 : 1;
+      var av;
+      var bv;
+      if (key === 'size') {
+        av = Number(a.size) || 0;
+        bv = Number(b.size) || 0;
+      } else if (key === 'modified') {
+        av = Number(a.modified) || 0;
+        bv = Number(b.modified) || 0;
+      } else if (key === 'type') {
+        av = pickerType(a).toLowerCase();
+        bv = pickerType(b).toLowerCase();
+      } else {
+        av = String(a.name || '').toLowerCase();
+        bv = String(b.name || '').toLowerCase();
+      }
+      if (av < bv) return -dir;
+      if (av > bv) return dir;
+      return 0;
+    });
+  }
+
+  function pickerSyncSelection() {
+    var list = $('picker-list');
+    if (!list) return;
+    var rows = list.children || [];
+    for (var i = 0; i < rows.length; i++) {
+      var match = picker.selected && rows[i].dataset && rows[i].dataset.path === picker.selected.path;
+      rows[i].setAttribute('aria-selected', match ? 'true' : 'false');
+    }
+    var label = $('picker-selected');
+    if (label) {
+      label.textContent = picker.selected
+        ? 'Selected: ' + picker.selected.path
+        : (picker.path ? 'Current folder: ' + picker.path : 'No folder selected');
+    }
+    var select = $('picker-select');
+    if (select) select.disabled = !picker.selected && !picker.path;
+  }
+
+  function pickerSelect(entry) {
+    if (!entry || !entry.isDir) return;
+    picker.selected = entry;
+    pickerSyncSelection();
+  }
+
+  function pickerEnter(entry) {
+    if (!entry || !entry.isDir || picker.loading) return;
+    pickerLoad(entry.path);
+  }
+
+  function renderPicker() {
+    var crumbs = $('picker-crumbs');
+    var places = $('picker-places');
+    var list = $('picker-list');
+    var data = picker.data;
+
+    if (crumbs) {
+      crumbs.textContent = '';
+      var chain = data && Array.isArray(data.crumbs) ? data.crumbs : [];
+      for (var c = 0; c < chain.length; c++) {
+        (function (crumb, index) {
+          var btn = el('button', 'crumb', String(crumb.name || 'Root'));
+          btn.type = 'button';
+          btn.title = crumb.path || '';
+          btn.addEventListener('click', guard(function () { return pickerLoad(crumb.path); }));
+          crumbs.appendChild(btn);
+          if (index < chain.length - 1) crumbs.appendChild(el('span', 'crumb-sep', '/'));
+        })(chain[c], c);
+      }
+      if (!chain.length) crumbs.appendChild(el('span', 'crumb', picker.loading ? 'Opening...' : 'No folder'));
+    }
+
+    if (places) {
+      places.textContent = '';
+      var spots = data && Array.isArray(data.places) ? data.places : [];
+      for (var p = 0; p < spots.length; p++) {
+        (function (place) {
+          var btn = el('button', 'place');
+          btn.type = 'button';
+          btn.title = place.path || '';
+          btn.appendChild(pickerPlaceIcon(place.kind));
+          btn.appendChild(el('span', null, String(place.name || baseName(place.path))));
+          if (data && place.path === data.path) btn.className = 'place is-active';
+          btn.addEventListener('click', guard(function () { return pickerLoad(place.path); }));
+          places.appendChild(btn);
+        })(spots[p]);
+      }
+    }
+
+    if (!list) return;
+    list.textContent = '';
+    if (!data) {
+      if (picker.loading) list.appendChild(el('div', 'picker-loading', 'Loading folders\u2026'));
+      else if (!$('picker-error') || !$('picker-error').textContent) {
+        list.appendChild(el('div', 'picker-empty', 'Choose a folder to start browsing.'));
+      }
+      pickerSyncSelection();
+      return;
+    }
+
+    var entries = Array.isArray(data.entries) ? pickerSorted(data.entries) : [];
+    for (var i = 0; i < entries.length; i++) {
+      (function (entry) {
+        var row = el('div', 'picker-row ' + (entry.isDir ? 'is-dir' : 'is-file'));
+        row.dataset.path = entry.path || '';
+        row.dataset.dir = entry.isDir ? '1' : '0';
+        row.setAttribute('role', 'option');
+        row.setAttribute('aria-selected', 'false');
+        row.title = entry.path || '';
+
+        var name = el('span', 'pick-name');
+        name.appendChild(iconNode(entry.isDir ? 'folder' : 'file', 'pick-icon'));
+        name.appendChild(el('span', null, String(entry.name || '')));
+        row.appendChild(name);
+        row.appendChild(el('span', 'pick-cell', pickerSize(entry)));
+        row.appendChild(el('span', 'pick-cell pick-type', pickerType(entry)));
+        row.appendChild(el('span', 'pick-cell', pickerWhen(entry.modified)));
+
+        if (entry.isDir) {
+          row.addEventListener('click', guard(function () { pickerSelect(entry); }));
+          row.addEventListener('dblclick', guard(function () { pickerEnter(entry); }));
+        }
+        list.appendChild(row);
+      })(entries[i]);
+    }
+
+    if (!entries.length) {
+      list.appendChild(el('div', 'picker-empty', 'This folder is empty.'));
+    } else if (picker.loading) {
+      pickerNote('Refreshing\u2026');
+    }
+
+    var up = $('picker-up');
+    if (up) up.disabled = !data.parent || picker.loading;
+
+    var cols = document.querySelectorAll('.picker-col');
+    for (var k = 0; k < cols.length; k++) {
+      var sorted = cols[k].dataset && cols[k].dataset.sort === picker.sortKey;
+      cols[k].className = 'picker-col' + (sorted ? ' is-sorted' : '');
+      cols[k].setAttribute('aria-sort', sorted ? (picker.sortDir > 0 ? 'ascending' : 'descending') : 'none');
+    }
+
+    pickerSyncSelection();
+  }
+
+  function pickerSort(key) {
+    if (!key) return;
+    if (picker.sortKey === key) picker.sortDir = -picker.sortDir;
+    else {
+      picker.sortKey = key;
+      picker.sortDir = 1;
+    }
+    renderPicker();
+  }
+
+  function pickerConfirm() {
+    var target = picker.selected && picker.selected.isDir
+      ? picker.selected.path
+      : picker.path;
+    if (!target) {
+      pickerNote('Choose a folder first.', true);
+      return null;
+    }
+    closePicker();
+    return addProjectPath(target).catch(function (err) {
+      openProjectModal();
+      var input = $('project-path');
+      if (input) input.value = target;
+      var note = $('project-error');
+      if (note) note.textContent = message(err);
+      return null;
+    });
+  }
+
+  function pickerMove(delta) {
+    var list = $('picker-list');
+    if (!list) return;
+    var rows = list.children || [];
+    var dirs = [];
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].dataset && rows[i].dataset.dir === '1') dirs.push(rows[i]);
+    }
+    if (!dirs.length) return;
+    var current = -1;
+    for (var d = 0; d < dirs.length; d++) {
+      if (picker.selected && dirs[d].dataset.path === picker.selected.path) current = d;
+    }
+    var next = current < 0 ? (delta > 0 ? 0 : dirs.length - 1)
+      : (current + delta + dirs.length) % dirs.length;
+    var path = dirs[next].dataset.path;
+    pickerLoadSelection(path);
+    if (dirs[next].scrollIntoView) dirs[next].scrollIntoView({ block: 'nearest' });
+  }
+
+  function pickerLoadSelection(path) {
+    if (!picker.data || !Array.isArray(picker.data.entries)) return;
+    var entries = picker.data.entries;
+    for (var i = 0; i < entries.length; i++) {
+      if (entries[i] && entries[i].path === path) {
+        pickerSelect(entries[i]);
+        return;
+      }
+    }
+  }
+
+  function onPickerKey(ev) {
+    var modal = $('picker-modal');
+    if (!modal || modal.hidden) return;
+    if (ev.key === 'Escape') {
+      ev.preventDefault();
+      closePicker();
+      return;
+    }
+    if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      pickerMove(1);
+      return;
+    }
+    if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      pickerMove(-1);
+      return;
+    }
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      if (picker.selected) pickerEnter(picker.selected);
+      else pickerConfirm();
+      return;
+    }
+    if (ev.key === 'Backspace') {
+      ev.preventDefault();
+      pickerUp();
+      return;
+    }
+    if (ev.key === ' ') {
+      ev.preventDefault();
+      if (picker.selected) pickerEnter(picker.selected);
+    }
+  }
+
+  /* + Project opens the browser instead of a platform dialog: same places,
+     columns, and footer as Orca, and it works identically on every OS. */
+  function pickProject() {
+    return openPicker(appRoot || '');
   }
 
   function removeProject(p) {
@@ -1648,9 +2078,11 @@
   function renderProjects(list) {
     var box = $('workspace-list');
     if (!box) return;
+    var countNode = $('project-count');
+    if (countNode) countNode.textContent = String(list.length);
     if (!list.length) {
       box.textContent = '';
-      box.appendChild(el('div', 'side-empty', 'No projects yet. Add one with + Project.'));
+      box.appendChild(el('div', 'side-empty', 'No projects yet. Add the folders you work in.'));
       return;
     }
     box.textContent = '';
@@ -1665,20 +2097,17 @@
     });
     for (let i = 0; i < rows.length; i++) {
       let p = rows[i] || {};
-      var ws = trackedByPath[p.path];
-      if (ws) {
-        box.appendChild(renderWorkspace(ws));
-        continue;
-      }
       var row = el('div', 'proj-row');
+      row.appendChild(iconNode('folder', 'proj-icon'));
 
       var stat = projectStats[p.path] || {};
       var name = p.name || stat.name || baseName(p.path);
+      var body = el('div', 'proj-body');
 
       var top = el('div', 'proj-top');
       top.appendChild(el('span', 'ws-name', name));
       top.appendChild(el('span', 'proj-time', relTime(stat.updatedAt || p.updatedAt)));
-      row.appendChild(top);
+      body.appendChild(top);
 
       var count = Number(stat.sessions || p.sessions || 0);
       var meta = el('div', 'proj-meta');
@@ -1694,7 +2123,8 @@
         chips.appendChild(el('span', 'glyph is-more', '+' + (agents.length - shown)));
       }
       meta.appendChild(chips);
-      row.appendChild(meta);
+      body.appendChild(meta);
+      row.appendChild(body);
 
       var remove = el('button', 'icon-btn proj-remove');
       remove.type = 'button';
@@ -1727,19 +2157,66 @@
     return node;
   }
 
-  function renderWorkspace(ws) {
+  /* Workspaces are the folders `omnix agent track` has seen; Projects are the
+     folders the user pinned. They live in separate sections so a tracked
+     session never makes a folder look like something the user added. */
+  function currentWorkspaceRow(rootPath) {
+    var row = el('button', 'ws-row is-current');
+    row.type = 'button';
+    row.title = rootPath;
+    row.appendChild(iconNode('folder', 'ws-icon'));
+    row.appendChild(el('span', 'ws-name', baseName(rootPath) || rootPath));
+    row.appendChild(el('span', 'tag branch', 'current'));
+    row.addEventListener('click', guard(function () {
+      openProject({ path: rootPath, name: baseName(rootPath) });
+    }));
+    return row;
+  }
+
+  function renderTrackedWorkspaces(list) {
+    var box = $('workspace-list-tracked');
+    var count = $('workspace-count');
+    var rows = Array.isArray(list) ? list : [];
+    var rootPath = (lastStatus && lastStatus.root) || appRoot || '';
+    var hasRoot = false;
+    for (var r = 0; r < rows.length; r++) {
+      if (rows[r] && rows[r].path === rootPath) hasRoot = true;
+    }
+    /* the folder the window was launched in stays visible even after other
+       workspaces have been tracked, so "current" is never missing */
+    var total = rows.length + (rootPath && !hasRoot ? 1 : 0);
+    if (count) count.textContent = String(total);
+    if (!box) return;
+    box.textContent = '';
+
+    if (!total) {
+      box.appendChild(el('div', 'side-empty', 'No workspace yet.'));
+      return;
+    }
+
+    if (rootPath && !hasRoot) box.appendChild(currentWorkspaceRow(rootPath));
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i] && rows[i].path) {
+        box.appendChild(renderWorkspace(rows[i], rows[i].path === rootPath));
+      }
+    }
+  }
+
+  function renderWorkspace(ws, isCurrent) {
     var wrap = el('div', 'ws');
 
     var sessions = Array.isArray(ws.sessions) ? ws.sessions : [];
-    var row = el('button', 'ws-row');
+    var row = el('button', 'ws-row' + (isCurrent ? ' is-current' : ''));
     row.type = 'button';
     row.setAttribute('aria-expanded', 'false');
     row.title = ws.path || '';
     row.appendChild(chevron());
+    row.appendChild(iconNode('folder', 'ws-icon'));
     row.appendChild(el('span', 'ws-name', baseName(ws.path)));
-    row.appendChild(el('span', 'tag branch', ws.branch || 'no branch'));
-    row.appendChild(el('span', 'ws-state' + (ws.sleeping ? ' sleeping' : ''),
-      ws.sleeping ? 'sleeping' : 'awake'));
+    row.appendChild(el('span', 'tag branch', isCurrent ? 'current' : (ws.branch || 'no branch')));
+    if (ws.sleeping) {
+      row.appendChild(el('span', 'ws-state sleeping', 'sleeping'));
+    }
 
     var kids = el('div', 'ws-kids');
     kids.hidden = true;
@@ -1850,6 +2327,11 @@
     if (count) {
       var n = historyCount();
       count.textContent = fmtNum(n) + ' session' + (n === 1 ? '' : 's');
+      var badge = $('rail-agents-count');
+      if (badge) {
+        badge.textContent = n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
+        badge.hidden = !n;
+      }
     }
 
     renderScopeChips();
@@ -1933,9 +2415,15 @@
       node.textContent = '';
       return;
     }
-    node.textContent = 'Scanned ' + fmtNum(hist.scan.files || 0) + ' files \u00b7 ' +
-      fmtNum(hist.scan.messages || 0) + ' messages \u00b7 ' +
-      (relTime(hist.scannedAt) || 'just now');
+    var updated = Number(hist.scan.files) || 0;
+    var unchanged = Number(hist.scan.unchanged) || 0;
+    var parts = [fmtNum(updated) + ' updated'];
+    if (unchanged) parts.push(fmtNum(unchanged) + ' unchanged');
+    var messages = fmtNum(hist.scan.messages || 0) + (unchanged ? ' new messages' : ' messages');
+    parts.push(messages);
+    parts.push(relTime(hist.scannedAt) || 'just now');
+    node.textContent = parts.join(' \u00b7 ');
+    node.title = 'The index is saved locally. A rescan only reads transcripts that are new or changed.';
   }
 
   function renderHistoryList() {
@@ -1944,7 +2432,7 @@
     list.textContent = '';
 
     if (hist.loading) {
-      var loading = el('div', 'loading', 'Scanning agent history...');
+      var loading = el('div', 'loading', 'Checking for new or changed sessions\u2026');
       loading.setAttribute('role', 'status');
       list.appendChild(loading);
       return;
@@ -1989,7 +2477,7 @@
       'Resume ' + (s.title || 'session') + ' from ' + (s.agent || 'agent'));
 
     var top = el('span', 'sess-top');
-    top.appendChild(el('span', 'tag agent', s.agent || '?'));
+    top.appendChild(iconNode(s.agent || '?'));
     var titleText = cleanText(s.title) || '(untitled)';
     var title = el('span', 'sess-title', titleText);
     title.title = titleText;
@@ -2108,8 +2596,8 @@
     { label: 'Docs', hint: 'panel', run: function () { openStatic('docs'); } },
     { label: 'Agent settings', hint: 'settings', run: openAgentSettings },
     { label: 'Split Terminal', hint: 'Ctrl+Shift+D', run: splitActive },
-    { label: 'Usage and memory', hint: 'quota', run: openUsage },
-    { label: 'Add Project Folder', hint: 'picker', run: pickProject },
+    { label: 'Usage and memory', hint: 'usage', run: openUsage },
+    { label: 'Add Project Folder', hint: 'folder', run: pickProject },
     { label: 'Add Project by Path', hint: 'workspace', run: openProjectModal },
     { label: 'Rescan History', hint: 'history', run: function () { return loadHistory(); } },
     { label: 'Resume last session', hint: 'history', run: resumeLastSession }
@@ -2288,6 +2776,7 @@
     if (key === 'Escape') {
       if (paletteVisible()) paletteClose();
       else if (!$('handoff-modal').hidden) hideModal($('handoff-modal'));
+      else if (!$('picker-modal').hidden) closePicker();
       else if (!$('project-modal').hidden) hideModal($('project-modal'));
       else if (!$('cmd-modal').hidden) hideModal($('cmd-modal'));
       else if (!$('usage-modal').hidden) hideModal($('usage-modal'));
@@ -2393,6 +2882,36 @@
     var newProject = $('new-project');
     if (newProject) newProject.addEventListener('click', guard(pickProject));
 
+    var pickerClose = $('picker-close');
+    if (pickerClose) pickerClose.addEventListener('click', guard(closePicker));
+    var pickerCancel = $('picker-cancel');
+    if (pickerCancel) pickerCancel.addEventListener('click', guard(closePicker));
+    var pickerSelectBtn = $('picker-select');
+    if (pickerSelectBtn) pickerSelectBtn.addEventListener('click', guard(pickerConfirm));
+    var pickerUpBtn = $('picker-up');
+    if (pickerUpBtn) pickerUpBtn.addEventListener('click', guard(pickerUp));
+    var pickerRefresh = $('picker-refresh');
+    if (pickerRefresh) pickerRefresh.addEventListener('click', guard(function () {
+      return pickerLoad(picker.path);
+    }));
+    var pickerList = $('picker-list');
+    if (pickerList) pickerList.addEventListener('keydown', guard(onPickerKey));
+    var pickerModal = $('picker-modal');
+    if (pickerModal) pickerModal.addEventListener('mousedown', guard(function (ev) {
+      if (ev && ev.target === pickerModal) closePicker();
+    }));
+    var pickerCols = document.querySelectorAll('.picker-col');
+    for (var pc = 0; pc < pickerCols.length; pc++) {
+      (function (col) {
+        col.addEventListener('click', guard(function () {
+          pickerSort(col.dataset ? col.dataset.sort : '');
+        }));
+      })(pickerCols[pc]);
+    }
+
+    var workspaceRefresh = $('workspace-refresh');
+    if (workspaceRefresh) workspaceRefresh.addEventListener('click', guard(refreshStatus));
+
     var projectAdd = $('project-add');
     if (projectAdd) projectAdd.addEventListener('click', guard(submitProject));
     var projectCancel = $('project-cancel');
@@ -2418,6 +2937,13 @@
       }));
     }
 
+    var emptyBrowser = $('pane-empty-browser');
+    if (emptyBrowser) {
+      emptyBrowser.addEventListener('click', guard(function () {
+        openStatic('browser');
+      }));
+    }
+
     var projectRefresh = $('project-refresh');
     if (projectRefresh) {
       projectRefresh.addEventListener('click', guard(function () {
@@ -2426,6 +2952,7 @@
         return refreshProjects();
       }));
     }
+
 
     var projectAddIcon = $('project-add-icon');
     if (projectAddIcon) projectAddIcon.addEventListener('click', guard(pickProject));
@@ -2527,6 +3054,8 @@
         defaultPrevented: ev.defaultPrevented
       });
       if (!activeTab || activeTab.kind !== 'terminal') return;
+      if ($('picker-modal') && !$('picker-modal').hidden) return;
+      if ($('palette') && !$('palette').hidden) return;
       var tag = (ev.target && ev.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
