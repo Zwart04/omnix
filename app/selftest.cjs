@@ -39,6 +39,12 @@ function fakeEl(tag) {
       child.parentNode = null;
       return child;
     },
+    insertBefore(child, before) {
+      const at = node.children.indexOf(before);
+      node.children.splice(at < 0 ? node.children.length : at, 0, child);
+      child.parentNode = node;
+      return child;
+    },
     addEventListener(type, fn) { node.handlers[type] = fn; },
     setAttribute(key, val) { node.attrs[key] = String(val); },
     getAttribute(key) {
@@ -73,7 +79,8 @@ const byId = new Map();
   'docs-frame', 'toasts', 'statusbar', 'status-left', 'status-right', 'status-last',
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
-  'project-tree', 'project-refresh', 'cmd-btn', 'rail-agents',
+  'project-tree', 'project-refresh', 'project-add-icon', 'cmd-btn', 'side-settings', 'rail-agents',
+  'usage-chip', 'usage-modal', 'usage-close', 'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
   'agent-settings', 'agent-settings-meta', 'agent-settings-refresh',
@@ -435,7 +442,7 @@ require('./app.js');
   // ---- palette: open, filter, enter ----
   byId.get('cmd-btn').handlers.click(noop());
   assert.strictEqual(byId.get('palette').hidden, false, 'palette opens from the rail');
-  byId.get('palette-input').value = 'terminal';
+  byId.get('palette-input').value = 'New Terminal';
   byId.get('palette-input').handlers.input(noop());
   assert.strictEqual(byId.get('palette-list').children.length, 1, 'filter narrows the list');
   assert.match(byId.get('palette-list').children[0].textContent, /New Terminal/, 'match label');
@@ -449,11 +456,33 @@ require('./app.js');
   window.__omnix.reply(paletteSpawn.id, true, '{"paneKey":"tab:1","pid":78}');
   await tick();
 
+  // ---- split terminal ----
+  byId.get('cmd-btn').handlers.click(noop());
+  byId.get('palette-input').value = 'Split Terminal';
+  byId.get('palette-input').handlers.input(noop());
+  assert.strictEqual(byId.get('palette-list').children.length, 1, 'split command found');
+  byId.get('palette-input').handlers.keydown({ key: 'Enter', preventDefault: noop });
+  await tick();
+  const splitSpawn = posted[posted.length - 1];
+  assert.strictEqual(splitSpawn.cmd, 'ptySpawn', 'split spawns a second pty');
+  assert.strictEqual(splitSpawn.args.paneKey, 'tab:2', 'split pane key increments');
+  window.__omnix.reply(splitSpawn.id, true, '{"paneKey":"tab:2","pid":79}');
+  await tick();
+  const splitWraps = byClass('panes', 'pane-split');
+  assert.strictEqual(splitWraps.length, 1, 'panes wrapped side by side');
+  assert.strictEqual(splitWraps[0].children.length, 2, 'both terminals stay mounted');
+  const splitClose = all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-close')[1];
+  splitClose.handlers.click({ stopPropagation: noop() });
+  await tick();
+  assert.strictEqual(byClass('panes', 'pane-split').length, 0, 'closing one pane unsplits');
+  window.__omnix.reply(posted[posted.length - 1].id, true, '{"ok":true}');
+  await tick();
+
   // keyboard: arrows move the active row, escape closes, focus returns
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, false, 'Ctrl+K opens the palette');
   const rows = byId.get('palette-list').children;
-  assert.strictEqual(rows.length, 11, 'all commands listed with an empty query');
+  assert.strictEqual(rows.length, 14, 'all commands listed with an empty query');
   byId.get('palette-input').handlers.keydown({ key: 'ArrowDown', preventDefault: noop });
   assert.strictEqual(byId.get('palette-list').children[1].getAttribute('aria-selected'), 'true',
     'arrow down moves the selection');
@@ -547,14 +576,15 @@ require('./app.js');
   window.__omnix.reply(openReq.id, true, '{"url":"https://example.com"}');
   await tick();
 
-  // adding a project: modal -> projectAdd -> refresh -> terminal rooted there
+  // adding a project: native picker -> projectAdd -> refresh -> terminal rooted there
   byId.get('new-project').handlers.click(noop());
-  assert.strictEqual(byId.get('project-modal').hidden, false, '+ Project opens the modal');
-  byId.get('project-path').value = '/home/zwart/git/newrepo';
-  byId.get('project-add').handlers.click(noop());
+  await tick();
+  const pickReq = posted[posted.length - 1];
+  assert.strictEqual(pickReq.cmd, 'pickFolder', '+ Project opens the native picker');
+  window.__omnix.reply(pickReq.id, true, JSON.stringify({ path: '/home/zwart/git/newrepo' }));
   await tick();
   const addReq = posted[posted.length - 1];
-  assert.strictEqual(addReq.cmd, 'projectAdd', 'add asks the host');
+  assert.strictEqual(addReq.cmd, 'projectAdd', 'picked folder is added');
   assert.deepStrictEqual(addReq.args, { path: '/home/zwart/git/newrepo' }, 'add sends the folder');
   window.__omnix.reply(addReq.id, true, JSON.stringify({
     projects: [
@@ -563,7 +593,6 @@ require('./app.js');
     ]
   }));
   await tick();
-  assert.strictEqual(byId.get('project-modal').hidden, true, 'modal closes on success');
   assert.strictEqual(posted[posted.length - 1].cmd, 'projects', 'add refreshes the list');
   window.__omnix.reply(posted[posted.length - 1].id, true, JSON.stringify({
     projects: [

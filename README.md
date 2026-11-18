@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.3.2_amd64.deb` | `sudo apt install ./omnix_0.3.2_amd64.deb` |
+| Linux x86_64 | `omnix_0.3.9_amd64.deb` | `sudo apt install ./omnix_0.3.9_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.3.2-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.3.2-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.3.9-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.3.9-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -39,15 +39,30 @@ Yang sudah jalan dan dites di repo ini:
   `~/.claude/projects` (tanpa `subagents/`), dan `~/.local/share/opencode/opencode.db`
   read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
-- GUI satu jendela bergaya Orca: rail 44px, sidebar project, tab strip di atas,
-  panel `Agents` berisi indexed history semua agent, command palette (Ctrl+K).
+- GUI satu jendela bergaya Orca: sidebar workspace (Search, Handoff, Docs,
+  Agents di atas, lalu header `Projects`), tab strip di atas, panel `Agents`
+  berisi indexed history semua agent, command palette (Ctrl+K). Tidak ada rail
+  ganda; brand, command palette, dan setelan agent ada di header sidebar.
   Tab strip punya menu `+` (Terminal, Browser, Custom CLI, lalu **agent yang
   terdeteksi saja** dengan logo aslinya), dan terminal memakai palet/font per OS.
-- Sidebar `Projects` hanya berisi folder yang kamu tambahkan sendiri (`+ Project`
-  di kiri bawah, atau `Add Project` di palette). Folder itu disimpan di
+- Sidebar `Projects` hanya berisi folder yang kamu tambahkan sendiri. `+ Project`
+  membuka dialog folder bawaan OS (GTK di Linux, `osascript` di macOS, folder
+  browser PowerShell di Windows), lalu folder itu langsung dibuka di terminal.
+  Kalau dialog dibatalkan tidak ada yang berubah; input path manual tetap
+  tersedia lewat `Add Project by Path` di palette. Folder disimpan di
   `~/.omnix/projects.json`, klik satu baris membuka terminal dengan cwd di sana,
   dan `×` di baris menghapusnya dari sidebar. Indexed history hanya mengisi
-  jumlah sesi dan logo agent untuk path yang cocok, tidak lagi menambah baris.
+  jumlah sesi dan logo agent untuk path yang cocok, tidak menambah baris.
+- Terminal bisa di-split: `Ctrl+Shift+D`, menu `+`, atau palette `Split
+  Terminal`. Dua pane tampil berdampingan, masing-masing punya pty sendiri,
+  tab strip menampilkan keduanya, dan menutup salah satu pane mengembalikan
+  sisanya jadi satu pane penuh.
+- Status bar menampilkan RAM terpakai dan window kuota agent yang paling ketat.
+  Klik chip itu (atau palette `Usage and memory`) untuk modal usage: memori
+  sistem plus per-provider plan, progress bar, dan waktu reset. Saat ini kuota
+  Codex dibaca dari snapshot `rate_limits` terakhir di rollout
+  `~/.codex/sessions`; provider yang tidak menyimpan data lokal tidak
+  ditampilkan supaya tidak ada angka karangan. Data dipoll tiap 30 detik.
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
   sama. Panel `Agents` default tertutup dan index baru dipindai saat dibuka.
@@ -58,14 +73,14 @@ Yang sudah jalan dan dites di repo ini:
 - Setiap pty dipaksa `TERM=xterm-256color`, `COLORTERM=truecolor`,
   `TERM_PROGRAM=omnix` supaya TUI agent (opencode, codex, antigravity) tampil
   berwarna, bukan monokrom.
-- Agent settings (rail gear atau menu `+`): daftar CLI yang terdeteksi plus
+- Agent settings (gear di header sidebar atau menu `+`): daftar CLI yang terdeteksi plus
   argumen dan environment per agent, disimpan di `~/.omnix/agents.json` dan
   dipakai saat agent diluncurkan atau di-resume. Deteksi mencari `PATH` lalu
   direktori install per-user (`~/.opencode/bin`, `~/.local/bin`, `~/.bun/bin`,
   `~/.cargo/bin`, nvm, npm global).
 - WebView mengambil fokus keyboard sendiri saat jendela aktif (WebKitGTK di
   compositor tertentu sempat membiarkan fokus di body, jadi ketikan pty hilang).
-- 14 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
+- 18 unit test, termasuk test yang membuat git repo dan worktree sungguhan.
 
 Belum dibangun (sengaja, biar tidak jadi kerangka kosong):
 

@@ -34,7 +34,6 @@
   --mono: ui-monospace, monospace;
 
   --status-h: 24px;
-  --rail-w: 44px;
   --side-w: 280px;
   --hist-w: 320px;
   --strip-h: 36px;
@@ -256,60 +255,68 @@ input[type="checkbox"] {
 
 #app {
   display: grid;
-  grid-template-columns:
-    var(--rail-w) var(--side-w) minmax(0, 1fr) var(--hist-w);
+  grid-template-columns: var(--side-w) minmax(0, 1fr) var(--hist-w);
   grid-template-rows: auto minmax(0, 1fr);
   height: calc(100vh - var(--status-h));
   min-height: 0;
 }
 
-#rail { grid-row: 1 / -1; }
-#tabstrip { grid-column: 2 / -1; grid-row: 1; }
+#tabstrip { grid-column: 1 / -1; grid-row: 1; }
 #sidebar, #main, #agents-panel { grid-row: 2; }
 
 #app.hist-collapsed { --hist-w: 0px; }
 
-/* ---------- icon rail ---------- */
+/* ---------- workspace header ---------- */
 
-#rail {
+.side-top {
   display: flex;
-  flex-direction: column;
   align-items: center;
   gap: var(--s1);
-  min-height: 0;
-  padding: 6px 0;
-  background: var(--bg-rail);
-  border-right: 1px solid var(--line-soft);
+  flex: none;
+  height: 40px;
+  padding: 0 var(--s2);
+  border-bottom: 1px solid var(--line-soft);
 }
 
 .rail-brand {
   display: grid;
   place-items: center;
-  width: 100%;
-  height: 32px;
+  width: 24px;
+  height: 24px;
+  flex: none;
   color: var(--accent);
 }
 
 .rail-brand img {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
 }
 
 @media (prefers-color-scheme: light) {
   .rail-brand img { filter: invert(1); }
 }
 
-.rail-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  width: 100%;
-  margin-top: 6px;
+.side-workspace {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
 }
 
-.rail-bottom { margin-top: auto; }
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: none;
+  padding: var(--s1) 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
 
+/* workspace rows keep the panel marking behaviour of the old rail */
 .panel-btn {
   position: relative;
   display: grid;
@@ -330,7 +337,6 @@ input[type="checkbox"] {
   height: 16px;
 }
 
-/* current-panel mark sits on the rail edge so it does not shift on hover */
 .panel-btn::before {
   content: "";
   position: absolute;
@@ -361,6 +367,32 @@ input[type="checkbox"] {
 .panel-btn[aria-current="true"]::before,
 .panel-btn:active::before {
   background: var(--accent);
+}
+
+.panel-btn.nav-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  width: 100%;
+  height: 28px;
+  padding: 0 var(--s2);
+  border-radius: var(--r-ctl);
+  text-align: left;
+}
+
+.panel-btn.nav-row::before { display: none; }
+
+.nav-row svg {
+  flex: none;
+  width: 15px;
+  height: 15px;
+}
+
+.nav-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: inherit;
 }
 
 /* ---------- sidebar ---------- */
@@ -1937,4 +1969,130 @@ input[type="checkbox"] {
     animation-duration: .01ms !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+/* ---------- split panes ---------- */
+
+.pane-split {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  gap: 1px;
+  background: var(--line);
+}
+
+.pane-split > .pane {
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--bg);
+}
+
+/* ---------- usage ---------- */
+
+.status-chip {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: none;
+  color: var(--meta);
+  font: 13px/1.4 var(--mono);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.status-chip:hover {
+  border-color: var(--line-strong, var(--line));
+  color: var(--text);
+}
+
+.usage-ram {
+  padding: 0 0 var(--s2);
+  font-size: 14px;
+  color: var(--text-2);
+}
+
+.usage-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.usage-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--s2) 0;
+  border-top: 1px solid var(--line-soft);
+}
+
+.usage-agent-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.usage-agent-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.usage-agent-plan {
+  font-size: 12px;
+  color: var(--meta);
+  text-transform: lowercase;
+}
+
+.usage-window {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 13px;
+  color: var(--meta);
+}
+
+.usage-window-label {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.25;
+}
+
+.usage-window-label small {
+  font-size: 11px;
+  color: var(--meta);
+}
+
+.usage-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--r-pill);
+  background: var(--hover-strong);
+}
+
+.usage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.usage-bar > span.high { background: #d97757; }
+
+.usage-window-pct {
+  min-width: 6ch;
+  text-align: right;
+  color: var(--text-2);
+  font-family: var(--mono);
+}
+
+.usage-empty {
+  padding: var(--s2) 0;
+  font-size: 13px;
+  color: var(--meta);
 }

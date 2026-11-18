@@ -157,6 +157,13 @@ fn url_allowed(url: &str) -> bool {
     (lower.starts_with("http://") || lower.starts_with("https://")) && !url.contains(' ')
 }
 
+fn home_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 fn history_db(root: &PathBuf) -> PathBuf {
     root.join(".omnix").join("history.sqlite")
 }
@@ -220,6 +227,11 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let path = as_str(&args, "path").ok_or_else(|| anyhow!("path is required"))?;
             Ok(json!({ "projects": projects::remove(&app.root, &path)? }))
         })(),
+        "pickFolder" => (|| {
+            let picked = crate::picker::folder()?;
+            Ok(json!({ "path": picked.map(|p| p.to_string_lossy().into_owned()) }))
+        })(),
+        "usage" => Ok(crate::usage::snapshot(home_dir().as_path())),
         "agentSettings" => (|| {
             let saved = crate::agent::load_settings(&app.root);
             Ok(json!({

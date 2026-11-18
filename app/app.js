@@ -299,12 +299,14 @@
 
   function call(cmd, args, opts) {
     var quiet = !!(opts && opts.quiet);
-    return rpc(cmd, args).then(function (res) {
+    return rpc(cmd, args, opts && opts.timeout).then(function (res) {
       if (!quiet) setLast(cmd + ' ok');
       return res;
     }, function (err) {
-      toast('error', cmd + ': ' + message(err));
-      if (!quiet) setLast(cmd + ' failed');
+      if (!quiet) {
+        toast('error', cmd + ': ' + message(err));
+        setLast(cmd + ' failed');
+      }
       return null;
     });
   }
@@ -386,8 +388,11 @@
       hideBrowser();
     }
     activeTab = tab;
+    var group = [tab];
+    if (tab.splitWith) group.push(tab.splitWith);
     for (var i = 0; i < tabs.length; i++) {
-      if (tabs[i].el) tabs[i].el.hidden = tabs[i] !== tab;
+      if (tabs[i].el) tabs[i].el.hidden = group.indexOf(tabs[i]) < 0;
+      if (tabs[i].splitEl) tabs[i].splitEl.hidden = group.indexOf(tabs[i]) < 0;
     }
     renderTabs();
     markRail();
@@ -442,6 +447,18 @@
       closeBrowser({ quiet: true });
     }
     if (tab.kind === 'terminal') {
+      var mate = tab.splitWith;
+      if (mate) {
+        var wrap = tab.splitEl;
+        mate.splitWith = null;
+        mate.splitEl = null;
+        tab.splitWith = null;
+        tab.splitEl = null;
+        if (wrap && wrap.parentNode) {
+          wrap.parentNode.insertBefore(mate.el, wrap);
+          wrap.parentNode.removeChild(wrap);
+        }
+      }
       tab.closed = true;
       if (tab.ro) {
         try { tab.ro.disconnect(); } catch (err) { /* ignore */ }
@@ -469,6 +486,21 @@
     } else {
       renderTabs();
     }
+  }
+
+  /* Splits the active terminal in two. Orca keeps both panes on screen and
+     treats them as one group; closing either promotes the survivor. */
+  function splitActive() {
+    var t = activeTab;
+    if (!t || t.kind !== 'terminal') {
+      toast('warn', 'open a terminal before splitting');
+      return null;
+    }
+    if (t.splitWith) {
+      activate(t.splitWith);
+      return t.splitWith;
+    }
+    return createTerminal({ split: true, cwd: t.cwd, title: 'terminal 2' });
   }
 
   /* tab strip "+" menu */
@@ -513,6 +545,10 @@
     box.appendChild(menuRow('Terminal', 'pty', 'terminal', function () {
       closeTabMenu();
       createTerminal({ title: 'terminal' });
+    }));
+    box.appendChild(menuRow('Split Terminal', 'Ctrl+Shift+D', 'terminal', function () {
+      closeTabMenu();
+      splitActive();
     }));
     box.appendChild(menuRow('Browser', 'web', 'browser', function () {
       closeTabMenu();
@@ -584,10 +620,22 @@
       toast('error', 'panes container missing');
       return null;
     }
-    panes.appendChild(pane);
+    var anchor = opts.split ? activeTab : null;
+    if (anchor && (anchor.kind !== 'terminal' || !anchor.el || anchor.splitWith)) anchor = null;
+    var splitWrap = null;
+    if (anchor) {
+      splitWrap = el('div', 'pane-split');
+      if (panes.insertBefore) panes.insertBefore(splitWrap, anchor.el);
+      else panes.appendChild(splitWrap);
+      splitWrap.appendChild(anchor.el);
+      splitWrap.appendChild(pane);
+    } else {
+      panes.appendChild(pane);
+    }
 
     var title = opts.title ||
-      (opts.agent ? opts.agent + ' ' + shortId(opts.sessionId) : 'terminal');
+      (opts.agent ? opts.agent + ' ' + shortId(opts.sessionId)
+        : (splitWrap ? 'terminal 2' : 'terminal'));
 
     var tab = {
       id: 'tab' + (++tabSeq),
@@ -599,7 +647,7 @@
       fit: null,
       ro: null,
       title: title,
-      cwd: opts.cwd || null,
+      cwd: opts.cwd || (anchor && anchor.cwd) || null,
       agent: opts.agent || null,
       sessionId: opts.sessionId || null,
       lastCols: 0,
@@ -607,8 +655,14 @@
       spawned: false,
       closed: false,
       exited: false,
-      handoffBrief: opts.handoffBrief || null
+      handoffBrief: opts.handoffBrief || null,
+      splitEl: splitWrap,
+      splitWith: anchor
     };
+    if (anchor) {
+      anchor.splitEl = splitWrap;
+      anchor.splitWith = tab;
+    }
     tabs.push(tab);
     activate(tab);
 
@@ -1366,6 +1420,128 @@
     });
   }
 
+  /* ---------- usage and memory ---------- */
+
+  var usageData = { ram: null, agents: [] };
+  var usageTimer = null;
+
+  function refreshUsage() {
+    return call('usage', {}, { quiet: true }).then(function (res) {
+      if (!res) return null;
+      usageData = res;
+      renderUsage();
+      return res;
+    });
+  }
+
+  function fmtBytes(bytes) {
+    var n = Number(bytes) || 0;
+    if (n <= 0) return '-';
+    if (n >= 1073741824) return (n / 1073741824).toFixed(1) + ' GB';
+    return Math.round(n / 1048576) + ' MB';
+  }
+
+  function fmtReset(seconds) {
+    var sec = Number(seconds) || 0;
+    if (sec <= 0) return 'now';
+    var min = Math.round(sec / 60);
+    if (min < 60) return min + 'm';
+    var hours = Math.floor(min / 60);
+    var rest = min % 60;
+    if (hours < 24) return hours + 'h' + (rest ? ' ' + rest + 'm' : '');
+    return Math.floor(hours / 24) + 'd ' + (hours % 24) + 'h';
+  }
+
+  function windowLabel(win) {
+    var minutes = Number(win.windowMinutes) || 0;
+    if (minutes >= 1440) return Math.round(minutes / 1440) + 'd window';
+    if (minutes >= 60) return Math.round(minutes / 60) + 'h window';
+    if (minutes > 0) return minutes + 'm window';
+    return String(win.kind || 'window');
+  }
+
+  function renderUsage() {
+    var ram = usageData.ram || {};
+    var total = Number(ram.totalBytes) || 0;
+    var used = Number(ram.usedBytes) || 0;
+    var pct = total > 0 ? Math.round(used / total * 100) : null;
+    var agents = Array.isArray(usageData.agents) ? usageData.agents : [];
+
+    /* the compact chip warns with the tightest window it can see */
+    var tightest = null;
+    for (var a = 0; a < agents.length; a++) {
+      var wins = Array.isArray(agents[a].windows) ? agents[a].windows : [];
+      for (var w = 0; w < wins.length; w++) {
+        var usedPct = Number(wins[w].usedPercent) || 0;
+        if (!tightest || usedPct > tightest.percent) {
+          tightest = { agent: agents[a].agent, percent: usedPct };
+        }
+      }
+    }
+    var chip = $('usage-chip');
+    if (chip) {
+      var text = 'RAM ' + (pct == null ? '-' : pct + '%');
+      if (tightest) text += ' \u00b7 ' + tightest.agent + ' ' + Math.round(tightest.percent) + '%';
+      chip.textContent = text;
+      chip.title = total > 0
+        ? fmtBytes(used) + ' of ' + fmtBytes(total) + ' in use'
+        : 'memory data unavailable';
+    }
+
+    var ramNode = $('usage-ram');
+    if (ramNode) {
+      ramNode.textContent = total > 0
+        ? 'Memory ' + fmtBytes(used) + ' of ' + fmtBytes(total) + ' (' + pct + '%)'
+        : 'Memory data unavailable';
+    }
+
+    var list = $('usage-list');
+    if (!list) return;
+    list.textContent = '';
+    if (!agents.length) {
+      list.appendChild(el('div', 'usage-empty', 'No provider keeps local quota data yet.'));
+      return;
+    }
+    for (var i = 0; i < agents.length; i++) {
+      var agent = agents[i] || {};
+      var card = el('div', 'usage-agent');
+      var head = el('div', 'usage-agent-head');
+      head.appendChild(el('span', 'usage-agent-name', String(agent.agent || 'agent')));
+      if (agent.plan) head.appendChild(el('span', 'usage-agent-plan', String(agent.plan) + ' plan'));
+      card.appendChild(head);
+      var rows = Array.isArray(agent.windows) ? agent.windows : [];
+      for (var r = 0; r < rows.length; r++) {
+        var win = rows[r] || {};
+        var value = Math.max(0, Math.min(100, Number(win.usedPercent) || 0));
+        var row = el('div', 'usage-window');
+        var label = el('span', 'usage-window-label');
+        label.appendChild(el('span', '', windowLabel(win)));
+        label.appendChild(el('small', '', 'resets in ' + fmtReset(win.resetsInSeconds)));
+        row.appendChild(label);
+        var bar = el('div', 'usage-bar');
+        var fill = el('span', value >= 90 ? 'high' : '');
+        fill.style.width = value + '%';
+        bar.appendChild(fill);
+        row.appendChild(bar);
+        row.appendChild(el('span', 'usage-window-pct', Math.round(value) + '%'));
+        card.appendChild(row);
+      }
+      list.appendChild(card);
+    }
+  }
+
+  function openUsage() {
+    renderUsage();
+    showModal($('usage-modal'));
+    return refreshUsage();
+  }
+
+  function startUsagePoll() {
+    if (usageTimer) return;
+    setTimeout(function () { refreshUsage(); }, 4000);
+    usageTimer = setInterval(function () { refreshUsage(); }, 30000);
+  }
+
   /* The sidebar lists the projects the user added, like Orca. Indexed history
      only fills in the session count and agent marks for those paths. */
   function refreshProjects() {
@@ -1398,6 +1574,16 @@
     if (input && input.focus) input.focus();
   }
 
+  function addProjectPath(path) {
+    return call('projectAdd', { path: path }).then(function (res) {
+      savedProjects = res && Array.isArray(res.projects) ? res.projects : savedProjects;
+      toast('ok', 'Project added');
+      return refreshProjects().then(function () {
+        openProject({ path: path, name: baseName(path) });
+      });
+    });
+  }
+
   function submitProject() {
     var input = $('project-path');
     var err = $('project-error');
@@ -1407,15 +1593,31 @@
       return;
     }
     if (err) err.textContent = '';
-    call('projectAdd', { path: path }).then(function (res) {
+    addProjectPath(path).then(function () {
       hideModal($('project-modal'));
-      savedProjects = res && Array.isArray(res.projects) ? res.projects : savedProjects;
-      toast('ok', 'Project added');
-      return refreshProjects().then(function () {
-        openProject({ path: path, name: baseName(path) });
-      });
     }).catch(function (e) {
       if (err) err.textContent = message(e);
+    });
+  }
+
+  /* + Project asks the OS for a folder. Cancelling leaves everything alone;
+     only a failed dialog falls back to the typed-path modal. */
+  function pickProject() {
+    return call('pickFolder', {}, { quiet: true, timeout: 600000 }).then(function (res) {
+      if (!res) {
+        openProjectModal();
+        return null;
+      }
+      var path = res.path ? String(res.path).trim() : '';
+      if (!path) return null;
+      return addProjectPath(path).catch(function (e) {
+        openProjectModal();
+        var input = $('project-path');
+        if (input) input.value = path;
+        var err = $('project-error');
+        if (err) err.textContent = message(e);
+        return null;
+      });
     });
   }
 
@@ -1905,7 +2107,10 @@
     { label: 'Hand off to another agent', hint: 'agent', run: function () { openHandoff(null); } },
     { label: 'Docs', hint: 'panel', run: function () { openStatic('docs'); } },
     { label: 'Agent settings', hint: 'settings', run: openAgentSettings },
-    { label: 'Add Project', hint: 'workspace', run: openProjectModal },
+    { label: 'Split Terminal', hint: 'Ctrl+Shift+D', run: splitActive },
+    { label: 'Usage and memory', hint: 'quota', run: openUsage },
+    { label: 'Add Project Folder', hint: 'picker', run: pickProject },
+    { label: 'Add Project by Path', hint: 'workspace', run: openProjectModal },
     { label: 'Rescan History', hint: 'history', run: function () { return loadHistory(); } },
     { label: 'Resume last session', hint: 'history', run: resumeLastSession }
   ];
@@ -2075,11 +2280,17 @@
       paletteOpen();
       return;
     }
+    if (mod && ev.shiftKey && (key === 'd' || key === 'D')) {
+      ev.preventDefault();
+      splitActive();
+      return;
+    }
     if (key === 'Escape') {
       if (paletteVisible()) paletteClose();
       else if (!$('handoff-modal').hidden) hideModal($('handoff-modal'));
       else if (!$('project-modal').hidden) hideModal($('project-modal'));
       else if (!$('cmd-modal').hidden) hideModal($('cmd-modal'));
+      else if (!$('usage-modal').hidden) hideModal($('usage-modal'));
       else if (!($('tab-new-menu') || {}).hidden) closeTabMenu();
     }
   }
@@ -2180,7 +2391,7 @@
     fillAgentSelect($('handoff-target'), 'opencode2');
 
     var newProject = $('new-project');
-    if (newProject) newProject.addEventListener('click', guard(openProjectModal));
+    if (newProject) newProject.addEventListener('click', guard(pickProject));
 
     var projectAdd = $('project-add');
     if (projectAdd) projectAdd.addEventListener('click', guard(submitProject));
@@ -2215,6 +2426,25 @@
         return refreshProjects();
       }));
     }
+
+    var projectAddIcon = $('project-add-icon');
+    if (projectAddIcon) projectAddIcon.addEventListener('click', guard(pickProject));
+
+    var sideSettings = $('side-settings');
+    if (sideSettings) sideSettings.addEventListener('click', guard(openAgentSettings));
+
+    var usageChip = $('usage-chip');
+    if (usageChip) usageChip.addEventListener('click', guard(openUsage));
+    var usageRefresh = $('usage-refresh');
+    if (usageRefresh) usageRefresh.addEventListener('click', guard(refreshUsage));
+    var usageClose = $('usage-close');
+    if (usageClose) usageClose.addEventListener('click', guard(function () {
+      hideModal($('usage-modal'));
+    }));
+    var usageModal = $('usage-modal');
+    if (usageModal) usageModal.addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === usageModal) hideModal($('usage-modal'));
+    }));
 
     var panelButtons = document.querySelectorAll('.panel-btn[data-panel]');
     for (var i = 0; i < panelButtons.length; i++) {
@@ -2376,6 +2606,7 @@
 
     refreshAppInfo();
     refreshStatus().then(refreshProjects);
+    startUsagePoll();
   }
 
   if (document.readyState === 'loading') {
