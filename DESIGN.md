@@ -24,7 +24,7 @@ Skala: `2, 4, 6, 8, 12, 16, 20, 24`. Tidak ada 3, 5, 7, 9, 11, 13, 15 untuk padd
 | Jarak antar tombol sejajar | 6px |
 | Jarak antar item daftar | 2px |
 | Padding baris daftar | 0 8px |
-| Padding section | 8px 10px |
+| Padding section | 8px 12px |
 | Jarak antar grup | 12px |
 | Jarak dari tepi bar jendela | 8px |
 | Padding vertikal pane | 12px |
@@ -46,12 +46,12 @@ Tidak boleh ada dua kontrol sejajar dengan tinggi berbeda.
 
 | Radius | Token | Pakai untuk |
 | --- | --- | --- |
-| 4px | `--r-sm` | Tag kecil, badge, sudut dalam |
-| 6px | `--r-ctl` | Tombol, input, tab, menu item, chip |
-| 10px | `--r-panel` | Menu, palette, modal, panel |
+| 2px | `--r-sm` | Tag kecil, badge, sudut dalam |
+| 4px | `--r-ctl` | Tombol, input, tab, menu item, chip |
+| 6px | `--r-panel` | Menu, palette, modal, panel |
 | penuh | `--r-pill` | Hanya switch track dan progress |
 
-Tidak ada pill pada tombol, chip, atau badge. Tidak ada radius berbeda untuk kontrol yang sejajar.
+Tidak ada pill pada tombol, chip, atau badge. Tidak ada radius berbeda untuk kontrol yang sejajar. Sudut kontrol tidak boleh lebih bulat dari 4px.
 
 ### Ikon
 
@@ -146,8 +146,10 @@ Aturan:
 
 ## 7. Komponen
 
-- **Bar jendela:** brand di atas kolom sidebar, tombol Settings dan Agents 28px, tab 32px menempel pada batas kolom, `+` 6px setelah tab, `Command` di kanan. Tab memakai judul shell dan ellipsis.
+- **Bar jendela:** brand di atas kolom sidebar berisi tombol collapse dan Settings 28px. Tab 32px menempel pada batas kolom, `+` 6px setelah tab, `Command` dan tombol Agents di kanan. Tab memakai judul shell dan ellipsis.
 - **Sidebar:** search 28px di paling atas. Baris judul workspace memuat refresh dan add. Tidak ada label section tambahan bila isinya hanya satu grup.
+- **Sidebar collapsed:** lebar 56px, hanya ikon. Logo, nama, search, judul workspace, nama project, branch, dan sesi disembunyikan; folder tetap bisa diklik dan tooltip membawa nama. Tombol collapse tetap di bar jendela.
+- **Panel Agents:** tombol collapse ada di header panel; setelah tertutup, tombol Agents di bar jendela membukanya lagi.
 - **Baris project:** 32px, twisty, ikon folder 16px, nama 13px/500. Branch dan sesi hanya saat dibuka. Status berjalan memakai dot 6px statis.
 - **Menu:** lebar 268px, padding 6px, item 32px, ikon 16px, font 13px. Item disabled tidak ditampilkan; deteksi agent yang tidak terpasang tidak masuk menu.
 - **Settings:** nav item 32px, satu section aktif. Tidak ada nav ke halaman yang belum ada.
@@ -160,7 +162,7 @@ Aturan:
 Tolak perubahan bila salah satu benar:
 
 - Ada gradient, `backdrop-filter`, atau shadow pada kontrol.
-- Ada `border-radius` di atas 10px selain switch dan progress.
+- Ada `border-radius` di atas 6px selain switch dan progress.
 - Ada lebih dari satu aksen warna bersaing. Ikon folder bukan pelanggaran.
 - Ada label ALL CAPS, emoji, em dash, atau kata pemasaran.
 - Ada dua kontrol sejajar dengan tinggi, radius, atau ukuran ikon berbeda.

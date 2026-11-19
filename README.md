@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.5.5_amd64.deb` | `sudo apt install ./omnix_0.5.5_amd64.deb` |
+| Linux x86_64 | `omnix_0.5.6_amd64.deb` | `sudo apt install ./omnix_0.5.6_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.5.5-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.5.5-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.5.6-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.5.6-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -45,13 +45,15 @@ Yang sudah jalan dan dites di repo ini:
   Sidebar mulai dengan search field: mengetik memfilter project, Enter membuka
   History Search dengan query yang sama. Grup workspace bisa dilipat dan
   judulnya diganti langsung; aksi refresh dan `+ Project` ada di baris judulnya,
-  sedangkan Settings dan Agents tinggal di bar jendela. Grup itu hanya berisi folder yang kamu pin lewat `+ Project`;
+  sedangkan collapse sidebar, Settings, dan toggle Agents tinggal di bar jendela. Grup itu hanya berisi folder yang kamu pin lewat `+ Project`;
   indexed history cuma memperkaya baris yang path-nya cocok, tidak menambah
   folder. Baris project satu baris; twisty membuka branch dan sesi agent yang
   terlacak, dan dot hijau statis menandai pty yang hidup dengan cwd di folder
-  itu. Tab baru, termasuk agent dari menu `+`, mewarisi folder tab aktif. Judul tab terminal mengikuti judul window dari shell
-  (`user@host:path`). Panel `Agents` berisi indexed history semua agent dan
-  command palette ada di Ctrl+K atau tombol `Command`.
+  itu. Tab baru, termasuk agent dari menu `+`, mewarisi folder tab aktif. Tab
+  memakai nama project atau label pane, bukan judul window shell, supaya dua
+  terminal di folder berbeda tidak tampil identik. Panel `Agents` berisi
+  indexed history semua agent dan command palette ada di Ctrl+K atau tombol
+  `Command`.
 - `+ Project` membuka dialog folder bawaan OS lewat `FileChooserNative` (Linux,
   tampil sesuai desktop portal), `FolderBrowserDialog` di Windows, dan
   `osascript choose folder` di macOS. Omnix tidak menggambar file browser

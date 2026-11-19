@@ -611,32 +611,45 @@
     var menu = $('tab-new-menu');
     if (menu) menu.hidden = true;
     var btn = $('tab-new');
-    if (btn) btn.setAttribute('aria-expanded', 'false');
+    if (btn) {
+      btn.setAttribute('aria-expanded', 'false');
+      btn.title = 'New Tab';
+    }
   }
 
   function toggleTabMenu() {
     var menu = $('tab-new-menu');
     if (!menu) return;
     var open = menu.hidden;
-    if (open) buildTabMenu();
-    menu.hidden = !open;
     var btn = $('tab-new');
-    if (btn) btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) {
+      buildTabMenu();
+      menu.hidden = false;
+      /* Anchor the menu under the + button, not to the far right of the bar. */
+      var bar = $('tabstrip');
+      var width = menu.offsetWidth || 268;
+      var left = btn && isFinite(btn.offsetLeft) ? btn.offsetLeft - 6 : 8;
+      var max = ((bar && bar.clientWidth) || 0) - width - 8;
+      if (!(max > 8)) max = 8;
+      menu.style.left = Math.max(8, Math.min(left, max)) + 'px';
+      menu.style.right = 'auto';
+    }
+    menu.hidden = !open;
+    if (btn) {
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      /* Drop the native tooltip so it cannot float over the open menu. */
+      btn.title = open ? '' : 'New Tab';
+    }
   }
 
-  function menuRow(label, hint, glyph, run, disabled) {
-    var row = el('button', 'menu-item' + (disabled ? ' is-disabled' : ''));
+  function menuRow(label, hint, glyph, run) {
+    var row = el('button', 'menu-item');
     row.type = 'button';
     row.setAttribute('role', 'menuitem');
-    if (disabled) {
-      row.disabled = true;
-      row.setAttribute('aria-disabled', 'true');
-      row.title = 'not found on PATH';
-    }
     if (glyph) row.appendChild(iconNode(glyph));
     row.appendChild(el('span', 'menu-label', label));
     if (hint) row.appendChild(el('span', 'menu-hint', hint));
-    if (!disabled) row.addEventListener('click', guard(run));
+    row.addEventListener('click', guard(run));
     return row;
   }
 
@@ -667,7 +680,7 @@
     });
     box.appendChild(el('div', 'menu-sep'));
     if (detected.length) {
-      box.appendChild(el('div', 'menu-label-group', 'Detected agents'));
+      box.appendChild(el('div', 'menu-label-group', 'Detected Agents'));
       for (var i = 0; i < detected.length; i++) {
         (function (agent) {
           box.appendChild(menuRow(
@@ -921,17 +934,6 @@
     term.onResize(function () {
       pushResize(tab);
     });
-
-    /* The shell names its window user@host:path; reuse that as the tab title
-       so the strip reads like the terminal it represents. */
-    if (typeof term.onTitleChange === 'function') {
-      term.onTitleChange(function (value) {
-        var next = String(value || '').replace(/\s+/g, ' ').trim();
-        if (!next || tab.exited || next === tab.title) return;
-        tab.title = next;
-        renderTabs();
-      });
-    }
 
     if (typeof ResizeObserver === 'function') {
       try {
@@ -1486,7 +1488,7 @@
     'rovo': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M7.12 11.084a.683.683 0 00-1.16.126L.075 22.974a.703.703 0 00.63 1.018h8.19a.678.678 0 00.63-.39c1.767-3.65.696-9.203-2.406-12.52zM11.434.386a15.515 15.515 0 00-.906 15.317l3.95 7.9a.703.703 0 00.628.388h8.19a.703.703 0 00.63-1.017L12.63.38a.664.664 0 00-1.196.006z"/></svg>`,
     'terminal': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5 6.1 8 3 11.5"/><path d="M8.6 11.5H13"/></svg>`,
     'command-code': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path clip-rule="evenodd" d="M19.334 0a4.67 4.67 0 0 0-4.666 4.668v2H9.334v-2A4.67 4.67 0 0 0 4.668 0 4.67 4.67 0 0 0 0 4.668a4.67 4.67 0 0 0 4.668 4.665h2v5.334h-2A4.67 4.67 0 0 0 0 19.334 4.67 4.67 0 0 0 4.668 24a4.67 4.67 0 0 0 4.666-4.666v-2h5.334v2A4.67 4.67 0 0 0 19.334 24 4.67 4.67 0 0 0 24 19.334a4.67 4.67 0 0 0-4.666-4.667h-2V9.333h2A4.67 4.67 0 0 0 24 4.668 4.673 4.673 0 0 0 19.334 0m-2 6.666v-2c0-1.107.893-2 2-2s2 .893 2 2-.893 2-2 2zm-12.668 0c-1.107 0-2-.893-2-2s.893-2 2-2 2 .893 2 2v2zm4.666 8V9.334h5.334v5.334zm10.002 6.667c-1.107 0-2-.893-2-2v-2h2c1.107 0 2 .892 2 2 0 1.107-.893 2-2 2m-14.668 0c-1.107 0-2-.893-2-2 0-1.108.893-2 2-2h2v2c0 1.107-.893 2-2 2"></path></svg>`,
-    gear: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
+    gear: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   };
 
   function iconKey(name) {
@@ -2061,7 +2063,10 @@
     var name = p.name || baseName(p.path);
     var existing = null;
     for (var i = 0; i < tabs.length; i++) {
-      if (tabs[i].kind === 'terminal' && tabs[i].cwd === p.path) { existing = tabs[i]; break; }
+      if (tabs[i].kind === 'terminal' && pathMatches(tabs[i].cwd || appRoot, p.path)) {
+        existing = tabs[i];
+        break;
+      }
     }
     if (existing) { activate(existing); return; }
     lastLaunchCwd = p.path;
@@ -2233,7 +2238,7 @@
 
       var remove = el('button', 'icon-btn proj-remove');
       remove.type = 'button';
-      remove.title = 'Remove from sidebar';
+      remove.title = 'Remove from Sidebar';
       remove.setAttribute('aria-label', 'Remove ' + name + ' from the sidebar');
       remove.textContent = '\u00d7';
       row.appendChild(remove);
@@ -2335,11 +2340,6 @@
     if (count) {
       var n = historyCount();
       count.textContent = fmtNum(n) + ' session' + (n === 1 ? '' : 's');
-      var badge = $('rail-agents-count');
-      if (badge) {
-        badge.textContent = n >= 1000 ? Math.round(n / 1000) + 'k' : String(n);
-        badge.hidden = !n;
-      }
     }
 
     renderScopeChips();
@@ -2824,6 +2824,21 @@
 
   /* ---------- panel collapse ---------- */
 
+  function setSideCollapsed(collapsed) {
+    var app = $('app');
+    var btn = $('side-toggle');
+    if (app) {
+      if (collapsed) app.classList.add('side-collapsed');
+      else app.classList.remove('side-collapsed');
+    }
+    if (btn) {
+      btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+      btn.setAttribute('aria-label', btn.title);
+    }
+    storeSet('omnix.sideCollapsed', collapsed ? '1' : '0');
+  }
+
   function setHistoryCollapsed(collapsed) {
     var app = $('app');
     var panel = $('agents-panel');
@@ -2961,6 +2976,28 @@
 
     var sideSettings = $('side-settings');
     if (sideSettings) sideSettings.addEventListener('click', guard(openAgentSettings));
+
+    setSideCollapsed(storeGet('omnix.sideCollapsed') === '1');
+
+    var sideToggle = $('side-toggle');
+    if (sideToggle) sideToggle.addEventListener('click', guard(function () {
+      var app = $('app');
+      setSideCollapsed(!(app && app.classList.contains('side-collapsed')));
+    }));
+
+    var sideSearchBox = $('side-search-box');
+    if (sideSearchBox) sideSearchBox.addEventListener('click', function () {
+      var app = $('app');
+      if (!app || !app.classList.contains('side-collapsed')) return;
+      setSideCollapsed(false);
+      var input = $('side-search');
+      if (input) {
+        input.value = '';
+        projFilter = '';
+        renderProjects(savedProjects);
+        if (input.focus) input.focus();
+      }
+    });
 
     var sideSearch = $('side-search');
     if (sideSearch) {

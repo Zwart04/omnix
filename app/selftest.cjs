@@ -82,9 +82,9 @@ const byId = new Map();
   'docs-frame', 'toasts', 'statusbar', 'status-left', 'status-right', 'status-last',
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
-  'project-tree', 'project-refresh', 'project-add-icon', 'side-search', 'side-settings', 'rail-agents',
+  'project-tree', 'project-refresh', 'project-add-icon', 'side-search', 'side-toggle', 'side-settings', 'rail-agents',
   'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
-  'workspace-refresh', 'rail-agents-count',
+  'workspace-refresh',
   'usage-chip', 'usage-modal', 'usage-close', 'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
@@ -267,6 +267,12 @@ require('./app.js');
   byId.get('side-search').handlers.keydown({ key: 'Escape' });
   assert.strictEqual(byClass('workspace-list', 'proj-row').length, 2, 'escape clears the filter');
 
+  // the left sidebar collapses to an icon rail and comes back
+  byId.get('side-toggle').handlers.click(noop);
+  assert.ok(byId.get('app').classList.contains('side-collapsed'), 'sidebar collapses to icons');
+  byId.get('side-toggle').handlers.click(noop);
+  assert.ok(!byId.get('app').classList.contains('side-collapsed'), 'sidebar expands again');
+
   byId.get('workspace-refresh').handlers.click(noop);
   await tick();
   const wsReq = posted[posted.length - 1];
@@ -364,8 +370,6 @@ require('./app.js');
   assert.match(byId.get('history-meta').textContent,
     /^Updated 290 \u00b7 288 unchanged \u00b7 44,846 new messages \u00b7 /,
     'incremental scan status line');
-  assert.strictEqual(byId.get('rail-agents-count').hidden, false, 'agents badge appears with history');
-  assert.strictEqual(byId.get('rail-agents-count').textContent, '290', 'badge carries the session total');
 
   const agentChips = byId.get('history-agents').children;
   assert.strictEqual(agentChips.length, 4, 'All agents plus one chip per scanned agent');
@@ -544,6 +548,12 @@ require('./app.js');
   assert.strictEqual(splitWraps[0].children.length, 2, 'closing keeps the remaining pair');
   window.__omnix.reply(splitKill.id, true, '{"ok":true}');
   await tick();
+
+  // ---- history panel closes and reopens from the window bar ----
+  byId.get('history-collapse').handlers.click(noop);
+  assert.ok(byId.get('app').classList.contains('hist-collapsed'), 'history panel collapses');
+  byId.get('rail-agents').handlers.click(noop);
+  assert.ok(!byId.get('app').classList.contains('hist-collapsed'), 'history panel reopens');
 
   // ---- settings / agents ----
   panelButtons[3].handlers.click(noop());
