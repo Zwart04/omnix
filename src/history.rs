@@ -286,6 +286,32 @@ pub struct SessionRow {
     pub preview: String,
 }
 
+/// Shared WHERE clause for the history panel's list and count queries.
+fn push_filters(
+    sql: &mut String,
+    params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    agent: Option<&str>,
+    cwd_prefix: Option<&str>,
+    query: Option<&str>,
+) {
+    if let Some(agent) = agent.filter(|a| !a.is_empty() && *a != "all") {
+        sql.push_str(" AND s.agent = ?");
+        params.push(Box::new(agent.to_string()));
+    }
+    if let Some(prefix) = cwd_prefix.filter(|p| !p.is_empty()) {
+        sql.push_str(" AND (s.cwd = ? OR s.cwd LIKE ? || '/%')");
+        params.push(Box::new(prefix.to_string()));
+        params.push(Box::new(prefix.to_string()));
+    }
+    if let Some(query) = query.filter(|q| !q.trim().is_empty()) {
+        sql.push_str(" AND (s.title LIKE ? OR s.session_id LIKE ? OR s.cwd LIKE ?)");
+        let like = format!("%{}%", query.trim());
+        params.push(Box::new(like.clone()));
+        params.push(Box::new(like.clone()));
+        params.push(Box::new(like));
+    }
+}
+
 /// Session browser for the right-hand history panel.
 pub fn list(
     conn: &Connection,
@@ -304,22 +330,7 @@ pub fn list(
          FROM sessions s WHERE 1=1",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    if let Some(agent) = agent.filter(|a| !a.is_empty() && *a != "all") {
-        sql.push_str(" AND s.agent = ?");
-        params.push(Box::new(agent.to_string()));
-    }
-    if let Some(prefix) = cwd_prefix.filter(|p| !p.is_empty()) {
-        sql.push_str(" AND (s.cwd = ? OR s.cwd LIKE ? || '/%')");
-        params.push(Box::new(prefix.to_string()));
-        params.push(Box::new(prefix.to_string()));
-    }
-    if let Some(query) = query.filter(|q| !q.trim().is_empty()) {
-        sql.push_str(" AND (s.title LIKE ? OR s.session_id LIKE ? OR s.cwd LIKE ?)");
-        let like = format!("%{}%", query.trim());
-        params.push(Box::new(like.clone()));
-        params.push(Box::new(like.clone()));
-        params.push(Box::new(like));
-    }
+    push_filters(&mut sql, &mut params, agent, cwd_prefix, query);
     sql.push_str(" ORDER BY s.updated_at DESC, s.id DESC LIMIT ?");
     params.push(Box::new(limit.clamp(1, 500) as i64));
 
@@ -342,6 +353,22 @@ pub fn list(
         })
     })?;
     Ok(rows.filter_map(Result::ok).collect())
+}
+
+/// Total sessions matching the panel filters, so the summary reflects the
+/// active search and scope instead of the global scan totals.
+pub fn count(
+    conn: &Connection,
+    agent: Option<&str>,
+    cwd_prefix: Option<&str>,
+    query: Option<&str>,
+) -> Result<i64> {
+    let mut sql = String::from("SELECT COUNT(*) FROM sessions s WHERE 1=1");
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    push_filters(&mut sql, &mut params, agent, cwd_prefix, query);
+    let mut stmt = conn.prepare(&sql)?;
+    let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    Ok(stmt.query_row(refs.as_slice(), |row| row.get(0))?)
 }
 
 #[derive(Debug)]
@@ -802,6 +829,13 @@ mod tests {
         let report = index_dir(&mut conn, &dir.join("transcripts"), None, "/repo").unwrap();
         assert_eq!(report.files, 1);
         assert_eq!(report.messages, 3);
+
+        assert_eq!(count(&conn, None, None, None).unwrap(), 1);
+        assert_eq!(count(&conn, Some("codex"), None, None).unwrap(), 1);
+        assert_eq!(count(&conn, Some("claude"), None, None).unwrap(), 0);
+        assert_eq!(count(&conn, None, Some("/repo"), None).unwrap(), 1);
+        assert_eq!(count(&conn, None, None, Some("resolve")).unwrap(), 1);
+        assert_eq!(count(&conn, None, None, Some("nothing")).unwrap(), 0);
 
         let hits = search(&conn, "resolveTerminalPath", None, false, false, 10).unwrap();
         assert_eq!(hits.len(), 1);

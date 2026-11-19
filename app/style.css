@@ -1888,6 +1888,7 @@ input[type="checkbox"] {
 /* ---------- agents / indexed history panel ---------- */
 
 #agents-panel {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -1915,8 +1916,6 @@ input[type="checkbox"] {
 
 .hist-head-text { flex: 1 1 auto; min-width: 0; }
 
-.hist-mark svg { width: 15px; height: 15px; }
-
 .hist-title {
   font-size: 14px;
   font-weight: 600;
@@ -1930,31 +1929,94 @@ input[type="checkbox"] {
   color: var(--meta);
 }
 
-.hist-bar {
+.hist-actions {
   display: flex;
   align-items: center;
-  gap: var(--s2);
+  gap: 2px;
   flex: none;
-  padding: 4px 12px 8px;
 }
 
-.hist-count {
+.hist-seg {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  flex: none;
+  margin: 0 12px;
+  padding: 2px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-ctl);
+  background: var(--surface-2);
+}
+
+.seg-item {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-2);
+  font: 500 12px/1 var(--sans);
+  cursor: pointer;
+  transition: background-color 120ms ease-out, color 120ms ease-out;
+}
+
+.seg-item:hover { color: var(--text); }
+
+.seg-item[aria-pressed="true"] {
+  border-color: var(--line);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.hist-search {
+  display: flex;
+  flex: none;
+  padding: 8px 12px 0;
+}
+
+.hist-search .side-search { width: 100%; }
+
+.hist-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 8px 12px 0;
+  font-size: 11px;
+  color: var(--meta);
+}
+
+.hist-status-text {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex: 1 1 auto;
   min-width: 0;
-  font: 12px/1.4 var(--mono);
-  color: var(--text-2);
+}
+
+.hist-status-text svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--good);
+}
+
+#history-meta {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.hist-time { flex: none; color: var(--meta); }
+
 .chips {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--s1);
+  gap: 4px;
   flex: none;
-  padding: 0 var(--s3) var(--s1);
+  padding: 8px 12px 0;
 }
 
 .chip {
@@ -1981,34 +2043,120 @@ input[type="checkbox"] {
   color: var(--accent);
 }
 
-.hist-search {
+.hist-summary {
   display: flex;
+  align-items: center;
+  gap: 8px;
   flex: none;
-  padding: var(--s1) var(--s3) var(--s2);
+  margin-top: 8px;
+  padding: 8px 12px 6px;
+  border-top: 1px solid var(--line-soft);
 }
 
-.hist-search .input { width: 100%; height: 28px; font-size: 12px; }
+.hist-count {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
-.hist-meta {
+.hist-sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   flex: none;
-  padding: 0 var(--s3) var(--s2);
-  font: 11px/1.5 var(--mono);
+  height: 24px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--r-ctl);
+  background: none;
   color: var(--meta);
-  overflow-wrap: anywhere;
+  font: 11px/1 var(--sans);
+  cursor: pointer;
 }
 
-.hist-meta:empty { display: none; }
+.hist-sort:hover { background: var(--surface-2); color: var(--text); }
+
+.hist-sort svg {
+  width: 12px;
+  height: 12px;
+  transition: transform 120ms ease-out;
+}
+
+.hist-sort[data-order="asc"] svg { transform: rotate(180deg); }
 
 .hist-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 var(--s1) var(--s2);
+  padding: 0 8px 44px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--scroll) transparent;
+}
+
+.hist-group + .hist-group { margin-top: 4px; }
+
+.hist-group-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  height: 32px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--r-ctl);
+  background: none;
+  color: var(--text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hist-group-head:hover { background: var(--surface-2); color: var(--text); }
+
+.hist-group-chev {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  transition: transform 120ms ease-out;
+}
+
+.hist-group-head[aria-expanded="true"] .hist-group-chev { transform: rotate(90deg); }
+
+.hist-group-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hist-group-count {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: 500 11px/18px var(--mono);
+  text-align: center;
+}
+
+.hist-sessions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0 0;
 }
 
 .sess {
@@ -2016,17 +2164,15 @@ input[type="checkbox"] {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 4px;
-  padding: 8px;
-  border: 1px solid transparent;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
   border-radius: var(--r-ctl);
+  background: var(--surface);
   transition: background-color 120ms ease-out, border-color 120ms ease-out;
 }
 
 .sess:hover,
-.sess:focus-within {
-  border-color: transparent;
-  background: var(--surface);
-}
+.sess:focus-within { border-color: var(--line); }
 
 .sess-main {
   display: flex;
@@ -2049,7 +2195,7 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
-.sess-top .icon { width: 15px; height: 15px; }
+.sess-top .icon { width: 14px; height: 14px; }
 
 .sess-top .tag.agent {
   padding: 2px 6px;
@@ -2082,7 +2228,6 @@ input[type="checkbox"] {
 
 .sess-meta {
   display: flex;
-  gap: 0;
   font: 11px/1.4 var(--mono);
   color: var(--meta);
   overflow: hidden;
@@ -2113,7 +2258,7 @@ input[type="checkbox"] {
   border-radius: var(--r-ctl);
   background: none;
   color: var(--meta);
-  font: 15px/1 var(--sans);
+  font: 14px/1 var(--sans);
   cursor: pointer;
   opacity: .55;
 }
@@ -2126,13 +2271,26 @@ input[type="checkbox"] {
   color: var(--text);
 }
 
+.hist-hide {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: 32px;
+  height: 32px;
+  border-color: var(--line);
+  background: var(--float);
+  color: var(--text-2);
+}
+
+.hist-hide:hover { border-color: var(--accent); color: var(--accent); }
+
 /* history panel states */
 
 .hist-list .loading,
 .hist-list .empty,
 .hist-list .error {
-  padding: var(--s2) var(--s1);
-  font-size: 14px;
+  padding: 12px 8px;
+  font-size: 13px;
   line-height: 1.5;
 }
 

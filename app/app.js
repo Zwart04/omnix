@@ -176,7 +176,7 @@
 
   function baseName(path) {
     if (!path) return 'workspace';
-    var parts = String(path).replace(/\/+$/, '').split('/');
+    var parts = String(path).replace(/[\\/]+$/, '').split(/[\\/]/);
     return parts[parts.length - 1] || String(path);
   }
 
@@ -2102,7 +2102,11 @@
     return node;
   }
 
-  var projExpanded = {};
+  var projExpanded = storedMap('omnix.projExpanded');
+
+  function saveProjExpanded() {
+    storeSet('omnix.projExpanded', JSON.stringify(projExpanded));
+  }
   var wsCollapsed = storeGet('omnix.workspaceCollapsed') === '1';
 
   function trackedByPath() {
@@ -2222,6 +2226,7 @@
         chev.addEventListener('click', guard(function (ev) {
           if (ev && ev.stopPropagation) ev.stopPropagation();
           projExpanded[key] = !projExpanded[key];
+          saveProjExpanded();
           renderProjects(savedProjects);
         }));
       }
@@ -2255,10 +2260,12 @@
         } else if (ev.key === 'ArrowRight' && sessions.length && !projExpanded[key]) {
           ev.preventDefault();
           projExpanded[key] = true;
+          saveProjExpanded();
           renderProjects(savedProjects);
         } else if (ev.key === 'ArrowLeft' && projExpanded[key]) {
           ev.preventDefault();
           projExpanded[key] = false;
+          saveProjExpanded();
           renderProjects(savedProjects);
         }
       }));
@@ -2309,13 +2316,33 @@
 
   /* ---------- indexed history panel ---------- */
 
+  function storedScope() {
+    var scope = storeGet('omnix.histScope');
+    return scope === 'workspace' || scope === 'project' ? scope : 'all';
+  }
+
+  function storedMap(key) {
+    var raw = storeGet(key);
+    if (!raw) return {};
+    try {
+      var value = JSON.parse(raw);
+      return value && typeof value === 'object' ? value : {};
+    } catch (err) {
+      return {};
+    }
+  }
+
   var hist = {
-    scope: 'all',
+    scope: storedScope(),
     agent: '',
     query: '',
+    sort: storeGet('omnix.histSort') === 'asc' ? 'asc' : 'desc',
+    collapsed: storedMap('omnix.histGroups'),
+    groupKeys: [],
     scan: null,
     scannedAt: 0,
     sessions: [],
+    total: null,
     lastSession: null,
     loading: false,
     scanError: null,
@@ -2325,6 +2352,7 @@
   var historyTimer = null;
 
   function historyCount() {
+    if (hist.total !== null && hist.total !== undefined) return Number(hist.total) || 0;
     if (hist.scan && Array.isArray(hist.scan.agents)) {
       var total = 0;
       for (var i = 0; i < hist.scan.agents.length; i++) {
@@ -2345,7 +2373,17 @@
     renderScopeChips();
     renderAgentChips();
     renderHistoryMeta();
+    renderSortButton();
     renderHistoryList();
+  }
+
+  function renderSortButton() {
+    var btn = $('history-sort');
+    if (!btn) return;
+    btn.dataset.order = hist.sort;
+    btn.title = hist.sort === 'asc'
+      ? 'Sorted oldest first. Click for newest first.'
+      : 'Sorted newest first. Click for oldest first.';
   }
 
   function renderScopeChips() {
@@ -2418,28 +2456,82 @@
 
   function renderHistoryMeta() {
     var node = $('history-meta');
+    var time = $('history-time');
     if (!node) return;
     if (!hist.scan) {
-      node.textContent = '';
+      node.textContent = hist.loading ? 'Scanning history\u2026' : 'History not scanned';
+      node.title = 'The index is saved locally. A rescan only reads transcripts that are new or changed.';
+      if (time) time.textContent = '';
       return;
     }
     var updated = Number(hist.scan.files) || 0;
     var unchanged = Number(hist.scan.unchanged) || 0;
-    var parts = ['Updated ' + fmtNum(updated)];
-    if (unchanged) parts.push(fmtNum(unchanged) + ' unchanged');
     var messages = fmtNum(hist.scan.messages || 0) + (unchanged ? ' new messages' : ' messages');
-    parts.push(messages);
-    parts.push(relTime(hist.scannedAt) || 'just now');
-    node.textContent = parts.join(' \u00b7 ');
-    node.title = 'The index is saved locally. A rescan only reads transcripts that are new or changed.';
+    node.textContent = 'History refreshed';
+    node.title = 'Updated ' + fmtNum(updated) + ' files \u00b7 ' + messages +
+      '. The index is saved locally; a rescan only reads transcripts that are new or changed.';
+    if (time) time.textContent = relTime(hist.scannedAt) || 'just now';
+  }
+
+  function sortedSessions() {
+    var out = hist.sessions.slice();
+    out.sort(function (a, b) {
+      var av = Number(a && a.updatedAt) || 0;
+      var bv = Number(b && b.updatedAt) || 0;
+      return hist.sort === 'asc' ? av - bv : bv - av;
+    });
+    return out;
+  }
+
+  function groupSessions(sessions) {
+    var groups = [];
+    var index = {};
+    for (var i = 0; i < sessions.length; i++) {
+      var s = sessions[i];
+      var key = s && s.cwd ? normPath(s.cwd) : '';
+      if (!Object.prototype.hasOwnProperty.call(index, key)) {
+        index[key] = { key: key, name: key ? baseName(key) : 'No project', sessions: [] };
+        groups.push(index[key]);
+      }
+      index[key].sessions.push(s);
+    }
+    return groups;
+  }
+
+  function saveHistGroups() {
+    storeSet('omnix.histGroups', JSON.stringify(hist.collapsed));
+  }
+
+  function toggleHistoryGroup(key) {
+    if (key == null) return;
+    if (hist.collapsed[key]) delete hist.collapsed[key];
+    else hist.collapsed[key] = true;
+    saveHistGroups();
+    renderHistoryList();
+  }
+
+  function toggleAllHistoryGroups() {
+    var keys = hist.groupKeys || [];
+    if (!keys.length) return;
+    var allClosed = true;
+    for (var i = 0; i < keys.length; i++) {
+      if (!hist.collapsed[keys[i]]) { allClosed = false; break; }
+    }
+    hist.collapsed = {};
+    if (!allClosed) {
+      for (var c = 0; c < keys.length; c++) hist.collapsed[keys[c]] = true;
+    }
+    saveHistGroups();
+    renderHistoryList();
   }
 
   function renderHistoryList() {
     var list = $('history-list');
     if (!list) return;
     list.textContent = '';
+    hist.groupKeys = [];
 
-    if (hist.loading) {
+    if (hist.loading && !hist.sessions.length) {
       var loading = el('div', 'loading', 'Checking for new or changed sessions\u2026');
       loading.setAttribute('role', 'status');
       list.appendChild(loading);
@@ -2461,8 +2553,36 @@
       return;
     }
 
-    for (var i = 0; i < hist.sessions.length; i++) {
-      list.appendChild(sessionCard(hist.sessions[i]));
+    var groups = groupSessions(sortedSessions());
+    for (var g = 0; g < groups.length; g++) {
+      (function (group) {
+        hist.groupKeys.push(group.key);
+        var closed = !!hist.collapsed[group.key];
+        var section = el('section', 'hist-group');
+        section.setAttribute('role', 'group');
+
+        var head = el('button', 'hist-group-head');
+        head.type = 'button';
+        head.setAttribute('aria-expanded', closed ? 'false' : 'true');
+        head.setAttribute('aria-label',
+          (closed ? 'Expand ' : 'Collapse ') + group.name + ' sessions');
+        var chev = el('span', 'hist-group-chev', '\u25b8');
+        chev.setAttribute('aria-hidden', 'true');
+        head.appendChild(chev);
+        head.appendChild(el('span', 'hist-group-name', group.name));
+        head.appendChild(el('span', 'hist-group-count', fmtNum(group.sessions.length)));
+        head.addEventListener('click', guard(function () { toggleHistoryGroup(group.key); }));
+        section.appendChild(head);
+
+        var rows = el('div', 'hist-sessions');
+        rows.setAttribute('role', 'list');
+        rows.hidden = closed;
+        for (var i = 0; i < group.sessions.length; i++) {
+          rows.appendChild(sessionCard(group.sessions[i]));
+        }
+        section.appendChild(rows);
+        list.appendChild(section);
+      })(groups[g]);
     }
   }
 
@@ -2526,17 +2646,20 @@
 
   function loadSessions() {
     var args = { scope: hist.scope, limit: HISTORY_LIMIT };
+    if (hist.scope === 'project') args.cwd = launchCwd() || appRoot;
     if (hist.agent) args.agent = hist.agent;
     if (hist.query) args.query = hist.query;
 
     return rpc('historySessions', args).then(function (res) {
       hist.sessions = res && Array.isArray(res.sessions) ? res.sessions : [];
+      hist.total = res && Number.isFinite(Number(res.total)) ? Number(res.total) : hist.sessions.length;
       if (hist.sessions.length) hist.lastSession = hist.sessions[0];
       hist.listError = null;
       setLast('History loaded');
       return res;
     }, function (err) {
       hist.sessions = [];
+      hist.total = null;
       hist.listError = 'History listing failed: ' + message(err);
       toast('error', 'History sessions: ' + message(err));
       setLast('History could not load');
@@ -2857,15 +2980,40 @@
       rail.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       rail.setAttribute('aria-current', collapsed ? 'false' : 'true');
     }
+    storeSet('omnix.histCollapsed', collapsed ? '1' : '0');
     if (!collapsed) ensureHistory();
   }
 
-  /* the history panel is closed by default: index only when it is opened */
+  /* Index work starts only while the panel is open. Saved rows render first,
+     so a restart shows the existing index before the incremental rescan ends. */
   function ensureHistory() {
     if (hist.loading) return null;
-    if (!hist.scan) return loadHistory();
+    if (!hist.scan) {
+      var ready = hist.sessions.length ? null : loadSessions().then(renderHistory);
+      var scan = loadHistory();
+      return ready ? Promise.all([ready, scan]) : scan;
+    }
     if (!hist.sessions.length) return loadSessions().then(renderHistory);
     return null;
+  }
+
+  function setHistoryFilter(open) {
+    var box = $('history-agents');
+    var btn = $('history-filter');
+    if (box) box.hidden = !open;
+    if (btn) {
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      btn.title = open ? 'Hide Agent Filter' : 'Filter Agents';
+      btn.setAttribute('aria-label', btn.title);
+    }
+    storeSet('omnix.histFilter', open ? '1' : '0');
+  }
+
+  function toggleHistorySort() {
+    hist.sort = hist.sort === 'asc' ? 'desc' : 'asc';
+    storeSet('omnix.histSort', hist.sort);
+    renderSortButton();
+    renderHistoryList();
   }
 
   /* ---------- events from host ---------- */
@@ -3170,6 +3318,18 @@
     $('history-rescan').addEventListener('click', guard(loadHistory));
     $('history-search').addEventListener('input', guard(onHistorySearch));
 
+    var historyFilter = $('history-filter');
+    if (historyFilter) historyFilter.addEventListener('click', guard(function () {
+      var box = $('history-agents');
+      setHistoryFilter(!(box && !box.hidden));
+    }));
+
+    var historySort = $('history-sort');
+    if (historySort) historySort.addEventListener('click', guard(toggleHistorySort));
+
+    var collapseAll = $('history-collapse-all');
+    if (collapseAll) collapseAll.addEventListener('click', guard(toggleAllHistoryGroups));
+
     var scopeBox = $('history-scope');
     if (scopeBox && scopeBox.children) {
       for (var s = 0; s < scopeBox.children.length; s++) {
@@ -3179,6 +3339,7 @@
           chip.addEventListener('click', guard(function () {
             if (hist.scope === scope) return;
             hist.scope = scope;
+            storeSet('omnix.histScope', scope);
             renderHistory();
             return loadSessions().then(renderHistory);
           }));
@@ -3227,8 +3388,9 @@
   function boot() {
     wire();
     renderTabs();
-    /* the right column starts closed: no index walk, no chat cards */
-    setHistoryCollapsed(true);
+    var histCollapsed = storeGet('omnix.histCollapsed');
+    setHistoryCollapsed(histCollapsed === null ? true : histCollapsed === '1');
+    setHistoryFilter(storeGet('omnix.histFilter') === '1');
     renderHistory();
 
     refreshAppInfo();

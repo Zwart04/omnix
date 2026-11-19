@@ -149,8 +149,8 @@ dituju:
 - **Bar jendela** — satu baris penuh: brand `Omnix` di atas kolom sidebar,
   diikuti tombol collapse dan Settings, lalu tab yang menempel pada batas
   kolom, tombol `+`, `Command`, dan toggle Agents di kanan. Sidebar bisa
-  dilipat menjadi rail ikon 56px; panel Agents bisa ditutup dari header dan
-  dibuka lagi dari toggle di bar jendela. Tab terminal memakai nama
+  dilipat menjadi rail ikon 56px; panel Agents ditutup lewat tombol hide di
+  kanan bawah dan dibuka lagi dari toggle di bar jendela. Tab terminal memakai nama
   project atau label pane (`Vesper`, `OpenCode`, `Terminal`), dan dipotong
   dengan ellipsis.
 - **Sidebar kiri** — search field di paling atas. Mengetik memfilter daftar
@@ -167,6 +167,12 @@ dituju:
   memakai dialog folder bawaan OS, bukan file browser milik Omnix: GTK
   `FileChooserNative` di Linux, `FolderBrowserDialog` di Windows, `osascript
   choose folder` di macOS. Batal tidak menambah apa pun.
+- **Panel Agents** — indexed history per project: segmented control
+  `Workspace | Project | All`, search, status scan, sort `Last updated`, dan
+  grup project yang bisa dilipat dengan count. Tombol header: collapse semua
+  grup, filter agent, rescan. Kartu sesi bisa di-resume (klik) atau di-handoff
+  (tombol panah). Panel mengikuti state terakhir yang disimpan; data sesi ada
+  di `~/.omnix/history.sqlite`, jadi tetap ada setelah restart.
 - **Area konten** — xterm untuk tab terminal; WebView konten hanya dibuat saat
   tab browser aktif dan ditutup saat tab lain dipilih. Tiap pane terminal punya
   tombol split dan close di sudut kanan atas (muncul saat hover/focus). Satu

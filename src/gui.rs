@@ -554,8 +554,14 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
         "historySessions" => (|| {
             let conn = history::open(&history_db(&app.root))?;
             let scope = as_str(&args, "scope").unwrap_or_else(|| "all".into());
+            let project = as_str(&args, "cwd").filter(|cwd| !cwd.is_empty());
             let cwd_prefix = match scope.as_str() {
-                "workspace" | "project" => Some(app.root.to_string_lossy().to_string()),
+                "workspace" => Some(app.root.to_string_lossy().to_string()),
+                "project" => Some(
+                    project
+                        .clone()
+                        .unwrap_or_else(|| app.root.to_string_lossy().to_string()),
+                ),
                 _ => None,
             };
             let agent = as_str(&args, "agent");
@@ -567,6 +573,12 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 cwd_prefix.as_deref(),
                 query.as_deref(),
                 limit,
+            )?;
+            let total = history::count(
+                &conn,
+                agent.as_deref(),
+                cwd_prefix.as_deref(),
+                query.as_deref(),
             )?;
             let sessions: Vec<Value> = rows
                 .into_iter()
@@ -586,6 +598,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             Ok(json!({
                 "scope": scope,
                 "root": app.root.to_string_lossy(),
+                "total": total,
                 "sessions": sessions,
             }))
         })(),

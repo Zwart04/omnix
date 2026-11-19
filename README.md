@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.5.6_amd64.deb` | `sudo apt install ./omnix_0.5.6_amd64.deb` |
+| Linux x86_64 | `omnix_0.5.7_amd64.deb` | `sudo apt install ./omnix_0.5.7_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.5.6-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.5.6-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.5.7-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.5.7-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -52,8 +52,9 @@ Yang sudah jalan dan dites di repo ini:
   itu. Tab baru, termasuk agent dari menu `+`, mewarisi folder tab aktif. Tab
   memakai nama project atau label pane, bukan judul window shell, supaya dua
   terminal di folder berbeda tidak tampil identik. Panel `Agents` berisi
-  indexed history semua agent dan command palette ada di Ctrl+K atau tombol
-  `Command`.
+  indexed history semua agent, dikelompokkan per project, dengan segmented
+  control `Workspace | Project | All`, search, sort `Last updated`, dan grup
+  yang bisa dilipat. Command palette ada di Ctrl+K atau tombol `Command`.
 - `+ Project` membuka dialog folder bawaan OS lewat `FileChooserNative` (Linux,
   tampil sesuai desktop portal), `FolderBrowserDialog` di Windows, dan
   `osascript choose folder` di macOS. Omnix tidak menggambar file browser
@@ -81,10 +82,11 @@ Yang sudah jalan dan dites di repo ini:
   menampilkan memori sistem dan kuota provider yang punya data lokal.
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
-  sama. Panel `Agents` default tertutup dan index baru dipindai saat dibuka.
-  Index disimpan di `~/.omnix/history.sqlite`; rescan hanya mem-parse transkrip
-  yang baru atau berubah, dan baris meta menampilkan
-  `N updated · M unchanged · X new messages` supaya penghematannya terlihat.
+  sama. Panel `Agents` mengikuti state terakhir: terbuka/tertutup, scope,
+  sort, grup yang dilipat, dan filter agent disimpan di `localStorage`, jadi
+  tidak hilang setelah aplikasi ditutup. Index sesi disimpan di
+  `~/.omnix/history.sqlite`; rescan hanya mem-parse transkrip yang baru atau
+  berubah, dan detailnya ada di tooltip baris status.
 - Terminal fokus otomatis saat tab dibuka (tanpa klik), font UI 14px, dan
   terminal 14px / line-height 1.2 (metrik Orca) dengan cursor block, fontWeight
   500/700, font chain DejaVu Sans Mono lalu Nerd Font, dan renderer WebGL supaya

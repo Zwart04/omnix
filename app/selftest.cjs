@@ -82,6 +82,7 @@ const byId = new Map();
   'docs-frame', 'toasts', 'statusbar', 'status-left', 'status-right', 'status-last',
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
+  'history-filter', 'history-sort', 'history-collapse-all', 'history-time',
   'project-tree', 'project-refresh', 'project-add-icon', 'side-search', 'side-toggle', 'side-settings', 'rail-agents',
   'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
   'workspace-refresh',
@@ -99,6 +100,7 @@ byId.get('palette').hidden = true;
 // scope chips ship in index.html; the stub rebuilds that initial DOM
 ['workspace', 'project', 'all'].forEach((scope) => {
   const chip = fakeEl('button');
+  chip.className = 'seg-item';
   chip.dataset.scope = scope;
   byId.get('history-scope').appendChild(chip);
 });
@@ -120,7 +122,14 @@ const panelButtons = ['search', 'handoff', 'docs', 'settings'].map((panel) => {
 const posted = [];
 const docHandlers = {};
 
+const storage = new Map();
+
 global.window = {
+  localStorage: {
+    getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(key, String(value)); },
+    removeItem(key) { storage.delete(key); }
+  },
   ipc: { postMessage(raw) { posted.push(JSON.parse(raw)); } },
   atob(value) { return Buffer.from(value, 'base64').toString('binary'); },
   addEventListener() {},
@@ -298,6 +307,9 @@ require('./app.js');
     'expanded project shows its branch');
   assert.strictEqual(byClass('workspace-list', 'sess-row').length, 1,
     'project expands into its tracked session');
+  assert.strictEqual(
+    JSON.parse(window.localStorage.getItem('omnix.projExpanded'))['/home/zwart/git/omnix'],
+    true, 'expanded project state persists');
 
   // removing a project only touches the saved list
   const removeBtn = byClass('workspace-list', 'proj-remove')[0];
@@ -343,6 +355,7 @@ require('./app.js');
   window.__omnix.reply(sessionsReq.id, true, JSON.stringify({
     scope: 'all',
     root: '/repo',
+    total: 290,
     sessions: [
       {
         agent: 'claude', sessionId: 'uuid-1', title: 'wire indexed history',
@@ -358,7 +371,7 @@ require('./app.js');
       },
       {
         agent: 'opencode', sessionId: 'uuid-3', title: 'sidebar tree',
-        cwd: '/repo', updatedAt: Math.floor(Date.now() / 1000) - 300000,
+        cwd: '/repo/tools', updatedAt: Math.floor(Date.now() / 1000) - 300000,
         messageCount: 7, resumeCommand: 'opencode --session uuid-3',
         preview: 'project tree rows'
       }
@@ -367,9 +380,65 @@ require('./app.js');
   await tick();
 
   assert.strictEqual(byId.get('history-count').textContent, '290 sessions', 'session count text');
-  assert.match(byId.get('history-meta').textContent,
-    /^Updated 290 \u00b7 288 unchanged \u00b7 44,846 new messages \u00b7 /,
-    'incremental scan status line');
+  assert.strictEqual(byId.get('history-meta').textContent, 'History refreshed',
+    'status line stays short like the reference panel');
+  assert.match(byId.get('history-meta').title,
+    /^Updated 290 files \u00b7 44,846 new messages/,
+    'scan detail lives in the status tooltip');
+  assert.ok(byId.get('history-time').textContent, 'scan time renders on the right');
+
+  const groups = byClass('history-list', 'hist-group');
+  assert.strictEqual(groups.length, 2, 'sessions group by project');
+  assert.deepStrictEqual(
+    groups.map((g) => all(g, (n) => n.className === 'hist-group-name')[0].textContent),
+    ['repo', 'tools'], 'groups ordered by most recent session');
+  assert.strictEqual(
+    all(groups[0], (n) => n.className === 'hist-group-count')[0].textContent, '2',
+    'group header carries its session count');
+
+  // group collapse is a real toggle and survives a redraw
+  let groupHead = all(groups[0], (n) => n.className === 'hist-group-head')[0];
+  groupHead.handlers.click(noop());
+  let sessionsBox = all(byClass('history-list', 'hist-group')[0],
+    (n) => n.className === 'hist-sessions')[0];
+  assert.strictEqual(sessionsBox.hidden, true, 'group collapses');
+  assert.strictEqual(
+    JSON.parse(window.localStorage.getItem('omnix.histGroups'))['/repo'], true,
+    'collapsed group state is saved');
+  groupHead = all(byClass('history-list', 'hist-group')[0],
+    (n) => n.className === 'hist-group-head')[0];
+  groupHead.handlers.click(noop());
+  sessionsBox = all(byClass('history-list', 'hist-group')[0],
+    (n) => n.className === 'hist-sessions')[0];
+  assert.strictEqual(sessionsBox.hidden, false, 'group expands again');
+
+  // collapse-all collapses every group, then restores them
+  byId.get('history-collapse-all').handlers.click(noop());
+  let heads = byClass('history-list', 'hist-group-head');
+  assert.deepStrictEqual(heads.map((h) => h.getAttribute('aria-expanded')),
+    ['false', 'false'], 'collapse all closes every group');
+  byId.get('history-collapse-all').handlers.click(noop());
+  heads = byClass('history-list', 'hist-group-head');
+  assert.deepStrictEqual(heads.map((h) => h.getAttribute('aria-expanded')),
+    ['true', 'true'], 'collapse all toggles back to expanded');
+
+  // newest/oldest sort flips card order
+  byId.get('history-sort').handlers.click(noop());
+  assert.strictEqual(byId.get('history-sort').dataset.order, 'asc', 'sort flips to oldest');
+  let titles = byClass('history-list', 'sess-title').map((n) => n.textContent);
+  assert.strictEqual(titles[titles.length - 1], 'wire indexed history',
+    'oldest first puts the freshest session last');
+  assert.strictEqual(window.localStorage.getItem('omnix.histSort'), 'asc', 'sort order persists');
+  byId.get('history-sort').handlers.click(noop());
+  titles = byClass('history-list', 'sess-title').map((n) => n.textContent);
+  assert.strictEqual(titles[0], 'wire indexed history', 'newest first is the default');
+
+  // agent filter row is hidden until the funnel asks for it
+  assert.strictEqual(byId.get('history-agents').hidden, true, 'agent filter starts hidden');
+  byId.get('history-filter').handlers.click(noop());
+  assert.strictEqual(byId.get('history-agents').hidden, false, 'funnel reveals the agent filter');
+  assert.strictEqual(window.localStorage.getItem('omnix.histFilter'), '1', 'filter state persists');
+  byId.get('history-filter').handlers.click(noop());
 
   const agentChips = byId.get('history-agents').children;
   assert.strictEqual(agentChips.length, 4, 'All agents plus one chip per scanned agent');
@@ -390,7 +459,8 @@ require('./app.js');
   let req = posted[posted.length - 1];
   assert.strictEqual(req.cmd, 'historySessions', 'scope switch reloads sessions');
   assert.strictEqual(req.args.scope, 'project', 'project chip sends scope project');
-  window.__omnix.reply(req.id, true, '{"scope":"project","root":"/repo","sessions":[]}');
+  assert.strictEqual(req.args.cwd, '/repo', 'project scope scopes to the active folder');
+  window.__omnix.reply(req.id, true, '{"scope":"project","root":"/repo","total":0,"sessions":[]}');
   await tick();
   assert.strictEqual(byClass('history-list', 'empty').length, 1, 'empty state after empty result');
 
@@ -398,9 +468,12 @@ require('./app.js');
   await tick();
   req = posted[posted.length - 1];
   assert.strictEqual(req.args.scope, 'all', 'all chip sends scope all');
+  assert.strictEqual(window.localStorage.getItem('omnix.histScope'), 'all',
+    'scope choice persists across restarts');
   window.__omnix.reply(req.id, true, JSON.stringify({
     scope: 'all',
     root: '/repo',
+    total: 1,
     sessions: [{
       agent: 'codex', sessionId: 'uuid-9', title: 'resume me', cwd: '/repo',
       updatedAt: Math.floor(Date.now() / 1000) - 60, messageCount: 12,
@@ -414,8 +487,10 @@ require('./app.js');
   await tick();
   req = posted[posted.length - 1];
   assert.strictEqual(req.args.agent, 'codex', 'agent chip sends agent filter');
-  window.__omnix.reply(req.id, true, '{"scope":"all","root":"/repo","sessions":[]}');
+  window.__omnix.reply(req.id, true, '{"scope":"all","root":"/repo","total":0,"sessions":[]}');
   await tick();
+  assert.strictEqual(byId.get('history-count').textContent, '0 sessions',
+    'summary follows the agent filter, not the global scan');
   byId.get('history-agents').children[0].handlers.click(noop());
   await tick();
   req = posted[posted.length - 1];
@@ -423,6 +498,7 @@ require('./app.js');
   window.__omnix.reply(req.id, true, JSON.stringify({
     scope: 'all',
     root: '/repo',
+    total: 1,
     sessions: [{
       agent: 'codex', sessionId: 'uuid-9', title: 'resume me', cwd: '/repo',
       updatedAt: Math.floor(Date.now() / 1000) - 60, messageCount: 12,
@@ -438,8 +514,12 @@ require('./app.js');
   req = posted[posted.length - 1];
   assert.strictEqual(req.cmd, 'historySessions', 'search reloads sessions');
   assert.strictEqual(req.args.query, 'resize', 'debounced query forwarded');
-  window.__omnix.reply(req.id, true, '{"scope":"all","root":"/repo","sessions":[]}');
+  window.__omnix.reply(req.id, true, '{"scope":"all","root":"/repo","total":0,"sessions":[]}');
   await tick();
+  assert.strictEqual(byId.get('history-count').textContent, '0 sessions',
+    'summary follows the search result count');
+  assert.strictEqual(byClass('history-list', 'empty').length, 1,
+    'search miss shows the empty state');
 
   // ---- Resume button spawns pty with agent + sessionId ----
   byId.get('history-search').value = '';
@@ -449,6 +529,7 @@ require('./app.js');
   window.__omnix.reply(req.id, true, JSON.stringify({
     scope: 'all',
     root: '/repo',
+    total: 1,
     sessions: [{
       agent: 'claude', sessionId: 'uuid-1', title: 'wire indexed history', cwd: '/repo',
       updatedAt: Math.floor(Date.now() / 1000) - 420, messageCount: 299,
@@ -647,7 +728,7 @@ require('./app.js');
 
   const listingAfterFail = posted[posted.length - 1];
   assert.strictEqual(listingAfterFail.cmd, 'historySessions', 'listing still runs after a failed scan');
-  window.__omnix.reply(listingAfterFail.id, true, '{"scope":"all","root":"/repo","sessions":[]}');
+  window.__omnix.reply(listingAfterFail.id, true, '{"scope":"all","root":"/repo","total":0,"sessions":[]}');
   await tick();
 
   assert.strictEqual(byClass('history-list', 'error').length, 1, 'error state rendered');
