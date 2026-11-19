@@ -382,6 +382,7 @@
 
   var tabs = [];
   var tabSeq = 0;
+  var lastLaunchCwd = '';
   var paneSeq = 0;
   var activeTab = null;
 
@@ -645,7 +646,7 @@
     box.textContent = '';
     box.appendChild(menuRow('Terminal', '', 'terminal', function () {
       closeTabMenu();
-      createTerminal({ title: 'Terminal' });
+      createTerminal({ title: 'Terminal', cwd: launchCwd() });
     }));
     box.appendChild(menuRow('Split Terminal', 'Ctrl+Shift+D', 'terminal', function () {
       closeTabMenu();
@@ -678,6 +679,7 @@
               createTerminal({
                 paneKey: 'agent:' + agent.name + ':' + Date.now(),
                 agent: agent.name,
+                cwd: launchCwd(),
                 title: agentLabel(agent.name)
               });
             }
@@ -720,6 +722,17 @@
       return run();
     }));
     return btn;
+  }
+
+  /* New terminals inherit the folder the user is already working in: the
+     active terminal first, then the project last opened from the sidebar. */
+  function launchCwd() {
+    if (activeTab && activeTab.kind === 'terminal' && activeTab.cwd) return activeTab.cwd;
+    if (lastLaunchCwd) return lastLaunchCwd;
+    for (var i = tabs.length - 1; i >= 0; i--) {
+      if (tabs[i].kind === 'terminal' && tabs[i].cwd) return tabs[i].cwd;
+    }
+    return null;
   }
 
   function createTerminal(opts) {
@@ -816,6 +829,7 @@
       splitCtl.disabled = false;
     }
     tabs.push(tab);
+    if (tab.cwd) lastLaunchCwd = tab.cwd;
     activate(tab);
 
     if (typeof window.Terminal !== 'function') {
@@ -1672,7 +1686,7 @@
     var err = $('cmd-error');
     if (err) err.textContent = '';
     if (line) line.value = '';
-    if (cwd) cwd.value = appRoot || '';
+    if (cwd) cwd.value = launchCwd() || appRoot || '';
     showModal($('cmd-modal'));
     if (line && line.focus) line.focus();
   }
@@ -2050,6 +2064,7 @@
       if (tabs[i].kind === 'terminal' && tabs[i].cwd === p.path) { existing = tabs[i]; break; }
     }
     if (existing) { activate(existing); return; }
+    lastLaunchCwd = p.path;
     createTerminal({ title: name, cwd: p.path });
   }
 
@@ -2075,7 +2090,7 @@
   }
 
   function workingGlyph(label) {
-    var node = el('span', 'work-spin');
+    var node = el('span', 'work-dot');
     node.setAttribute('role', 'status');
     node.setAttribute('aria-label', label || 'working');
     node.title = label || 'working';

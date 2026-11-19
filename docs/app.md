@@ -159,7 +159,8 @@ dituju:
   Grup itu hanya berisi folder yang kamu pin lewat `+ Project`; indexed history
   hanya memperkaya baris yang path-nya cocok. Baris project satu baris; klik
   membuka terminal di folder itu, twisty membuka branch dan daftar sesi agent
-  yang dilacak, dan spinner kecil menandai pty yang masih hidup. `+ Project`
+  yang dilacak, dan dot hijau statis menandai pty yang masih hidup. Tab baru
+  dan agent dari menu `+` mewarisi folder tab aktif, bukan home directory. `+ Project`
   memakai dialog folder bawaan OS, bukan file browser milik Omnix: GTK
   `FileChooserNative` di Linux, `FolderBrowserDialog` di Windows, `osascript
   choose folder` di macOS. Batal tidak menambah apa pun.

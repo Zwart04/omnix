@@ -307,7 +307,6 @@ require('./app.js');
   await tick();
   assert.strictEqual(byClass('workspace-list', 'proj-row').length, 1, 'row disappears after remove');
 
-
   // opening the agents panel starts the index walk
   byId.get('rail-agents').handlers.click(noop());
   await tick();
@@ -734,6 +733,34 @@ require('./app.js');
   window.__omnix.reply(spawnReq.id, true, '{"paneKey":"tab:new","pid":90}');
   await tick();
   assert.strictEqual(byClass('workspace-list', 'proj-row').length, 2, 'new row is listed');
+
+  // new terminals inherit the folder of the project the user is working in
+  const omnixRow = byClass('workspace-list', 'proj-row')
+    .find((n) => all(n, (x) => String(x.className) === 'ws-name' && x.textContent === 'omnix'));
+  assert.ok(omnixRow, 'omnix project row is present');
+  omnixRow.handlers.click(noop());
+  await tick();
+  const projectSpawn = posted[posted.length - 1];
+  assert.strictEqual(projectSpawn.cmd, 'ptySpawn', 'clicking a project opens a terminal there');
+  assert.strictEqual(projectSpawn.args.cwd, '/home/zwart/git/omnix', 'project cwd is used');
+  window.__omnix.reply(projectSpawn.id, true, '{"paneKey":"tab:9","pid":91}');
+  await tick();
+
+  byId.get('tab-new-menu').hidden = true;
+  byId.get('tab-new').handlers.click(noop());
+  const agentRow = all(byId.get('tab-new-menu'), (n) =>
+    String(n.className) === 'menu-item' && all(n, (x) =>
+      String(x.className) === 'menu-label' && /claude/i.test(x.textContent || '')).length)[0];
+  assert.ok(agentRow, 'detected agent appears in the + menu');
+  agentRow.handlers.click(noop());
+  await tick();
+  const agentSpawn = posted[posted.length - 1];
+  assert.strictEqual(agentSpawn.cmd, 'ptySpawn', 'agent starts from the + menu');
+  assert.strictEqual(agentSpawn.args.cwd, '/home/zwart/git/omnix',
+    'agent inherits the project folder instead of the home directory');
+  window.__omnix.reply(agentSpawn.id, true, '{"paneKey":"tab:10","pid":92}');
+  await tick();
+
   console.log('selftest ok: rpc, reply/emit, sidebar, projects+sessions, settings, splits, palette, tabs');
   process.exit(0);
 })().catch((err) => {

@@ -1,52 +1,86 @@
 # Omnix Design Rules
 
-Arah: minimalis. Satu bar jendela, daftar proyek padat, dan satu pane konten. Omnix adalah workbench, bukan landing page, dan tidak meniru macOS: chrome tenang, isi pane yang boleh ramai.
+Arah: minimalis, padat, datar. Omnix adalah workbench, bukan landing page. Chrome tenang; isi pane yang boleh ramai. Tidak meniru macOS dan tidak memakai dekorasi AI-slop.
 
-Aturan ini mengikat semua perubahan UI di `app/`. Bila sebuah keputusan tidak diatur di sini, pilih opsi yang paling sedikit: lebih sedikit warna, lebih sedikit bayangan, lebih sedikit radius.
+Aturan ini mengikat semua perubahan UI di `app/`. Bila sebuah keputusan tidak diatur di sini, pilih opsi yang paling sedikit: warna paling sedikit, bayangan paling sedikit, radius paling sedikit, elemen paling sedikit.
 
 ## 1. Prinsip
 
-1. **Konten dulu.** Sidebar, tab strip, dan status bar adalah bingkai. Terminal dan browser adalah isi. Bingkai tidak boleh menarik perhatian lebih dari isi.
-2. **Satu aksen.** Hanya `--accent` yang menandai aksi, fokus, dan state aktif. Pengecualian: `--folder` hangat khusus ikon project, karena itu penanda jenis, bukan aksen kedua.
-3. **Padat dan datar.** Baris 28 sampai 40px, kontrol 24 sampai 30px, jarak kelipatan 4px. Tidak ada dekorasi di belakang konten.
-4. **Restraint.** Tidak ada gradient dekoratif, glass berlebih, pill di mana-mana, atau bayangan yang tidak menjelaskan elevasi.
-5. **Konsisten lebih penting daripada pintar.** Satu pola untuk semua tombol, chip, menu, dan heading.
+1. **Konten dulu.** Sidebar, bar jendela, dan status bar adalah bingkai. Terminal dan browser adalah isi.
+2. **Satu aksen.** Hanya `--accent` untuk aksi, fokus, dan state aktif. `--folder` hanya untuk ikon project. `--good`, `--warn`, `--bad` hanya untuk status.
+3. **Satu pola per peran.** Semua tombol dengan peran sama punya tinggi, padding, radius, dan font yang sama.
+4. **Bila belum ada, jangan tampilkan.** Menu, tab, tombol, dan badge yang tidak punya aksi harus dihapus, bukan diberi label `Soon` atau `disabled`.
+5. **Konsisten lebih penting daripada pintar.** Tidak ada variasi khusus per layar tanpa alasan fungsional.
 
-## 2. Warna
+## 2. Skala
 
-| Token | Pakai untuk |
+### Jarak
+
+Skala: `2, 4, 6, 8, 12, 16, 20, 24`. Tidak ada 3, 5, 7, 9, 11, 13, 15 untuk padding, margin, atau gap.
+
+| Konteks | Nilai |
 | --- | --- |
-| `--bg` | Kanvas pane dan terminal |
-| `--bg-side`, `--bg-rail` | Sidebar, tab strip, status bar |
-| `--surface`, `--surface-2` | Kontrol dan baris saat hover |
-| `--line`, `--line-soft` | Garis struktural, bukan dekorasi |
-| `--text`, `--text-2`, `--meta` | Teks utama, sekunder, metadata |
-| `--accent` | Aksi primer, fokus, state aktif |
-| `--warn`, `--bad`, `--good` | Status, hanya pada teks dan border tipis |
-| `--folder` | Hanya ikon folder project |
+| Jarak antar ikon dan label | 6px |
+| Jarak antar tombol sejajar | 6px |
+| Jarak antar item daftar | 2px |
+| Padding baris daftar | 0 8px |
+| Padding section | 8px 10px |
+| Jarak antar grup | 12px |
+| Jarak dari tepi bar jendela | 8px |
+| Padding vertikal pane | 12px |
 
-Larangan:
+### Tinggi kontrol
 
-- Tidak ada gradient pada tombol, badge, ikon, atau panel.
-- Tidak ada warna aksen tambahan di luar token status dan `--folder` pada ikon folder.
-- Tidak ada teks berwarna aksen kecuali state aktif, link, atau status.
-- Background translusen hanya untuk overlay yang melayang di atas konten.
+| Peran | Tinggi |
+| --- | --- |
+| Chip filter | 24px |
+| Tombol kecil (`.btn.sm`), ikon kompak | 24px |
+| Tombol, input, select, tombol ikon di bar | 28px |
+| Tab, baris daftar, item menu, nav | 32px |
+| Bar jendela | 44px |
+| Baris status | 28px |
+
+Tidak boleh ada dua kontrol sejajar dengan tinggi berbeda.
+
+### Radius
+
+| Radius | Token | Pakai untuk |
+| --- | --- | --- |
+| 4px | `--r-sm` | Tag kecil, badge, sudut dalam |
+| 6px | `--r-ctl` | Tombol, input, tab, menu item, chip |
+| 10px | `--r-panel` | Menu, palette, modal, panel |
+| penuh | `--r-pill` | Hanya switch track dan progress |
+
+Tidak ada pill pada tombol, chip, atau badge. Tidak ada radius berbeda untuk kontrol yang sejajar.
+
+### Ikon
+
+| Ukuran | Pakai untuk |
+| --- | --- |
+| 12px | Ikon di dalam teks meta atau twisty |
+| 14px | Tombol ikon kompak, ikon sidebar |
+| 16px | Ikon menu, ikon folder, ikon baris |
+| 20px | Ikon empty state |
+
+- Satu baris hanya memakai satu ukuran ikon.
+- Semua ikon garis: `fill="none"`, `stroke="currentColor"`, `stroke-width="1.7"`, ujung `round`.
+- Ikon tanpa label wajib punya `aria-label` dan `title`.
+- Tidak ada ikon dekoratif yang tidak punya fungsi.
 
 ## 3. Tipografi
 
-- UI: `var(--sans)` per platform. Terminal: `var(--mono)` dengan rantai DejaVu lebih dulu di Linux.
-- Body 13 sampai 14px. Metadata 10.5 sampai 12px. Heading 15 sampai 21px.
-- Berat 400 untuk body, 500 untuk kontrol dan label, 600 untuk heading dan nama.
-- `letter-spacing`: 0 untuk teks normal, negatif kecil hanya untuk heading besar.
-- Angka pakai `font-variant-numeric: tabular-nums` di tabel, count, durasi, dan memori.
+- UI: `var(--sans)` per platform. Terminal: `var(--mono)`.
+- Ukuran: 11px meta mono, 12px caption, 13px UI dan tombol, 14px menu, 15px heading kecil, 20px heading halaman.
+- Berat: 400 body, 500 kontrol dan label, 600 heading dan nama. Tidak ada 700 di UI.
+- `letter-spacing: 0`, kecuali heading besar maksimal `-.02em`.
+- Angka memakai `font-variant-numeric: tabular-nums` di count, durasi, dan memori.
+- Satu layar maksimal memakai tiga ukuran teks.
 
 Larangan:
 
-- Tidak ada `text-transform: uppercase` untuk label UI.
-- Tidak ada tracking lebar (`letter-spacing` di atas `.02em`) pada label.
-- Tidak ada `text-transform: lowercase` paksa pada nama plan, agent, atau data.
-- Tidak ada ALL CAPS untuk judul, tombol, menu, tab, atau metadata.
-- Satu-satunya pengecualian: monogram ikon agent (mis. `CC`) boleh kapital karena itu mark, bukan label.
+- Tidak ada `text-transform: uppercase`.
+- Tidak ada `text-transform: lowercase` paksa pada data.
+- Tidak ada ALL CAPS untuk judul, tombol, menu, tab, atau meta.
 
 ## 4. Casing dan Copy
 
@@ -62,71 +96,77 @@ Larangan:
 
 Aturan copy:
 
-1. Sebut benda dengan nama yang dipakai user: `Terminal`, `Browser`, `Project`, `Agent`, bukan `pty`, `web`, `pane`, `workspace` bila maksudnya project.
-2. Jangan tampilkan nama RPC internal di UI. `ptySpawn`, `historyScan`, `browserFetch` hanya boleh muncul di log teknis.
-3. Toast dan error: kalimat pendek, sentence case, akhiri titik bila lebih dari satu frasa.
-4. Hint menu hanya berisi shortcut nyata. Jangan isi dengan kategori internal seperti `pty`, `web`, `panel`.
-5. Jangan pakai em dash. Pakai koma, titik, titik dua, atau kurung.
-6. Jangan pakai emoji di UI.
-7. Jangan pakai kata pemasaran: `seamless`, `powerful`, `supercharge`, `unleash`, `elevate`.
-8. Placeholder memberi contoh nyata, bukan instruksi kosong: `https://example.com`, `query, e.g. blank restore`.
+1. Pakai nama yang dipakai user: `Terminal`, `Browser`, `Project`, `Agent`, bukan `pty`, `web`, `pane`.
+2. Jangan tampilkan nama RPC internal di UI.
+3. Toast dan error: satu kalimat pendek, sentence case.
+4. Hint menu hanya berisi shortcut nyata.
+5. Jangan pakai em dash, emoji, atau kata pemasaran (`seamless`, `powerful`, `supercharge`).
+6. Placeholder memberi contoh nyata, bukan instruksi kosong.
 
-## 5. Spacing dan Radius
+## 5. Tombol
 
-Skala jarak: `4, 8, 12, 16, 20, 24`. Tidak ada nilai 5, 7, 9, 11, 13, 15 untuk padding, margin, atau gap.
+Tiga varian saja. Tidak ada varian keempat.
 
-| Radius | Token | Pakai untuk |
+| Varian | Bentuk | Pakai untuk |
 | --- | --- | --- |
-| 4px | `--r-sm` | Badge count, tag kecil, penanda |
-| 6px | `--r-ctl` | Tombol, input, select, tab, baris menu, chip |
-| 10px | `--r-panel` | Menu, palette, modal, kartu besar |
-| penuh | `--r-pill` | Hanya switch track dan progress bar |
+| Primer | `--accent` solid, teks putih, radius 6px | Satu aksi utama per layar |
+| Sekunder | `--surface`, border `--line-soft`, teks utama | Aksi biasa |
+| Ghost | tanpa border dan background, hover `--hover` | Aksi baris, ikon, menu |
 
-Larangan:
+Aturan:
 
-- Tidak ada `border-radius` 12px atau lebih pada kontrol.
-- Tidak ada pill pada tombol, chip filter, status chip, atau badge angka.
-- Tidak ada radius berbeda untuk dua kontrol yang sejajar.
+- Tinggi 28px, padding `0 12px`, gap 6px, font 13px/500.
+- `.btn.sm` tinggi 24px, padding `0 9px`.
+- Maksimal satu tombol primer terlihat dalam satu pane.
+- Tombol ikon 28px, ikon 14px, tanpa teks, wajib `title` dan `aria-label`.
+- Hover ghost hanya mengubah background dan warna teks. Tidak menambah border.
+- Disabled hanya untuk aksi sementara yang jelas (mis. sedang menyimpan). Menu yang belum ada dihapus.
+- Tidak ada gradient, shadow, uppercase, atau ikon berbeda ukuran dalam satu baris tombol.
 
-## 6. Elevasi dan Glass
+## 6. Warna, Elevasi, dan Gerak
 
-- Chrome (sidebar, tab strip, status bar) **opaque**. Tidak ada `backdrop-filter`.
-- Overlay (menu, palette, modal, toast) memakai `--float` solid dan satu bayangan `--shadow`.
-- Bayangan hanya untuk elemen yang benar-benar melayang. Baris, tombol, tab, dan input tidak punya bayangan.
-- Pengecualian: focus ring tanpa blur (`0 0 0 3px`) dihitung penanda fokus, bukan elevasi.
-- Tidak ada inset highlight putih untuk membuat kontrol terlihat "hidup".
-- `backdrop-filter` dimatikan di semua platform. WebKitGTK pernah menaruh menu di sidebar dan menelan klik terminal.
+| Token | Pakai untuk |
+| --- | --- |
+| `--bg` | Kanvas pane dan terminal |
+| `--bg-side`, `--bg-rail` | Sidebar, bar jendela, status bar |
+| `--surface`, `--surface-2` | Kontrol dan hover |
+| `--line`, `--line-soft` | Garis struktural |
+| `--text`, `--text-2`, `--meta` | Teks utama, sekunder, meta |
+| `--accent` | Aksi primer, fokus, state aktif |
+| `--folder` | Hanya ikon folder project |
+| `--warn`, `--bad`, `--good` | Status, hanya teks, dot, dan border tipis |
 
-## 7. Gerak
+- Chrome opaque. Overlay memakai `--float` dan satu `--shadow`.
+- Tidak ada `backdrop-filter`. WebKitGTK pernah menelan klik karena blur.
+- Tidak ada gradient, inset highlight, atau bayangan pada kontrol.
+- Fokus memakai satu pola: outline 2px `--accent`, offset 1px.
+- Transisi hanya warna, border, opacity, dan transform; 120ms `ease-out`.
+- Tidak ada animasi masuk, parallax, bounce, atau spinner ambient.
+- Spinner hanya untuk pekerjaan yang punya durasi dan berhenti saat selesai. Status "sedang berjalan" memakai dot statis.
 
-- Transisi hanya `background-color`, `border-color`, `color`, `opacity`, dan `transform`.
-- Durasi 120ms, easing `ease-out`.
-- Tidak ada animasi masuk, parallax, atau bounce.
-- Spinner hanya untuk pekerjaan yang benar-benar berjalan.
+## 7. Komponen
 
-## 8. Komponen
+- **Bar jendela:** brand di atas kolom sidebar, tombol Settings dan Agents 28px, tab 32px menempel pada batas kolom, `+` 6px setelah tab, `Command` di kanan. Tab memakai judul shell dan ellipsis.
+- **Sidebar:** search 28px di paling atas. Baris judul workspace memuat refresh dan add. Tidak ada label section tambahan bila isinya hanya satu grup.
+- **Baris project:** 32px, twisty, ikon folder 16px, nama 13px/500. Branch dan sesi hanya saat dibuka. Status berjalan memakai dot 6px statis.
+- **Menu:** lebar 268px, padding 6px, item 32px, ikon 16px, font 13px. Item disabled tidak ditampilkan; deteksi agent yang tidak terpasang tidak masuk menu.
+- **Settings:** nav item 32px, satu section aktif. Tidak ada nav ke halaman yang belum ada.
+- **Tab aktif:** `--surface` dan border tipis. Tidak ada shadow atau garis aksen tambahan.
+- **Empty state:** satu ikon 20px, satu judul, satu hint, maksimal dua aksi.
+- **Status bar:** teks 11px, angka tabular, tanpa pill.
 
-- **Bar jendela:** satu baris penuh, tanpa pemisah ganda. Brand di atas kolom sidebar, diikuti tombol Settings dan Agents, lalu tab yang menempel pada batas kolom, `+`, dan tombol Command di kanan. Tab memakai judul dari shell (`user@host:path`) dan dipotong dengan ellipsis.
-- **Sidebar:** search field di paling atas. Mengetik memfilter daftar project; Enter membuka History Search dengan query yang sama. Aksi refresh dan add ada di baris judul workspace; Settings dan Agents tinggal di bar jendela, bukan rail ikon terpisah.
-- **Baris project:** satu baris 32px, twisty, ikon folder, nama. Sesi tidak tampil sebelum project dibuka. Saat dibuka, branch tampil sebagai satu baris redup, lalu sesi yang hidup.
+## 8. Gate Anti-Slop
 
-- **Tombol primer:** accent solid, teks putih, radius 6px, tanpa gradient dan tanpa shadow. Hover menurunkan opacity sedikit.
-- **Tombol sekunder:** surface, border `--line-soft`, teks utama.
-- **Tab aktif:** `--surface` + border tipis. Tidak ada shadow atau garis aksen tambahan.
-- **Tab title:** hanya judul. Tidak ada tag tipe, badge, atau ikon status.
-- **Empty state:** satu ikon garis, satu judul Title Case, satu hint sentence case, maksimal dua aksi.
-- **Status bar:** teks 11px, angka tabular, tanpa pill kecuali memang satu kesatuan kontrol.
+Tolak perubahan bila salah satu benar:
 
-## 9. Gate Anti-Slop
-
-Sebelum commit, tolak perubahan bila salah satu benar:
-
-- Ada label ALL CAPS atau `text-transform: uppercase`.
-- Ada gradient pada kontrol.
-- Ada `border-radius` di atas 10px selain switch dan progress bar.
-- Ada `box-shadow` pada elemen yang tidak melayang.
-- Ada `backdrop-filter`.
-- Ada teks UI yang memakai istilah internal (`pty`, `web`, `pane`, nama RPC).
+- Ada gradient, `backdrop-filter`, atau shadow pada kontrol.
+- Ada `border-radius` di atas 10px selain switch dan progress.
+- Ada lebih dari satu aksen warna bersaing. Ikon folder bukan pelanggaran.
+- Ada label ALL CAPS, emoji, em dash, atau kata pemasaran.
+- Ada dua kontrol sejajar dengan tinggi, radius, atau ukuran ikon berbeda.
+- Ada jarak di luar skala `2, 4, 6, 8, 12, 16, 20, 24` untuk chrome.
+- Ada tombol atau menu `Soon`, `disabled`, atau placeholder yang tidak bisa dipakai.
+- Ada spinner yang berputar tanpa pekerjaan yang selesai.
+- Ada istilah internal (`pty`, `web`, `pane`, nama RPC) di teks UI.
 - Ada label lowercase yang seharusnya Title Case.
-- Ada emoji, em dash, atau kata pemasaran.
-- Ada dua aksen warna yang bersaing. Ikon folder `--folder` bukan pelanggaran.
+- Ada CSS duplikat yang menimpa aturan dasar dengan nilai berbeda.
