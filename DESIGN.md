@@ -106,8 +106,8 @@ Larangan:
 
 ## 8. Komponen
 
-- **Bar jendela:** satu baris penuh, tanpa pemisah ganda. Brand di atas kolom sidebar, lalu tab, `+`, dan tombol Command di kanan. Tab memakai judul dari shell (`user@host:path`) dan dipotong dengan ellipsis.
-- **Sidebar:** search field di paling atas. Mengetik memfilter daftar project; Enter membuka History Search dengan query yang sama. Aksi workspace (agents, refresh, add) ada di baris judul, bukan rail ikon terpisah.
+- **Bar jendela:** satu baris penuh, tanpa pemisah ganda. Brand di atas kolom sidebar, diikuti tombol Settings dan Agents, lalu tab yang menempel pada batas kolom, `+`, dan tombol Command di kanan. Tab memakai judul dari shell (`user@host:path`) dan dipotong dengan ellipsis.
+- **Sidebar:** search field di paling atas. Mengetik memfilter daftar project; Enter membuka History Search dengan query yang sama. Aksi refresh dan add ada di baris judul workspace; Settings dan Agents tinggal di bar jendela, bukan rail ikon terpisah.
 - **Baris project:** satu baris 32px, twisty, ikon folder, nama. Sesi tidak tampil sebelum project dibuka. Saat dibuka, branch tampil sebagai satu baris redup, lalu sesi yang hidup.
 
 - **Tombol primer:** accent solid, teks putih, radius 6px, tanpa gradient dan tanpa shadow. Hover menurunkan opacity sedikit.

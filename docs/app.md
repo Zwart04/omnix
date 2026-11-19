@@ -147,13 +147,15 @@ WebView konten untuk tab browser, dan terminal asli lewat PTY. Tata letak yang
 dituju:
 
 - **Bar jendela** — satu baris penuh: brand `Omnix` di atas kolom sidebar,
-  lalu tab, tombol `+`, dan tombol `Command` di kanan. Tab terminal memakai
+  diikuti tombol Settings dan Agents, lalu tab yang menempel pada batas kolom,
+  tombol `+`, dan tombol `Command` di kanan. Tab terminal memakai
   judul window dari shell (`user@host:path`) dan dipotong dengan ellipsis.
 - **Sidebar kiri** — search field di paling atas. Mengetik memfilter daftar
   project; Enter membuka History Search dengan query yang sama, Escape
   mengosongkan filter. Di bawahnya satu grup workspace yang bisa dilipat dan
   judulnya bisa diganti langsung (double-click, Enter simpan, Escape batal).
-  Baris judul workspace memuat aksi agents, refresh, dan `+ Project`.
+  Baris judul workspace memuat aksi refresh dan `+ Project`; Settings dan Agents
+  tinggal di bar jendela.
   Grup itu hanya berisi folder yang kamu pin lewat `+ Project`; indexed history
   hanya memperkaya baris yang path-nya cocok. Baris project satu baris; klik
   membuka terminal di folder itu, twisty membuka branch dan daftar sesi agent

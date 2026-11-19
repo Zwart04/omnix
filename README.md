@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.5.3_amd64.deb` | `sudo apt install ./omnix_0.5.3_amd64.deb` |
+| Linux x86_64 | `omnix_0.5.4_amd64.deb` | `sudo apt install ./omnix_0.5.4_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.5.3-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.5.3-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.5.4-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.5.4-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -44,8 +44,8 @@ Yang sudah jalan dan dites di repo ini:
   WebView Rust tanpa Electron/React. Aturan visual dan copy ada di `DESIGN.md`.
   Sidebar mulai dengan search field: mengetik memfilter project, Enter membuka
   History Search dengan query yang sama. Grup workspace bisa dilipat dan
-  judulnya diganti langsung; aksi agents, refresh, dan `+ Project` ada di baris
-  judulnya. Grup itu hanya berisi folder yang kamu pin lewat `+ Project`;
+  judulnya diganti langsung; aksi refresh dan `+ Project` ada di baris judulnya,
+  sedangkan Settings dan Agents tinggal di bar jendela. Grup itu hanya berisi folder yang kamu pin lewat `+ Project`;
   indexed history cuma memperkaya baris yang path-nya cocok, tidak menambah
   folder. Baris project satu baris; twisty membuka branch dan sesi agent yang
   terlacak, dan spinner kecil muncul selama ada pty hidup dengan cwd di folder
