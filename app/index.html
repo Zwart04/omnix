@@ -12,18 +12,16 @@
 <body>
   <div id="app">
     <aside id="sidebar" aria-label="Workspace">
-      <header class="side-top">
-        <span class="rail-brand" title="Omnix" aria-hidden="true">
-          <img src="/logo.png" alt="" width="22" height="22" />
-        </span>
-        <span class="side-brand-name">Omnix</span>
-        <button class="icon-btn" type="button" id="cmd-btn" title="Command palette (Ctrl+K)"
-                aria-label="Open command palette">
+      <div class="side-search-row">
+        <label class="side-search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M18 3a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3H6a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3h12a3 3 0 0 0 3-3 3 3 0 0 0-3-3z" />
+            <circle cx="11" cy="11" r="7" />
+            <path d="m20 20-3.2-3.2" />
           </svg>
-        </button>
+          <input id="side-search" type="search" placeholder="Search" spellcheck="false"
+                 autocomplete="off" />
+        </label>
         <button class="icon-btn" type="button" id="side-settings" title="Settings"
                 aria-label="Open settings">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -32,45 +30,7 @@
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
-      </header>
-
-      <nav class="side-nav" aria-label="Workspace actions">
-        <button class="panel-btn" type="button" data-panel="search" title="Search history"
-                aria-label="Search history">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m20 20-3.2-3.2" />
-          </svg>
-        </button>
-        <button class="panel-btn" type="button" data-panel="handoff" title="Handoff"
-                aria-label="Handoff to another agent">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M15 3h6v6" />
-            <path d="M10 14 21 3" />
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-          </svg>
-        </button>
-        <button class="panel-btn" type="button" data-panel="docs" title="Tutorial docs"
-                aria-label="Tutorial docs">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M12 7v14" />
-            <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" />
-          </svg>
-        </button>
-        <button class="panel-btn" type="button" id="rail-agents" title="Agents history"
-                aria-label="Toggle agents history" aria-expanded="false">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-            <path d="M3 3v5h5" />
-            <path d="M12 7v5l4 2" />
-          </svg>
-          <span class="nav-badge" id="rail-agents-count" hidden></span>
-        </button>
-      </nav>
+      </div>
 
       <div class="side-scroll">
         <section class="side-section ws-group" id="workspace-group" aria-labelledby="side-workspace">
@@ -85,7 +45,16 @@
             </button>
             <h1 class="ws-group-title" id="side-workspace" contenteditable="true"
                 spellcheck="false" title="Double-click to rename workspace">Workspace</h1>
-            <span class="side-count" id="workspace-count">0</span>
+            <button class="icon-btn" type="button" id="rail-agents" title="Agents history"
+                    aria-label="Toggle agents history" aria-expanded="false">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                <path d="M3 3v5h5" />
+                <path d="M12 7v5l4 2" />
+              </svg>
+              <span class="nav-badge" id="rail-agents-count" hidden></span>
+            </button>
             <button class="icon-btn" type="button" id="workspace-refresh"
                     title="Refresh workspace" aria-label="Refresh workspace">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
@@ -128,7 +97,13 @@
       </div>
     </aside>
 
-    <div id="tabstrip" aria-label="Open tabs">
+    <div id="tabstrip" aria-label="Window">
+      <div class="titlebar-brand">
+        <span class="rail-brand" title="Omnix" aria-hidden="true">
+          <img src="/logo.png" alt="" width="20" height="20" />
+        </span>
+        <span class="side-brand-name">Omnix</span>
+      </div>
       <div id="tabstrip-tabs" class="strip-tabs"></div>
       <button class="strip-new" type="button" id="tab-new" title="New tab" aria-label="New tab"
               aria-haspopup="menu" aria-expanded="false">+</button>

@@ -21,10 +21,10 @@ Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.5.2_amd64.deb` | `sudo apt install ./omnix_0.5.2_amd64.deb` |
+| Linux x86_64 | `omnix_0.5.3_amd64.deb` | `sudo apt install ./omnix_0.5.3_amd64.deb` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.5.2-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.5.2-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.5.3-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.5.3-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -39,21 +39,19 @@ Yang sudah jalan dan dites di repo ini:
   `~/.claude/projects` (tanpa `subagents/`), dan `~/.local/share/opencode/opencode.db`
   read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
 - `browser fetch/serve/doctor` untuk backend Lightpanda.
-- GUI satu jendela bergaya macOS: chrome solid, aksen biru sistem, radius
-  kecil yang konsisten, dan permukaan berlapis, tetap dirender WebView Rust
-  tanpa Electron/React. Aturan visual dan copy ada di `DESIGN.md`.
-  Sidebar workspace dengan brand `Omnix`, satu baris ikon (Search, Handoff,
-  Docs, Agents), lalu satu grup workspace
-  yang bisa dilipat dan judulnya bisa diganti langsung. Grup itu hanya berisi
-  folder yang kamu pin lewat `+ Project`; indexed history cuma memperkaya baris
-  yang path-nya cocok (jumlah sesi, logo agent, waktu), tidak menambah folder.
-  Baris proyek bisa dibuka menjadi daftar sesi agent, dan spinner kecil muncul
-  selama ada pty hidup dengan cwd di folder itu. Tab strip di atas, panel
-  `Agents` berisi indexed history semua agent, command palette (Ctrl+K).
-  Tidak ada rail ganda; command palette dan setelan ada di header sidebar.
-  Tab strip punya menu `+` (Terminal, Browser, Custom CLI, lalu **agent yang
-  terdeteksi dan enabled saja** dengan logo aslinya), dan terminal memakai
-  palet/font per OS.
+- GUI satu jendela minimalis: satu bar atas berisi brand, tab, `+`, dan tombol
+  `Command`; chrome solid, radius kecil, satu aksen biru. Tetap dirender
+  WebView Rust tanpa Electron/React. Aturan visual dan copy ada di `DESIGN.md`.
+  Sidebar mulai dengan search field: mengetik memfilter project, Enter membuka
+  History Search dengan query yang sama. Grup workspace bisa dilipat dan
+  judulnya diganti langsung; aksi agents, refresh, dan `+ Project` ada di baris
+  judulnya. Grup itu hanya berisi folder yang kamu pin lewat `+ Project`;
+  indexed history cuma memperkaya baris yang path-nya cocok, tidak menambah
+  folder. Baris project satu baris; twisty membuka branch dan sesi agent yang
+  terlacak, dan spinner kecil muncul selama ada pty hidup dengan cwd di folder
+  itu. Judul tab terminal mengikuti judul window dari shell
+  (`user@host:path`). Panel `Agents` berisi indexed history semua agent dan
+  command palette ada di Ctrl+K atau tombol `Command`.
 - `+ Project` membuka dialog folder bawaan OS lewat `FileChooserNative` (Linux,
   tampil sesuai desktop portal), `FolderBrowserDialog` di Windows, dan
   `osascript choose folder` di macOS. Omnix tidak menggambar file browser

@@ -82,9 +82,9 @@ const byId = new Map();
   'docs-frame', 'toasts', 'statusbar', 'status-left', 'status-right', 'status-last',
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
-  'project-tree', 'project-refresh', 'project-add-icon', 'cmd-btn', 'side-settings', 'rail-agents',
+  'project-tree', 'project-refresh', 'project-add-icon', 'side-search', 'side-settings', 'rail-agents',
   'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
-  'workspace-count', 'workspace-refresh', 'rail-agents-count',
+  'workspace-refresh', 'rail-agents-count',
   'usage-chip', 'usage-modal', 'usage-close', 'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
@@ -158,7 +158,7 @@ global.document = {
   },
   addEventListener(type, fn, capture) { docHandlers[type] = fn; docHandlers[type + ':capture'] = !!capture; }
 };
-document.activeElement = byId.get('cmd-btn');
+document.activeElement = byId.get('strip-command');
 
 function all(node, pred, out = []) {
   if (!node) return out;
@@ -250,14 +250,8 @@ require('./app.js');
     'projects sorted by indexed updatedAt desc');
   assert.strictEqual(all(bootRows[1], (n) => n.className === 'ws-name')[0].textContent, 'omnix',
     'older project second');
-  assert.strictEqual(
-    all(bootRows[0], (n) => n.className === 'proj-meta')[0].children[0].textContent,
-    '108 sessions', 'saved project carries its indexed session count');
-  assert.strictEqual(all(bootRows[0], (n) => n.className === 'proj-time')[0].textContent, '2m ago',
-    'saved project carries its indexed relative time');
-  assert.strictEqual(byId.get('workspace-count').textContent, '2', 'workspace count follows the list');
   const bootIcons = byClass('workspace-list', 'icon');
-  assert.strictEqual(bootIcons.length, 7, 'two folder marks plus five agent marks');
+  assert.strictEqual(bootIcons.length, 2, 'one folder mark per saved project');
   assert.ok(bootIcons.every((n) => /^<svg viewBox=/.test(n.innerHTML || '')), 'icons are inline SVGs');
   // one workspace title, editable and collapsible; history only decorates projects
   assert.strictEqual(byId.get('side-workspace').textContent, 'repo', 'sidebar names the root');
@@ -265,6 +259,13 @@ require('./app.js');
   assert.strictEqual(byId.get('workspace-group-body').hidden, true, 'workspace collapses');
   byId.get('workspace-collapse').handlers.click(noop);
   assert.strictEqual(byId.get('workspace-group-body').hidden, false, 'workspace expands');
+
+  // sidebar search narrows the project list without touching saved state
+  byId.get('side-search').value = 'crm';
+  byId.get('side-search').handlers.input(noop);
+  assert.strictEqual(byClass('workspace-list', 'proj-row').length, 1, 'search filters projects');
+  byId.get('side-search').handlers.keydown({ key: 'Escape' });
+  assert.strictEqual(byClass('workspace-list', 'proj-row').length, 2, 'escape clears the filter');
 
   byId.get('workspace-refresh').handlers.click(noop);
   await tick();
@@ -283,11 +284,12 @@ require('./app.js');
   await tick();
   assert.strictEqual(byClass('workspace-list', 'proj-row').length, 2,
     'unpinned tracked folders never join the sidebar');
-  assert.strictEqual(byId.get('workspace-count').textContent, '2', 'workspace count follows projects');
   const projChev = byClass('workspace-list', 'proj-chev')
     .find((n) => !n.classList.contains('is-empty'));
   assert.ok(projChev, 'tracked sessions expose a twisty');
   projChev.handlers.click({ stopPropagation: noop });
+  assert.strictEqual(byClass('workspace-list', 'proj-branch')[0].textContent, 'main',
+    'expanded project shows its branch');
   assert.strictEqual(byClass('workspace-list', 'sess-row').length, 1,
     'project expands into its tracked session');
 
@@ -489,7 +491,7 @@ require('./app.js');
   await tick();
 
   // ---- palette: open, filter, enter ----
-  byId.get('cmd-btn').handlers.click(noop());
+  byId.get('strip-command').handlers.click(noop());
   assert.strictEqual(byId.get('palette').hidden, false, 'palette opens from the rail');
   byId.get('palette-input').value = 'New Terminal';
   byId.get('palette-input').handlers.input(noop());
@@ -506,7 +508,7 @@ require('./app.js');
   await tick();
 
   // ---- split terminal ----
-  byId.get('cmd-btn').handlers.click(noop());
+  byId.get('strip-command').handlers.click(noop());
   byId.get('palette-input').value = 'Split Terminal';
   byId.get('palette-input').handlers.input(noop());
   assert.strictEqual(byId.get('palette-list').children.length, 1, 'split command found');
@@ -524,7 +526,7 @@ require('./app.js');
   assert.strictEqual(paneControls.length, 2, 'each pane carries split and close controls');
   assert.strictEqual(paneControls[0].children[0].disabled, false, 'a pair can split again');
   // a third pane joins the same group
-  byId.get('cmd-btn').handlers.click(noop);
+  byId.get('strip-command').handlers.click(noop);
   byId.get('palette-input').value = 'Split Terminal';
   byId.get('palette-input').handlers.input(noop);
   byId.get('palette-input').handlers.keydown({ key: 'Enter', preventDefault: noop });
@@ -609,7 +611,7 @@ require('./app.js');
     'arrow down moves the selection');
   byId.get('palette-input').handlers.keydown({ key: 'Escape', preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, true, 'escape closes the palette');
-  assert.strictEqual(document.activeElement, byId.get('cmd-btn'),
+  assert.strictEqual(document.activeElement, byId.get('strip-command'),
     'focus returns to the element that opened the palette');
 
   // ---- defensive paths must never throw ----

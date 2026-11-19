@@ -29,6 +29,7 @@
   --select: rgba(10, 132, 255, .30);
   --scroll: rgba(255, 255, 255, .22);
   --accent-soft: rgba(10, 132, 255, .18);
+  --folder: #d8a45f;
   --shadow: 0 10px 30px rgba(0, 0, 0, .45);
 
   --sans: system-ui, sans-serif;
@@ -37,7 +38,7 @@
   --status-h: 28px;
   --side-w: 264px;
   --hist-w: 324px;
-  --strip-h: 42px;
+  --strip-h: 40px;
   --r-sm: 4px;
   --r-ctl: 6px;
   --r-panel: 10px;
@@ -90,6 +91,7 @@ html[data-platform="linux"] {
     --select: rgba(0, 122, 255, .22);
     --scroll: rgba(0, 0, 0, .24);
     --accent-soft: rgba(0, 122, 255, .14);
+    --folder: #a96a1c;
     --shadow: 0 10px 30px rgba(0, 0, 0, .18);
   }
 }
@@ -273,34 +275,20 @@ input[type="checkbox"] {
 
 /* ---------- workspace header ---------- */
 
-.side-top {
+/* Unified window bar: brand over the sidebar column, tabs, actions. */
+
+.titlebar-brand {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 8px;
   flex: none;
-  height: 44px;
-  padding: 0 8px 0 10px;
-  border-bottom: 1px solid var(--line-soft);
+  width: var(--side-w);
+  height: 100%;
+  padding: 0 12px;
+  border-right: 1px solid var(--line);
 }
 
-.rail-brand {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  flex: none;
-  margin-right: 2px;
-  color: var(--accent);
-}
-
-.rail-brand img {
-  width: 20px;
-  height: 20px;
-}
-
-@media (prefers-color-scheme: light) {
-  .rail-brand img { filter: invert(1); }
-}
+.titlebar-brand .rail-brand { margin-right: 0; }
 
 .side-brand-name {
   flex: 1 1 auto;
@@ -314,93 +302,47 @@ input[type="checkbox"] {
   color: var(--text);
 }
 
-.side-nav {
+/* Sidebar search: filters the project list; Enter opens History Search. */
+.side-search-row {
   display: flex;
-  flex-direction: row;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   flex: none;
-  padding: 5px 8px 6px;
-  border-bottom: 1px solid var(--line-soft);
+  padding: 8px 8px 8px 10px;
 }
 
-.side-nav .panel-btn {
-  width: 30px;
+.side-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
   height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-ctl);
+  background: var(--field);
+  color: var(--meta);
 }
 
-.side-nav .panel-btn::before {
-  left: 6px;
-  right: 6px;
-  top: auto;
-  bottom: -6px;
-  width: auto;
-  height: 2px;
+.side-search:focus-within {
+  border-color: var(--accent);
 }
 
-.side-nav .nav-badge {
-  position: absolute;
-  top: -2px;
-  right: -2px;
-  min-width: 14px;
-  height: 14px;
-  padding: 0 3px;
-  font-size: 9px;
-  line-height: 14px;
-}
+.side-search svg { width: 13px; height: 13px; flex: none; }
 
-/* workspace rows keep the panel marking behaviour of the old rail */
-.panel-btn {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
+.side-search input {
+  flex: 1 1 auto;
+  min-width: 0;
   padding: 0;
   border: 0;
-  border-radius: var(--r-ctl);
+  outline: none;
   background: none;
-  color: var(--meta);
-  cursor: pointer;
-  transition: color 120ms ease-out, background-color 120ms ease-out;
-}
-
-.panel-btn svg {
-  width: 16px;
-  height: 16px;
-}
-
-.panel-btn::before {
-  content: "";
-  position: absolute;
-  left: -6px;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  border-radius: 1px;
-  background: transparent;
-  transition: background-color 120ms ease-out;
-}
-
-.panel-btn:hover {
-  color: var(--text-2);
-  background: var(--hover);
-}
-
-.panel-btn:active,
-.panel-btn:focus-visible {
   color: var(--text);
+  font: 12.5px/1 var(--sans);
 }
 
-.panel-btn[aria-current="true"] {
-  color: var(--accent);
-  background: var(--hover-strong);
-}
-
-.panel-btn[aria-current="true"]::before,
-.panel-btn:active::before {
-  background: var(--accent);
-}
+.side-search input::placeholder { color: var(--meta); }
 
 .nav-badge {
   flex: none;
@@ -485,19 +427,6 @@ input[type="checkbox"] {
   border-top: 1px solid var(--line-soft);
 }
 
-.side-count {
-  flex: none;
-  min-width: 18px;
-  height: 17px;
-  padding: 0 5px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-sm);
-  background: var(--surface);
-  color: var(--meta);
-  font: 500 10.5px/15px var(--mono);
-  text-align: center;
-}
-
 .icon-btn {
   display: grid;
   place-items: center;
@@ -566,7 +495,7 @@ input[type="checkbox"] {
   height: 30px;
   margin: 3px 6px 2px;
   padding: 0 8px;
-  border: 1px dashed var(--line);
+  border: 1px solid transparent;
   border-radius: var(--r-ctl);
   background: none;
   color: var(--meta);
@@ -576,7 +505,7 @@ input[type="checkbox"] {
 }
 
 .side-add svg { width: 14px; height: 14px; }
-.side-add:hover { border-color: var(--line-strong); color: var(--text); background: var(--hover); }
+.side-add:hover { border-color: transparent; color: var(--text); background: var(--hover); }
 
 /* project rows: one 30px row per workspace, children indented under it */
 
@@ -683,32 +612,30 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
-.proj-meta {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  font: 10.5px/1.35 var(--mono);
+/* The checked-out branch sits between the project and its sessions. */
+.proj-branch {
+  padding: 2px 8px 4px;
+  font: 11px/1.4 var(--mono);
   color: var(--meta);
-  white-space: nowrap;
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-/* Agent marks sit at the far right of the meta line, clear of the count. */
-.proj-agents {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  margin-left: auto;
-}
+.ws-group-head #rail-agents { position: relative; }
 
-.proj-agents .icon { width: 13px; height: 13px; opacity: .8; }
-
-.proj-agents .glyph {
-  min-width: 13px;
-  height: 13px;
-  font-size: 9px;
-  border: 0;
+#rail-agents .nav-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: var(--r-sm);
+  background: var(--hover-strong);
+  color: var(--text-2);
+  font: 500 9px/14px var(--mono);
+  text-align: center;
 }
 
 /* Live terminal mark on a project or session row. */
@@ -882,11 +809,11 @@ input[type="checkbox"] {
   display: flex;
   align-items: center;
   flex: none;
-  gap: var(--s1);
+  gap: 0;
   height: var(--strip-h);
   min-width: 0;
-  padding: 0 var(--s2);
-  background: var(--bg);
+  padding: 0;
+  background: var(--bg-side);
   border-bottom: 1px solid var(--line);
 }
 
@@ -2682,12 +2609,7 @@ body { letter-spacing: -.006em; }
 #sidebar { border-right-color: var(--line-soft); }
 #agents-panel { border-left-color: var(--line-soft); }
 
-#tabstrip {
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom-color: var(--line-soft);
-  background: var(--bg-rail);
-}
+#tabstrip { border-bottom-color: var(--line-soft); }
 
 .strip-tab {
   height: 30px;
@@ -2714,27 +2636,21 @@ body { letter-spacing: -.006em; }
 .strip-command { padding: 0 11px; font-size: 12.5px; }
 .strip-new { width: 28px; }
 
-.side-top { height: 46px; padding: 0 10px; }
+.titlebar-brand { height: 100%; }
 .side-brand-name { font-size: 13.5px; letter-spacing: -.015em; }
 
-.side-nav {
-  gap: 3px;
-  padding: 6px 10px 8px;
-  border-bottom-color: var(--line-soft);
+#tabstrip .strip-tabs {
+  flex: 0 1 auto;
+  padding: 0 8px;
 }
 
-.side-nav .panel-btn { width: 32px; height: 30px; border-radius: var(--r-ctl); }
-.side-nav .panel-btn::before { display: none; }
-.side-nav .panel-btn[aria-current="true"] {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
+#strip-command { margin-left: auto; margin-right: 8px; }
 
 .side-section + .side-section { border-top-color: var(--line-soft); }
 
 .proj-row {
-  min-height: 42px;
-  padding: 6px 6px 6px 5px;
+  min-height: 32px;
+  padding: 4px 6px 4px 5px;
   border-radius: var(--r-ctl);
 }
 
@@ -2748,8 +2664,8 @@ body { letter-spacing: -.006em; }
 
 .proj.is-working .proj-row { background: var(--accent-soft); }
 
-.proj-icon { color: var(--accent); opacity: .9; }
-.proj-row:hover .proj-icon { color: var(--accent); opacity: 1; }
+.proj-icon { color: var(--folder); opacity: .9; }
+.proj-row:hover .proj-icon { color: var(--folder); opacity: 1; }
 
 .proj-kids { margin-left: 24px; padding-left: 6px; border-left-color: var(--line-soft); }
 
@@ -2762,12 +2678,12 @@ body { letter-spacing: -.006em; }
 .sess-row:hover { background: var(--surface-2); }
 
 .side-add {
-  height: 32px;
-  border-color: var(--line);
+  height: 30px;
+  border-color: transparent;
   border-radius: var(--r-ctl);
 }
 
-.side-add:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+.side-add:hover { border-color: transparent; background: var(--hover); color: var(--text); }
 
 .btn {
   height: 28px;

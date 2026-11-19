@@ -908,6 +908,17 @@
       pushResize(tab);
     });
 
+    /* The shell names its window user@host:path; reuse that as the tab title
+       so the strip reads like the terminal it represents. */
+    if (typeof term.onTitleChange === 'function') {
+      term.onTitleChange(function (value) {
+        var next = String(value || '').replace(/\s+/g, ' ').trim();
+        if (!next || tab.exited || next === tab.title) return;
+        tab.title = next;
+        renderTabs();
+      });
+    }
+
     if (typeof ResizeObserver === 'function') {
       try {
         tab.ro = new ResizeObserver(function () { scheduleFit(tab); });
@@ -1710,6 +1721,7 @@
 
   var savedProjects = [];
   var projectStats = {};
+  var projFilter = '';
 
   function refreshStatus() {
     return call('status', {}).then(function (res) {
@@ -1718,7 +1730,6 @@
       var list = Array.isArray(res.workspaces) ? res.workspaces : [];
       applyWorkspaceTitle();
       renderProjects(savedProjects);
-      renderWorkspaceCount(list);
       var db = typeof res.dbBytes === 'number' ? (res.dbBytes / 1048576).toFixed(1) + ' MiB' : '?';
       $('status-right').textContent =
         'Sessions ' + num(res.sessions) + ' \u00b7 Messages ' + num(res.messages) + ' \u00b7 Index ' + db;
@@ -2117,21 +2128,11 @@
     storeSet('omnix.workspaceTitle:' + normPath(root), name);
   }
 
-  function renderWorkspaceCount(list) {
-    var n = String(list.length);
-    var a = $('workspace-count');
-    if (a) {
-      a.textContent = n;
-      a.hidden = n === '0';
-    }
-  }
-
   function renderProjects(list) {
     savedProjects = Array.isArray(list) ? list : [];
     var box = $('workspace-list');
     if (!box) return;
     var rows = savedProjects.slice();
-    renderWorkspaceCount(rows);
     if (!rows.length) {
       box.textContent = '';
       box.appendChild(el('div', 'side-empty', 'No projects yet. Add the folders you work in.'));
@@ -2149,9 +2150,19 @@
         Number(sa.updatedAt || (a || {}).updatedAt || 0);
     });
 
+    if (projFilter) {
+      rows = rows.filter(function (p) {
+        var name = String((p && p.name) || '').toLowerCase();
+        var path = String((p && p.path) || '').toLowerCase();
+        return name.indexOf(projFilter) >= 0 || path.indexOf(projFilter) >= 0;
+      });
+    }
+
+    var shownRows = 0;
     for (var i = 0; i < rows.length; i++) {
       let p = rows[i] || {};
       if (!p.path) continue;
+      shownRows++;
       var stat = projectStats[p.path] || {};
       var ws = tracked[normPath(p.path)] || null;
       var sessions = ws && Array.isArray(ws.sessions) ? ws.sessions : [];
@@ -2201,29 +2212,8 @@
       var top = el('div', 'proj-top');
       top.appendChild(el('span', 'ws-name', name));
       if (live.length) top.appendChild(workingGlyph(live.length + ' running'));
-      top.appendChild(el('span', 'proj-time', relTime(stat.updatedAt || p.updatedAt)));
+      if (ws && ws.sleeping) top.appendChild(el('span', 'ws-state sleeping', 'Sleeping'));
       body.appendChild(top);
-
-      var count = running.length || Number(stat.sessions || p.sessions || 0);
-      var meta = el('div', 'proj-meta');
-      meta.appendChild(el('span', null, fmtNum(count) + (count === 1 ? ' session' : ' sessions')));
-      if (ws && ws.branch) meta.appendChild(el('span', 'tag branch', ws.branch));
-      if (ws && ws.sleeping) meta.appendChild(el('span', 'ws-state sleeping', 'Sleeping'));
-      var agents = Array.isArray(stat.agents) ? stat.agents : (Array.isArray(p.agents) ? p.agents : []);
-      if (!agents.length && sessions.length) {
-        agents = sessions.map(function (s) { return s.agent; });
-      }
-      var chips = el('span', 'proj-agents');
-      var shown = 0;
-      for (var a = 0; a < agents.length && shown < 3; a++) {
-        chips.appendChild(iconNode(agents[a]));
-        shown++;
-      }
-      if (agents.length > shown) {
-        chips.appendChild(el('span', 'glyph is-more', '+' + (agents.length - shown)));
-      }
-      meta.appendChild(chips);
-      body.appendChild(meta);
       row.appendChild(body);
 
       var remove = el('button', 'icon-btn proj-remove');
@@ -2257,6 +2247,7 @@
       if (running.length) {
         var kids = el('div', 'proj-kids');
         kids.hidden = !expanded;
+        if (ws && ws.branch) kids.appendChild(el('div', 'proj-branch', ws.branch));
         for (var s = 0; s < running.length; s++) {
           (function (session) {
             var liveTab = byPaneKey(session.paneKey);
@@ -2284,6 +2275,9 @@
       }
 
       box.appendChild(wrap);
+    }
+    if (projFilter && !shownRows) {
+      box.appendChild(el('p', 'side-empty', 'No projects match.'));
     }
   }
 
@@ -2577,6 +2571,31 @@
       hist.query = trimmed;
       return loadSessions().then(renderHistory);
     }), SEARCH_DEBOUNCE_MS);
+  }
+
+  /* Sidebar search narrows the project list; Enter hands the query to the
+     transcript index so one field covers both jobs. */
+  function onSideSearch() {
+    var input = $('side-search');
+    projFilter = input ? String(input.value || '').trim().toLowerCase() : '';
+    renderProjects(savedProjects);
+  }
+
+  function onSideSearchKey(ev) {
+    var input = $('side-search');
+    if (ev.key === 'Escape') {
+      if (input) input.value = '';
+      projFilter = '';
+      renderProjects(savedProjects);
+      return;
+    }
+    if (ev.key !== 'Enter') return;
+    ev.preventDefault();
+    var query = input ? String(input.value || '').trim() : '';
+    openStatic('search');
+    var field = $('search-query');
+    if (field) field.value = query;
+    if (query) runSearch(null);
   }
 
   /* ---------- command palette ---------- */
@@ -2928,6 +2947,12 @@
     var sideSettings = $('side-settings');
     if (sideSettings) sideSettings.addEventListener('click', guard(openAgentSettings));
 
+    var sideSearch = $('side-search');
+    if (sideSearch) {
+      sideSearch.addEventListener('input', guard(onSideSearch));
+      sideSearch.addEventListener('keydown', guard(onSideSearchKey));
+    }
+
     var usageChip = $('usage-chip');
     if (usageChip) usageChip.addEventListener('click', guard(openUsage));
     var usageRefresh = $('usage-refresh');
@@ -3018,8 +3043,6 @@
     var stripCmd = $('strip-command');
     if (stripCmd) stripCmd.addEventListener('click', guard(paletteOpen));
 
-    var cmdBtn = $('cmd-btn');
-    if (cmdBtn) cmdBtn.addEventListener('click', guard(paletteOpen));
 
     $('browser-open').addEventListener('click', guard(onBrowserOpen));
     $('browser-engine').addEventListener('change', guard(onEngineChange));

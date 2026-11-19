@@ -10,9 +10,9 @@ Kontrak internal jendela ada di `docs/gui.md`; arsitektur data ada di
 > Linux: `omnix` tanpa argumen membuka jendela, terminal memakai PTY asli, dan
 > seluruh alur IPC lulus selftest otomatis (lihat bagian Selftest).
 
-Tampilan memakai bahasa visual macOS dengan kepadatan Orca: font sistem per
-platform, chrome solid, satu aksen biru, sudut kecil yang konsisten, dan
-pemisah tipis. Tidak ada gradient dekoratif, label ALL CAPS, atau pill di
+Tampilan memakai bahasa visual minimalis dengan kepadatan Orca: font sistem
+per platform, chrome solid, satu aksen biru, ikon folder hangat, sudut kecil
+yang konsisten, dan pemisah tipis. Tidak ada gradient dekoratif, label ALL CAPS, atau pill di
 tombol dan chip. Aturan lengkapnya ada di `DESIGN.md`. Palet terminal tetap
 palet ANSI masing-masing platform supaya warna TUI agent tidak berubah.
 Overlay seperti menu dan palette memakai permukaan opaque; `backdrop-filter`
@@ -146,23 +146,27 @@ Menurut kontrak `docs/gui.md`, jendela Omnix adalah satu WebView UI ditambah N
 WebView konten untuk tab browser, dan terminal asli lewat PTY. Tata letak yang
 dituju:
 
-- **Sidebar kiri** — brand `Omnix`, satu baris ikon (Search, Handoff, Docs,
-  Agents), lalu satu grup workspace yang bisa dilipat dan judulnya bisa diganti
-  langsung (double-click, Enter simpan, Escape batal). Grup itu hanya berisi
-  folder yang kamu pin lewat `+ Project`; indexed history hanya memperkaya baris
-  yang path-nya cocok. Klik baris membuka terminal di folder itu; twisty
-  membuka daftar sesi agent yang dilacak, dan spinner kecil menandai pty yang
-  masih hidup. `+ Project` memakai dialog folder bawaan OS, bukan file browser
-  milik Omnix: GTK `FileChooserNative` di Linux, `FolderBrowserDialog` di
-  Windows, `osascript choose folder` di macOS. Batal tidak menambah apa pun.
-- **Tab bar** — tab terminal, browser, docs, search, dan settings dalam satu
-  jendela.
+- **Bar jendela** — satu baris penuh: brand `Omnix` di atas kolom sidebar,
+  lalu tab, tombol `+`, dan tombol `Command` di kanan. Tab terminal memakai
+  judul window dari shell (`user@host:path`) dan dipotong dengan ellipsis.
+- **Sidebar kiri** — search field di paling atas. Mengetik memfilter daftar
+  project; Enter membuka History Search dengan query yang sama, Escape
+  mengosongkan filter. Di bawahnya satu grup workspace yang bisa dilipat dan
+  judulnya bisa diganti langsung (double-click, Enter simpan, Escape batal).
+  Baris judul workspace memuat aksi agents, refresh, dan `+ Project`.
+  Grup itu hanya berisi folder yang kamu pin lewat `+ Project`; indexed history
+  hanya memperkaya baris yang path-nya cocok. Baris project satu baris; klik
+  membuka terminal di folder itu, twisty membuka branch dan daftar sesi agent
+  yang dilacak, dan spinner kecil menandai pty yang masih hidup. `+ Project`
+  memakai dialog folder bawaan OS, bukan file browser milik Omnix: GTK
+  `FileChooserNative` di Linux, `FolderBrowserDialog` di Windows, `osascript
+  choose folder` di macOS. Batal tidak menambah apa pun.
 - **Area konten** — xterm untuk tab terminal; WebView konten hanya dibuat saat
   tab browser aktif dan ditutup saat tab lain dipilih. Tiap pane terminal punya
   tombol split dan close di sudut kanan atas (muncul saat hover/focus). Satu
   grup menampung sampai empat pane: 2 berdampingan, 3 dengan satu pane lebar di
   bawah, 4 dalam grid 2x2.
-- **Bar status/URL** — alamat halaman, indikator engine browser, dan toast
+- **Bar status** — memori app dan agent, jumlah sesi/pesan index, dan toast
   singkat untuk hasil aksi.
 
 WebView UI memakai protokol `omnix://`, bukan `file://`, dan asetnya ditanam di

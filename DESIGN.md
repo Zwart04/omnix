@@ -1,14 +1,14 @@
 # Omnix Design Rules
 
-Arah: kepadatan dan hierarki Orca, dengan tipografi dan casing Apple HIG. Omnix adalah workbench, bukan landing page. Chrome harus tenang; isi pane yang boleh ramai.
+Arah: minimalis. Satu bar jendela, daftar proyek padat, dan satu pane konten. Omnix adalah workbench, bukan landing page, dan tidak meniru macOS: chrome tenang, isi pane yang boleh ramai.
 
 Aturan ini mengikat semua perubahan UI di `app/`. Bila sebuah keputusan tidak diatur di sini, pilih opsi yang paling sedikit: lebih sedikit warna, lebih sedikit bayangan, lebih sedikit radius.
 
 ## 1. Prinsip
 
 1. **Konten dulu.** Sidebar, tab strip, dan status bar adalah bingkai. Terminal dan browser adalah isi. Bingkai tidak boleh menarik perhatian lebih dari isi.
-2. **Satu aksen.** Hanya `--accent` (system blue) yang menandai aksi, fokus, dan state aktif. Tidak ada aksen kedua.
-3. **Kepadatan Apple, bukan kepadatan IDE.** Baris 28 sampai 42px, kontrol 24 sampai 30px, jarak kelipatan 4px.
+2. **Satu aksen.** Hanya `--accent` yang menandai aksi, fokus, dan state aktif. Pengecualian: `--folder` hangat khusus ikon project, karena itu penanda jenis, bukan aksen kedua.
+3. **Padat dan datar.** Baris 28 sampai 40px, kontrol 24 sampai 30px, jarak kelipatan 4px. Tidak ada dekorasi di belakang konten.
 4. **Restraint.** Tidak ada gradient dekoratif, glass berlebih, pill di mana-mana, atau bayangan yang tidak menjelaskan elevasi.
 5. **Konsisten lebih penting daripada pintar.** Satu pola untuk semua tombol, chip, menu, dan heading.
 
@@ -23,11 +23,12 @@ Aturan ini mengikat semua perubahan UI di `app/`. Bila sebuah keputusan tidak di
 | `--text`, `--text-2`, `--meta` | Teks utama, sekunder, metadata |
 | `--accent` | Aksi primer, fokus, state aktif |
 | `--warn`, `--bad`, `--good` | Status, hanya pada teks dan border tipis |
+| `--folder` | Hanya ikon folder project |
 
 Larangan:
 
 - Tidak ada gradient pada tombol, badge, ikon, atau panel.
-- Tidak ada warna aksen tambahan di luar token status.
+- Tidak ada warna aksen tambahan di luar token status dan `--folder` pada ikon folder.
 - Tidak ada teks berwarna aksen kecuali state aktif, link, atau status.
 - Background translusen hanya untuk overlay yang melayang di atas konten.
 
@@ -105,10 +106,14 @@ Larangan:
 
 ## 8. Komponen
 
+- **Bar jendela:** satu baris penuh, tanpa pemisah ganda. Brand di atas kolom sidebar, lalu tab, `+`, dan tombol Command di kanan. Tab memakai judul dari shell (`user@host:path`) dan dipotong dengan ellipsis.
+- **Sidebar:** search field di paling atas. Mengetik memfilter daftar project; Enter membuka History Search dengan query yang sama. Aksi workspace (agents, refresh, add) ada di baris judul, bukan rail ikon terpisah.
+- **Baris project:** satu baris 32px, twisty, ikon folder, nama. Sesi tidak tampil sebelum project dibuka. Saat dibuka, branch tampil sebagai satu baris redup, lalu sesi yang hidup.
+
 - **Tombol primer:** accent solid, teks putih, radius 6px, tanpa gradient dan tanpa shadow. Hover menurunkan opacity sedikit.
 - **Tombol sekunder:** surface, border `--line-soft`, teks utama.
 - **Tab aktif:** `--surface` + border tipis. Tidak ada shadow atau garis aksen tambahan.
-- **Tab title:** hanya judul. Tidak ada tag tipe seperti `pty` atau `web`.
+- **Tab title:** hanya judul. Tidak ada tag tipe, badge, atau ikon status.
 - **Empty state:** satu ikon garis, satu judul Title Case, satu hint sentence case, maksimal dua aksi.
 - **Status bar:** teks 11px, angka tabular, tanpa pill kecuali memang satu kesatuan kontrol.
 
@@ -124,4 +129,4 @@ Sebelum commit, tolak perubahan bila salah satu benar:
 - Ada teks UI yang memakai istilah internal (`pty`, `web`, `pane`, nama RPC).
 - Ada label lowercase yang seharusnya Title Case.
 - Ada emoji, em dash, atau kata pemasaran.
-- Ada dua aksen warna yang bersaing.
+- Ada dua aksen warna yang bersaing. Ikon folder `--folder` bukan pelanggaran.
