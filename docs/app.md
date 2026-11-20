@@ -95,6 +95,10 @@ Paket memasang `/usr/bin/omnix`, desktop entry, ikon, dan mendeklarasikan
 `Depends: libwebkit2gtk-4.1-0, libgtk-3-0, libsoup-3.0-0`. Arsitektur diambil
 dari `dpkg --print-architecture`.
 
+Untuk Arch Linux, `dist/linux/build-arch.sh` membangun
+`omnix-<versi>-1-x86_64.pkg.tar.zst` dengan isi yang sama; pasang memakai
+`sudo pacman -U omnix-*-x86_64.pkg.tar.zst`.
+
 Mencopot pemasangan manual:
 
 ```bash
@@ -150,9 +154,12 @@ dituju:
   diikuti tombol collapse dan Settings, lalu tab yang menempel pada batas
   kolom, tombol `+`, `Command`, dan toggle Agents di kanan. Sidebar bisa
   dilipat menjadi rail ikon 56px; panel Agents ditutup lewat tombol hide di
-  kanan bawah dan dibuka lagi dari toggle di bar jendela. Tab terminal memakai nama
-  project atau label pane (`Vesper`, `OpenCode`, `Terminal`), dan dipotong
-  dengan ellipsis.
+  kanan bawah dan dibuka lagi dari toggle di bar jendela. Setiap project punya
+  tab sendiri: klik folder membuka tab baru di cwd folder itu, dan klik lagi
+  mengaktifkan tab yang sama hanya bila cwd-nya persis sama. Folder induk dan
+  anak tidak berbagi tab. Tab terminal memakai nama project atau label pane
+  (`Vesper`, `OpenCode`, `Terminal`), dipotong dengan ellipsis, dan tooltip
+  membawa path lengkap.
 - **Sidebar kiri** — search field di paling atas. Mengetik memfilter daftar
   project; Enter membuka History Search dengan query yang sama, Escape
   mengosongkan filter. Di bawahnya satu grup workspace yang bisa dilipat dan
@@ -160,7 +167,9 @@ dituju:
   Baris judul workspace memuat aksi refresh dan `+ Project`; Settings dan
   toggle Agents tinggal di bar jendela.
   Grup itu hanya berisi folder yang kamu pin lewat `+ Project`; indexed history
-  hanya memperkaya baris yang path-nya cocok. Baris project satu baris; klik
+  hanya memperkaya baris yang path-nya cocok. Nama project atau grup history
+  yang kembar menambah nama folder induk (`omnix · packages`); bila masih
+  kembar, dipakai path lengkap. Baris project satu baris; klik
   membuka terminal di folder itu, twisty membuka branch dan daftar sesi agent
   yang dilacak, dan dot hijau statis menandai pty yang masih hidup. Tab baru
   dan agent dari menu `+` mewarisi folder tab aktif, bukan home directory. `+ Project`

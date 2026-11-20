@@ -371,7 +371,7 @@ require('./app.js');
       },
       {
         agent: 'opencode', sessionId: 'uuid-3', title: 'sidebar tree',
-        cwd: '/repo/tools', updatedAt: Math.floor(Date.now() / 1000) - 300000,
+        cwd: '/repo/tools/repo', updatedAt: Math.floor(Date.now() / 1000) - 300000,
         messageCount: 7, resumeCommand: 'opencode --session uuid-3',
         preview: 'project tree rows'
       }
@@ -391,7 +391,8 @@ require('./app.js');
   assert.strictEqual(groups.length, 2, 'sessions group by project');
   assert.deepStrictEqual(
     groups.map((g) => all(g, (n) => n.className === 'hist-group-name')[0].textContent),
-    ['repo', 'tools'], 'groups ordered by most recent session');
+    ['repo', 'repo \u00b7 tools'],
+    'same-basename folders stay separate groups and name their parent');
   assert.strictEqual(
     all(groups[0], (n) => n.className === 'hist-group-count')[0].textContent, '2',
     'group header carries its session count');
@@ -811,6 +812,7 @@ require('./app.js');
   window.__omnix.reply(addProjectsReq.id, true, JSON.stringify({
     projects: [
       { path: '/home/zwart/git/omnix', name: 'omnix' },
+      { path: '/home/zwart/git/omnix/packages/tools', name: 'omnix' },
       { path: '/home/zwart/git/newrepo', name: 'newrepo' }
     ]
   }));
@@ -823,19 +825,45 @@ require('./app.js');
   assert.strictEqual(spawnReq.args.cwd, '/home/zwart/git/newrepo', 'terminal starts in the folder');
   window.__omnix.reply(spawnReq.id, true, '{"paneKey":"tab:new","pid":90}');
   await tick();
-  assert.strictEqual(byClass('workspace-list', 'proj-row').length, 2, 'new row is listed');
+  assert.strictEqual(byClass('workspace-list', 'proj-row').length, 3, 'new row is listed');
+
+  // duplicate basenames name their parent, and nested projects own separate tabs
+  const projRows = byClass('workspace-list', 'proj-row');
+  const labels = projRows.map((n) => all(n, (x) => String(x.className) === 'ws-name')[0].textContent);
+  assert.ok(labels.indexOf('omnix \u00b7 git') >= 0, 'parent project label is disambiguated');
+  assert.ok(labels.indexOf('omnix \u00b7 packages') >= 0, 'nested project label is disambiguated');
+
+  const toolsRow = projRows.find((n) => n.title === '/home/zwart/git/omnix/packages/tools');
+  assert.ok(toolsRow, 'nested project row is present');
+  toolsRow.handlers.click(noop());
+  await tick();
+  const toolsSpawn = posted[posted.length - 1];
+  assert.strictEqual(toolsSpawn.cmd, 'ptySpawn', 'nested project opens its own terminal');
+  assert.strictEqual(toolsSpawn.args.cwd, '/home/zwart/git/omnix/packages/tools',
+    'nested project cwd is used');
+  window.__omnix.reply(toolsSpawn.id, true, '{"paneKey":"tab:tools","pid":90}');
+  await tick();
 
   // new terminals inherit the folder of the project the user is working in
-  const omnixRow = byClass('workspace-list', 'proj-row')
-    .find((n) => all(n, (x) => String(x.className) === 'ws-name' && x.textContent === 'omnix'));
+  const omnixRow = projRows.find((n) => n.title === '/home/zwart/git/omnix');
   assert.ok(omnixRow, 'omnix project row is present');
   omnixRow.handlers.click(noop());
   await tick();
   const projectSpawn = posted[posted.length - 1];
-  assert.strictEqual(projectSpawn.cmd, 'ptySpawn', 'clicking a project opens a terminal there');
+  assert.strictEqual(projectSpawn.cmd, 'ptySpawn',
+    'clicking the parent project must not reuse the nested tab');
   assert.strictEqual(projectSpawn.args.cwd, '/home/zwart/git/omnix', 'project cwd is used');
   window.__omnix.reply(projectSpawn.id, true, '{"paneKey":"tab:9","pid":91}');
   await tick();
+
+  const stripTitles = all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-title');
+  assert.ok(stripTitles.some((n) => String(n.title).indexOf('/home/zwart/git/omnix/packages/tools') >= 0),
+    'tab tooltip carries the nested project path');
+  const beforeReuse = posted.length;
+  omnixRow.handlers.click(noop());
+  await tick();
+  assert.strictEqual(posted.length, beforeReuse,
+    'clicking an open project activates its tab instead of spawning another');
 
   byId.get('tab-new-menu').hidden = true;
   byId.get('tab-new').handlers.click(noop());

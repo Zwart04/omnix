@@ -180,6 +180,41 @@
     return parts[parts.length - 1] || String(path);
   }
 
+  function parentName(path) {
+    var text = String(path || '').replace(/[\\/]+$/, '');
+    var cut = Math.max(text.lastIndexOf('/'), text.lastIndexOf('\\'));
+    return cut > 0 ? baseName(text.slice(0, cut)) : '';
+  }
+
+  /* Two saved folders can share a basename. Extend the parent trail until the
+     label is unique, so clicking never depends on guessing which row is which. */
+  function disambiguatedName(name, path, list) {
+    var key = normPath(path);
+    var others = [];
+    for (var i = 0; i < (list || []).length; i++) {
+      var other = list[i] || {};
+      if (!other.path || normPath(other.path) === key) continue;
+      if ((other.name || baseName(other.path)) === name) others.push(normPath(other.path));
+    }
+    if (!others.length) return name;
+
+    var parts = key.split(/[\\/]/).filter(function (p) { return !!p; });
+    if (parts.length < 2) return name;
+    for (var take = 1; take < parts.length; take++) {
+      var trail = parts.slice(parts.length - 1 - take, parts.length - 1).join('/');
+      var collision = false;
+      for (var o = 0; o < others.length; o++) {
+        var op = others[o].split(/[\\/]/).filter(function (p) { return !!p; });
+        if (op.slice(op.length - 1 - take, op.length - 1).join('/') === trail) {
+          collision = true;
+          break;
+        }
+      }
+      if (trail && !collision) return name + ' · ' + trail;
+    }
+    return name + ' · ' + key;
+  }
+
   /* localStorage is optional in the test stub and in locked-down webviews. */
   function storeGet(key) {
     try {
@@ -419,7 +454,7 @@
         main.type = 'button';
         if (tab === activeTab) main.setAttribute('aria-current', 'page');
         var title = el('span', 'strip-title', tab.title);
-        title.title = tab.paneKey || tab.title;
+        title.title = tab.cwd ? tab.title + ' · ' + tab.cwd : (tab.paneKey || tab.title);
         main.appendChild(title);
         main.addEventListener('click', guard(function () { activate(tab); }));
         main.addEventListener('pointerdown', guard(function () {
@@ -2060,10 +2095,10 @@
      Orca uses when a workspace row is clicked. */
   function openProject(p) {
     if (!p || !p.path) return;
-    var name = p.name || baseName(p.path);
+    var name = disambiguatedName(p.name || baseName(p.path), p.path, savedProjects);
     var existing = null;
     for (var i = 0; i < tabs.length; i++) {
-      if (tabs[i].kind === 'terminal' && pathMatches(tabs[i].cwd || appRoot, p.path)) {
+      if (tabs[i].kind === 'terminal' && normPath(tabs[i].cwd || appRoot) === normPath(p.path)) {
         existing = tabs[i];
         break;
       }
@@ -2074,14 +2109,14 @@
   }
 
   function normPath(path) {
-    return String(path || '').replace(/\/+$/, '');
+    return String(path || '').replace(/[\\/]+$/, '');
   }
 
   function pathMatches(cwd, path) {
     var a = normPath(cwd);
     var b = normPath(path);
     if (!a || !b) return false;
-    return a === b || a.indexOf(b + '/') === 0;
+    return a === b || a.indexOf(b + '/') === 0 || a.indexOf(b + '\\') === 0;
   }
 
   function liveTabsAt(path) {
@@ -2190,7 +2225,7 @@
       var stat = projectStats[p.path] || {};
       var ws = tracked[normPath(p.path)] || null;
       var sessions = ws && Array.isArray(ws.sessions) ? ws.sessions : [];
-      var name = p.name || stat.name || baseName(p.path);
+      var name = disambiguatedName(p.name || stat.name || baseName(p.path), p.path, savedProjects);
       let key = normPath(p.path);
       var expanded = !!projExpanded[key];
       var live = liveTabsAt(p.path);
@@ -2495,6 +2530,20 @@
       }
       index[key].sessions.push(s);
     }
+
+    var seen = {};
+    for (var g = 0; g < groups.length; g++) {
+      seen[groups[g].name] = (seen[groups[g].name] || 0) + 1;
+    }
+    if (groups.length > 1) {
+      var items = groups.map(function (group) {
+        return { path: group.key, name: group.name };
+      });
+      for (var h = 0; h < groups.length; h++) {
+        if (seen[groups[h].name] < 2 || !groups[h].key) continue;
+        groups[h].name = disambiguatedName(groups[h].name, groups[h].key, items);
+      }
+    }
     return groups;
   }
 
@@ -2563,6 +2612,7 @@
 
         var head = el('button', 'hist-group-head');
         head.type = 'button';
+        head.title = group.key || 'Sessions without a project folder';
         head.setAttribute('aria-expanded', closed ? 'false' : 'true');
         head.setAttribute('aria-label',
           (closed ? 'Expand ' : 'Collapse ') + group.name + ' sessions');
@@ -2605,7 +2655,6 @@
       'Resume ' + (s.title || 'session') + ' from ' + (s.agent || 'agent'));
 
     var top = el('span', 'sess-top');
-    top.appendChild(iconNode(s.agent || '?'));
     var titleText = cleanText(s.title) || '(untitled)';
     var title = el('span', 'sess-title', titleText);
     title.title = titleText;

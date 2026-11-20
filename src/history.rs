@@ -299,7 +299,8 @@ fn push_filters(
         params.push(Box::new(agent.to_string()));
     }
     if let Some(prefix) = cwd_prefix.filter(|p| !p.is_empty()) {
-        sql.push_str(" AND (s.cwd = ? OR s.cwd LIKE ? || '/%')");
+        sql.push_str(" AND (s.cwd = ? OR s.cwd LIKE ? || '/%' OR s.cwd LIKE ? || '\\%')");
+        params.push(Box::new(prefix.to_string()));
         params.push(Box::new(prefix.to_string()));
         params.push(Box::new(prefix.to_string()));
     }
@@ -877,6 +878,23 @@ mod tests {
 
         let words = search(&conn, "resolve terminal", None, false, false, 10).unwrap();
         assert_eq!(words.len(), 1, "identifiers column supplies split words");
+    }
+
+    #[test]
+    fn cwd_prefix_matches_both_separators() {
+        let dir = temp_dir("cwd-prefix");
+        let db = dir.join("history.sqlite");
+        let conn = open(&db).unwrap();
+        for (id, cwd) in [(1, "C:\\repo"), (2, "C:\\repo\\sub")] {
+            conn.execute(
+                "INSERT INTO sessions(id,agent,session_id,file_path,title,cwd,resume_command)
+                 VALUES(?1,'codex',?2,?3,'t',?4,'codex resume x')",
+                rusqlite::params![id, format!("s{id}"), format!("/tmp/s{id}.jsonl"), cwd],
+            )
+            .unwrap();
+        }
+        assert_eq!(count(&conn, None, Some("C:\\repo"), None).unwrap(), 2);
+        assert_eq!(count(&conn, None, Some("C:\\other"), None).unwrap(), 0);
     }
 
     #[test]

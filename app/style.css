@@ -867,8 +867,6 @@ input[type="checkbox"] {
   color: var(--text);
 }
 
-.strip-command-glyph { font-size: 11px; color: var(--meta); }
-
 .strip-new {
   display: grid;
   place-items: center;
@@ -995,7 +993,7 @@ input[type="checkbox"] {
   color: var(--text-2);
 }
 
-.pane-empty-mark svg { width: 21px; height: 21px; }
+.pane-empty-mark svg { width: 20px; height: 20px; }
 
 .pane-empty-title {
   font-size: 15px;
@@ -1034,9 +1032,8 @@ input[type="checkbox"] {
   background: var(--float);
   box-shadow: 0 4px 14px rgba(0, 0, 0, .30);
   opacity: 0;
-  transform: translateY(-2px);
   pointer-events: none;
-  transition: opacity 120ms ease-out, transform 120ms ease-out;
+  transition: opacity 120ms ease-out;
 }
 
 .pane-term:hover .pane-controls,
@@ -1440,7 +1437,7 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
-.agent-mark { width: 17px; height: 17px; }
+.agent-mark { width: 16px; height: 16px; }
 
 .agent-name {
   min-width: 0;
@@ -1936,6 +1933,11 @@ input[type="checkbox"] {
   flex: none;
 }
 
+.hist-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
 .hist-seg {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2195,14 +2197,6 @@ input[type="checkbox"] {
   min-width: 0;
 }
 
-.sess-top .icon { width: 14px; height: 14px; }
-
-.sess-top .tag.agent {
-  padding: 2px 6px;
-  font-size: 11px;
-  color: var(--text-2);
-}
-
 .sess-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -2422,13 +2416,6 @@ input[type="checkbox"] {
 .empty {
   color: var(--meta);
   font-size: 14px;
-}
-
-.loading { animation: pulse 1.4s ease-in-out infinite; }
-
-@keyframes pulse {
-  0%, 100% { opacity: .55; }
-  50% { opacity: 1; }
 }
 
 .error {
@@ -2744,12 +2731,9 @@ input[type="checkbox"] {
 @media (prefers-color-scheme: light) { .modal { background: rgba(0, 0, 0, .22); } }
 
 .pane-empty-mark {
-  width: 48px;
-  height: 48px;
-  border-color: var(--line-soft);
-  border-radius: var(--r-panel);
-  background: var(--surface);
-  color: var(--accent);
+  width: 20px;
+  height: 20px;
+  color: var(--text-2);
 }
 
 /* ---------- process memory ---------- */

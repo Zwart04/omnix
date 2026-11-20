@@ -1,0 +1,108 @@
+#!/bin/sh
+# Build an Arch Linux package for Omnix from an already-built release binary.
+set -eu
+
+APP=omnix
+MAINTAINER=${OMNIX_MAINTAINER:-Omnix maintainers <maintainers@omnix.invalid>}
+BINARY=
+VERSION=${OMNIX_VERSION:-}
+
+die() {
+    printf 'build-arch: %s\n' "$1" >&2
+    exit 1
+}
+
+usage() {
+    cat <<'EOF'
+usage: build-arch.sh [--binary PATH] [--version VERSION]
+
+  --binary PATH      use PATH instead of target/release/omnix
+  --version VERSION  override the version read from Cargo.toml
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --binary)
+            [ $# -ge 2 ] || die "--binary needs a path"
+            shift
+            BINARY=$1
+            ;;
+        --version)
+            [ $# -ge 2 ] || die "--version needs a value"
+            shift
+            VERSION=$1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -*) die "unknown option: $1" ;;
+        *) BINARY=$1 ;;
+    esac
+    shift
+done
+
+command -v tar >/dev/null 2>&1 || die "tar not found"
+command -v zstd >/dev/null 2>&1 || die "zstd not found"
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/../.." && pwd)
+
+if [ -z "$BINARY" ]; then
+    BINARY=$ROOT_DIR/target/release/omnix
+fi
+[ -f "$BINARY" ] || die "binary not found: $BINARY (build it with: cargo build --release)"
+
+if [ -z "$VERSION" ]; then
+    VERSION=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' "$ROOT_DIR/Cargo.toml" | head -n 1)
+fi
+[ -n "$VERSION" ] || die "could not determine version; pass --version"
+
+ICON=$SCRIPT_DIR/omnix.svg
+[ -f "$ICON" ] || die "icon not found: $ICON"
+
+STAGE=$(mktemp -d)
+chmod 0755 "$STAGE"
+trap 'rm -rf "$STAGE"' EXIT HUP INT TERM
+
+install -d "$STAGE/usr/bin" \
+    "$STAGE/usr/share/applications" \
+    "$STAGE/usr/share/icons/hicolor/scalable/apps"
+install -m 0755 "$BINARY" "$STAGE/usr/bin/$APP"
+install -m 0644 "$ICON" "$STAGE/usr/share/icons/hicolor/scalable/apps/$APP.svg"
+
+cat >"$STAGE/usr/share/applications/$APP.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Omnix
+Comment=Worktrees, agent sessions, and a browser in one workbench
+Exec=/usr/bin/omnix
+Icon=omnix
+Terminal=false
+Categories=Development;
+StartupWMClass=omnix
+EOF
+
+SIZE=$(du -sb "$STAGE/usr" | cut -f1)
+cat >"$STAGE/.PKGINFO" <<EOF
+pkgname = $APP
+pkgbase = $APP
+pkgver = $VERSION-1
+pkgdesc = Light workbench for worktrees, agent sessions, and browsers
+url = https://github.com/Zwart04/omnix
+builddate = $(date +%s)
+packager = $MAINTAINER
+size = $SIZE
+arch = x86_64
+license = MIT
+depend = webkit2gtk-4.1
+depend = gtk3
+depend = libsoup3
+EOF
+
+OUT=$SCRIPT_DIR/${APP}-${VERSION}-1-x86_64.pkg.tar.zst
+(cd "$STAGE" && tar --zstd --owner=0 --group=0 -cf "$OUT" .PKGINFO usr)
+
+printf 'Built %s\n' "$OUT"
+printf 'Next: sudo pacman -U %s\n' "$OUT"

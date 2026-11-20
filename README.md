@@ -17,14 +17,15 @@ Alasannya sederhana: Lightpanda bukan pengganti browser visual. Ia pengganti *au
 
 ## Unduh
 
-Rilis membawa tiga paket siap pasang (dibangun CI pada tag `v*`):
+Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 | `omnix_0.5.7_amd64.deb` | `sudo apt install ./omnix_0.5.7_amd64.deb` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.5.8_amd64.deb` | `sudo apt install ./omnix_0.5.8_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.5.8-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.5.8-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.5.7-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.5.7-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.5.8-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.5.8-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -130,12 +131,14 @@ sh dist/linux/install.sh
 
 # atau paket Debian
 sh dist/linux/build-deb.sh
+sh dist/linux/build-arch.sh
 sudo apt install dist/linux/omnix_*.deb
+sudo pacman -U dist/linux/omnix-*.pkg.tar.zst
 ```
 
-Windows memakai `dist/windows/build-zip.ps1` (butuh WebView2 Runtime), macOS
-memakai `dist/macos/build-app.sh`. Paket `.deb`, zip, dan `.app` dibangun oleh
-GitHub Actions pada tag `v*`. Panduan lengkap, termasuk state, troubleshooting,
+Windows memakai `dist/windows/build-zip.ps1` (atau `build-zip.sh` untuk hasil
+`cargo xwin`), macOS memakai `dist/macos/build-app.sh`. Paket `.deb`, Arch,
+zip, dan `.app` dibangun oleh GitHub Actions pada tag `v*`. Panduan lengkap, termasuk state, troubleshooting,
 dan batasan: `docs/app.md`.
 
 Jalankan `omnix` tanpa argumen untuk membuka jendela aplikasi. Verifikasi
