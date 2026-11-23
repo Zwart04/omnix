@@ -2395,6 +2395,7 @@
       createTerminal({ title: name, cwd: p.path, scope: scope });
     }
     if (scopeChanged && savedProjects.length) renderProjects(savedProjects);
+    return scopeHistoryToProject(p.path);
   }
 
   function normPath(path) {
@@ -2724,6 +2725,7 @@
 
   var hist = {
     scope: storedScope(),
+    project: storeGet('omnix.histProject') || '',
     agent: '',
     query: '',
     sort: storeGet('omnix.histSort') === 'asc' ? 'asc' : 'desc',
@@ -3080,9 +3082,27 @@
     return card;
   }
 
+  /* Picking a project row scopes the history panel to that folder, so the
+     panel shows exactly the project the user just chose. */
+  function scopeHistoryToProject(path) {
+    path = String(path || '');
+    if (!path) return Promise.resolve(null);
+    if (hist.scope === 'project' && normPath(hist.project) === normPath(path)) {
+      return Promise.resolve(null);
+    }
+    hist.scope = 'project';
+    hist.project = path;
+    storeSet('omnix.histScope2', 'project');
+    storeSet('omnix.histProject', path);
+    renderScopeChips();
+    return loadSessions().then(renderHistory);
+  }
+
   function loadSessions() {
     var args = { scope: hist.scope, limit: HISTORY_LIMIT };
-    if (hist.scope === 'project') args.cwd = launchCwd() || appRoot;
+    if (hist.scope === 'project') {
+      args.cwd = hist.project || launchCwd() || appRoot;
+    }
     if (hist.agent) args.agent = hist.agent;
     if (hist.query) args.query = hist.query;
 

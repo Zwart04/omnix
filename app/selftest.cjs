@@ -870,10 +870,18 @@ require('./app.js');
   assert.strictEqual(posted[posted.length - 1].cmd, 'historyProjects', 'add reloads session stats');
   window.__omnix.reply(posted[posted.length - 1].id, true, JSON.stringify({ projects: [] }));
   await tick();
-  const spawnReq = posted[posted.length - 1];
-  assert.strictEqual(spawnReq.cmd, 'ptySpawn', 'add opens a terminal for the new project');
+  const spawnReq = lastReq('ptySpawn');
+  assert.ok(spawnReq, 'add opens a terminal for the new project');
   assert.strictEqual(spawnReq.args.cwd, '/home/zwart/git/newrepo', 'terminal starts in the folder');
   window.__omnix.reply(spawnReq.id, true, '{"paneKey":"tab:new","pid":90}');
+  await tick();
+  const addHistReq = lastReq('historySessions');
+  assert.ok(addHistReq, 'new project scopes history');
+  assert.strictEqual(addHistReq.args.scope, 'project', 'new project switches scope');
+  assert.strictEqual(addHistReq.args.cwd, '/home/zwart/git/newrepo',
+    'history follows the project folder');
+  window.__omnix.reply(addHistReq.id, true,
+    '{"scope":"project","root":"/repo","total":0,"sessions":[]}');
   await tick();
   assert.strictEqual(byClass('workspace-list', 'proj-row').length, 3, 'new row is listed');
 
@@ -885,25 +893,41 @@ require('./app.js');
 
   const toolsRow = projRows.find((n) => n.title === '/home/zwart/git/omnix/packages/tools');
   assert.ok(toolsRow, 'nested project row is present');
+  const beforeTools = posted.length;
   toolsRow.handlers.click(noop());
   await tick();
-  const toolsSpawn = posted[posted.length - 1];
-  assert.strictEqual(toolsSpawn.cmd, 'ptySpawn', 'nested project opens its own terminal');
+  const toolsReqs = posted.slice(beforeTools);
+  const toolsSpawn = toolsReqs.find((r) => r.cmd === 'ptySpawn');
+  const toolsHist = toolsReqs.find((r) => r.cmd === 'historySessions');
+  assert.ok(toolsSpawn, 'nested project opens its own terminal');
   assert.strictEqual(toolsSpawn.args.cwd, '/home/zwart/git/omnix/packages/tools',
     'nested project cwd is used');
+  assert.ok(toolsHist, 'nested project filters history');
+  assert.strictEqual(toolsHist.args.cwd, '/home/zwart/git/omnix/packages/tools',
+    'history follows the nested project');
   window.__omnix.reply(toolsSpawn.id, true, '{"paneKey":"tab:tools","pid":90}');
+  window.__omnix.reply(toolsHist.id, true,
+    '{"scope":"project","root":"/repo","total":0,"sessions":[]}');
   await tick();
 
   // new terminals inherit the folder of the project the user is working in
   const omnixRow = projRows.find((n) => n.title === '/home/zwart/git/omnix');
   assert.ok(omnixRow, 'omnix project row is present');
+  const beforeOmnix = posted.length;
   omnixRow.handlers.click(noop());
   await tick();
-  const projectSpawn = posted[posted.length - 1];
-  assert.strictEqual(projectSpawn.cmd, 'ptySpawn',
+  const omnixReqs = posted.slice(beforeOmnix);
+  const projectSpawn = omnixReqs.find((r) => r.cmd === 'ptySpawn');
+  const omnixHist = omnixReqs.find((r) => r.cmd === 'historySessions');
+  assert.ok(projectSpawn,
     'clicking the parent project must not reuse the nested tab');
   assert.strictEqual(projectSpawn.args.cwd, '/home/zwart/git/omnix', 'project cwd is used');
+  assert.ok(omnixHist, 'parent project filters history');
+  assert.strictEqual(omnixHist.args.cwd, '/home/zwart/git/omnix',
+    'history follows the parent project');
   window.__omnix.reply(projectSpawn.id, true, '{"paneKey":"tab:9","pid":91}');
+  window.__omnix.reply(omnixHist.id, true,
+    '{"scope":"project","root":"/repo","total":0,"sessions":[]}');
   await tick();
 
   // a terminal in a nested project must not also appear under its parent

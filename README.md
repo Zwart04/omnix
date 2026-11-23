@@ -21,10 +21,10 @@ Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.7_amd64.deb` | `sudo apt install ./omnix_0.6.7_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.6.7-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.7-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.8_amd64.deb` | `sudo apt install ./omnix_0.6.8_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.6.8-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.8-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (universal) | `Omnix-0.6.7-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| macOS 11+ (universal) | `Omnix-0.6.8-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -72,13 +72,17 @@ Yang sudah jalan dan dites di repo ini:
   terminal di folder berbeda tidak tampil identik. Panel `Agents` berisi
   indexed history semua agent, dikelompokkan per project, dengan segmented
   control `Workspace | Project | All`, search, sort `Last updated`, dan grup
-  yang bisa dilipat. Command palette ada di Ctrl+K atau tombol `Command`.
+  yang bisa dilipat. Memilih satu baris project di sidebar otomatis memindah
+  panel ke scope `Project` untuk folder itu, jadi yang tampil hanya history
+  project tersebut (termasuk subfoldernya), dan pilihannya bertahan saat
+  aplikasi dibuka lagi. Command palette ada di Ctrl+K atau tombol `Command`.
 - `+ Project` membuka dialog folder bawaan OS lewat `FileChooserNative` (Linux,
   tampil sesuai desktop portal), `FolderBrowserDialog` di Windows, dan
   `osascript choose folder` di macOS. Omnix tidak menggambar file browser
   sendiri; batal berarti tidak ada folder yang ditambah. Folder disimpan di
-  `~/.omnix/projects.json`, klik satu baris membuka terminal dengan cwd di sana,
-  dan `×` di baris menghapusnya dari sidebar. Path manual tetap tersedia lewat
+  `~/.omnix/projects.json`, klik satu baris membuka terminal dengan cwd di sana
+  sekaligus memfilter panel history ke folder itu, dan `×` di baris
+  menghapusnya dari sidebar. Path manual tetap tersedia lewat
   `Add Project by Path` di palette. Indexed history hanya mengisi jumlah sesi
   dan logo agent untuk path yang cocok, tidak menambah baris.
 - Terminal bisa di-split sampai empat pane dalam satu grup: `Ctrl+Shift+D`,
