@@ -54,7 +54,7 @@ Perintah di atas menjalankan:
 lightpanda fetch <url> --dump markdown|html|semantic_tree_text
 ```
 
-Gunakan `markdown` untuk membaca, `html` untuk struktur, dan `semantic_tree_text` untuk pohon aksesibilitas yang jauh lebih murah daripada HTML penuh.
+Gunakan `markdown` untuk membaca, `html` untuk struktur, dan `semantic_tree_text` untuk pohon aksesibilitas yang jauh lebih murah daripada HTML penuh. URL wajib memakai `http://` atau `https://`; skema lain seperti `file:` ditolak agar fetch tidak berubah menjadi pembacaan berkas lokal.
 
 ### CDP server
 
@@ -63,6 +63,37 @@ omnix browser serve --port 9222
 # lightpanda pid 12345  cdp http://127.0.0.1:9222
 # connect: ws://127.0.0.1:9222
 ```
+
+Server berjalan di process group sendiri, jadi menutup terminal tidak mematikannya.
+PID dan port disimpan di `.omnix/browser.json` (mengikuti `OMNIX_HOME`).
+`serve` menolak port yang sudah dipakai dan tidak mencetak sukses palsu: ia
+memverifikasi socket benar-benar listen sebelum menulis pidfile.
+
+```bash
+omnix browser stop   # TERM, tunggu, lalu KILL bila perlu
+```
+
+### MCP server
+
+Bentuk yang paling aman untuk agent: satu proses, alat baca yang murah, tanpa
+Chromium.
+
+```bash
+# stdio: dipakai langsung oleh agent sebagai MCP server
+omnix browser mcp
+
+# HTTP: satu sesi per klien, POST JSON-RPC ke /mcp
+omnix browser mcp --port 9223
+```
+
+Mode HTTP menutup sesi idle setelah `OMNIX_BROWSER_IDLE_SECONDS` (default 900).
+Flag itu hanya ditambahkan bila `--port` dipakai dan `--http-session-timeout`
+tidak diberikan sendiri.
+
+Alat yang tersedia: `goto`, `tree`, `markdown`, `html`, `findElement`, `click`,
+`fill`, `press`, `selectOption`, `waitForSelector`, `getUrl`, `session_new`,
+`session_list`, `session_close`, dan lainnya. Mulai dari `tree` atau `markdown`,
+bukan `html` penuh.
 
 Sambungkan Puppeteer:
 
@@ -236,6 +267,12 @@ Kalau output kosong, cek `OMNIX_LIGHTPANDA` dan jalankan binary langsung.
 ```bash
 omnix browser serve --port 9222
 curl -s http://127.0.0.1:9222/json/version
+```
+
+Selesai dengan pembacaan berulang, matikan supaya RAM kembali:
+
+```bash
+omnix browser stop
 ```
 
 ### Langkah 3 — ambil snapshot

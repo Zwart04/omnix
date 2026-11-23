@@ -15,7 +15,7 @@ src/history.rs     SQLite FTS5: index, search, status
 src/workspace.rs   .omnix/workspaces.json: track, sleep, wake
 src/handoff.rs     git worktree + brief + receipt
 src/agent.rs       tabel launch/resume per agent + spawn aman
-src/browser.rs     backend lightpanda (fetch/serve/doctor)
+src/browser.rs     backend lightpanda (fetch/serve/stop/mcp/doctor)
 ```
 
 ## Data

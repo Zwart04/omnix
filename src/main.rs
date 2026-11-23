@@ -6,7 +6,6 @@ mod browser;
 mod gui;
 mod handoff;
 mod history;
-#[cfg(feature = "gui")]
 mod procs;
 mod projects;
 #[cfg(feature = "gui")]
@@ -18,10 +17,11 @@ mod usage;
 mod workspace;
 
 use anyhow::{Context, Result, bail};
+use serde_json::{Value, json};
 use std::env;
 use std::path::{Path, PathBuf};
 
-fn root() -> PathBuf {
+pub(crate) fn root() -> PathBuf {
     env::var_os("OMNIX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
@@ -47,7 +47,11 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
 
   omnix browser fetch <url> [--engine native|lightpanda] [--dump markdown|html|semantic_tree_text]
   omnix browser serve [--port 9222]
+  omnix browser stop
+  omnix browser mcp [--port 9223] [--args...]
   omnix browser doctor
+
+  omnix diagnostics memory [--json]
 
   omnix app                      open the desktop app (no arguments does the same)
 
@@ -317,10 +321,74 @@ fn cmd_browser(args: &[String]) -> Result<()> {
                 .unwrap_or(9222);
             browser::serve(port)?;
         }
+        Some("stop") => browser::stop()?,
+        Some("mcp") => {
+            let forwarded: Vec<String> = args[1..].to_vec();
+            browser::mcp(&forwarded)?;
+        }
         Some("doctor") => browser::doctor()?,
-        _ => bail!("usage: omnix browser fetch|serve|doctor"),
+        _ => bail!("usage: omnix browser fetch|serve|stop|mcp|doctor"),
     }
     Ok(())
+}
+
+fn cmd_diagnostics(args: &[String]) -> Result<()> {
+    match args.first().map(String::as_str) {
+        Some("memory") => {
+            let json_out = has(args, "--json");
+            let table = procs::snapshot();
+            let pid = std::process::id();
+            // Run from a terminal inside the app: report the GUI tree, not the
+            // few megabytes this CLI owns.
+            let app = table.ancestor_named(pid, "omnix").unwrap_or(pid);
+            let (rss, processes) = table.sum_tree(app);
+            let tree = table.descendants(app);
+            if json_out {
+                let top: Vec<Value> = tree
+                    .iter()
+                    .take(12)
+                    .map(|p| {
+                        json!({
+                            "pid": p.pid,
+                            "ppid": p.ppid,
+                            "name": p.name,
+                            "rss": p.rss,
+                        })
+                    })
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "app": { "pid": app, "rss": rss, "processes": processes },
+                        "host": usage::ram(),
+                        "processes": top,
+                    }))?
+                );
+            } else {
+                println!("Omnix pid {app}: {processes} processes, {}", bytes(rss));
+                if let Some(host) = usage::ram() {
+                    let used = host.get("usedBytes").and_then(Value::as_u64).unwrap_or(0);
+                    let total = host.get("totalBytes").and_then(Value::as_u64).unwrap_or(0);
+                    println!("Host: {} of {} used", bytes(used), bytes(total));
+                }
+                for p in tree.iter().take(12) {
+                    println!("{:>7}  {:>10}  {}", p.pid, bytes(p.rss), p.name);
+                }
+            }
+        }
+        _ => bail!("usage: omnix diagnostics memory [--json]"),
+    }
+    Ok(())
+}
+
+fn bytes(value: u64) -> String {
+    if value >= 1024 * 1024 * 1024 {
+        format!("{:.1} GiB", value as f64 / (1024.0 * 1024.0 * 1024.0))
+    } else if value >= 1024 * 1024 {
+        format!("{:.0} MiB", value as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.0} KiB", value as f64 / 1024.0)
+    }
 }
 
 fn run() -> Result<()> {
@@ -333,6 +401,7 @@ fn run() -> Result<()> {
         Some("status") => cmd_status(&args[1..]),
         Some("handoff") => cmd_handoff(&args[1..]),
         Some("browser") => cmd_browser(&args[1..]),
+        Some("diagnostics") => cmd_diagnostics(&args[1..]),
         Some("app") => start_app(),
         Some("-h" | "--help" | "help") => {
             print!("{HELP}");

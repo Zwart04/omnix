@@ -67,11 +67,15 @@ Error: `{"code":"...","message":"..."}` dengan code salah satu
 | `ptyWrite` | `{paneKey,data}` | `{ok}` |
 | `ptyResize` | `{paneKey,cols,rows}` | `{ok}` |
 | `ptyKill` | `{paneKey}` | `{ok}` |
-| `memory` | `{}` | `{available,pid,app:{rss,processes},ai:{rss,processes},other:{rss,processes},panes:[{key,label,cwd,pid,rss,processes,top:[name]}]}` |
+| `memory` | `{}` | `{available,pid,app:{rss,processes},ai:{rss,processes},other:{rss,processes},budget:{limitBytes,over},panes:[{key,label,cwd,pid,rss,processes,top:[name]}]}` |
 | `browserOpen` | `{url,rect:{x,y,width,height}}` | `{url}` |
 | `browserBounds` | `{rect,visible}` | `{ok}` |
 | `browserClose` | `{}` | `{ok}` |
+| `browserStop` | `{}` | `{ok}` |
 | `browserFetch` | `{url,dump?}` | `{text}` |
+| `windowMinimize` | `{}` | `{ok}` |
+| `windowMaximize` | `{}` | `{maximized}` |
+| `windowClose` | `{}` | `{ok}` |
 
 `hit` = `{agent,sessionId,title,cwd,updatedAt,score,snippet,resumeCommand}`.
 `sessionRow` = `{agent,sessionId,title,cwd,updatedAt,messageCount,resumeCommand,preview}`.
@@ -86,6 +90,13 @@ are skipped, so a rescan is cheap.
 setiap pane PTY (agent + child process), `memory.other` adalah sisa app shell
 dan WebKit. Ketiganya memakai satu snapshot `/proc` (Linux), `ps` (macOS), atau
 CIM (Windows) supaya tidak ada proses yang dihitung dua kali.
+`budget.limitBytes` berasal dari `OMNIX_AI_RAM_MB`; `budget.over` true saat
+`ai.rss` melewati batas. UI memakai flag itu untuk mewarnai chip, bukan untuk
+menghentikan proses.
+`browserStop` menghentikan daemon Lightpanda bersama dari `.omnix/browser.json`
+dan menghapus state-nya. `browserClose` hanya menutup WebView konten.
+`windowMinimize`/`windowMaximize` bekerja pada jendela native; `windowClose`
+menjalankan shutdown yang sama dengan tombol close OS (PTY dimatikan).
 `rect` dalam piksel logis relatif jendela, `x/y` sudut kiri atas.
 
 ## Event

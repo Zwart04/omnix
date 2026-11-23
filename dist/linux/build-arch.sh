@@ -68,9 +68,11 @@ trap 'rm -rf "$STAGE"' EXIT HUP INT TERM
 
 install -d "$STAGE/usr/bin" \
     "$STAGE/usr/share/applications" \
-    "$STAGE/usr/share/icons/hicolor/scalable/apps"
+    "$STAGE/usr/share/icons/hicolor/scalable/apps" \
+    "$STAGE/usr/share/licenses/$APP"
 install -m 0755 "$BINARY" "$STAGE/usr/bin/$APP"
 install -m 0644 "$ICON" "$STAGE/usr/share/icons/hicolor/scalable/apps/$APP.svg"
+install -m 0644 "$ROOT_DIR/LICENSE" "$STAGE/usr/share/licenses/$APP/LICENSE"
 
 cat >"$STAGE/usr/share/applications/$APP.desktop" <<'EOF'
 [Desktop Entry]
@@ -95,7 +97,7 @@ builddate = $(date +%s)
 packager = $MAINTAINER
 size = $SIZE
 arch = x86_64
-license = MIT
+license = GPL-3.0-or-later
 depend = webkit2gtk-4.1
 depend = gtk3
 depend = libsoup3

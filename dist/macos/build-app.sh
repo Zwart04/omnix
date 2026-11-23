@@ -66,6 +66,7 @@ OUT=$SCRIPT_DIR/$APP_NAME-$VERSION-macos$SUFFIX.tar.gz
 rm -rf "$APP"
 install -d "$APP/Contents/MacOS" "$APP/Contents/Resources"
 install -m 0755 "$BINARY" "$APP/Contents/MacOS/omnix"
+install -m 0644 "$ROOT_DIR/LICENSE" "$APP/Contents/Resources/LICENSE"
 
 # Icon is optional: drop omnix.icns next to this script to include it.
 if [ -f "$SCRIPT_DIR/omnix.icns" ]; then

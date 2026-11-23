@@ -36,8 +36,9 @@ Skala: `2, 4, 6, 8, 12, 16, 20, 24`. Tidak ada 3, 5, 7, 9, 11, 13, 15 untuk padd
 | Chip filter | 24px |
 | Tombol kecil (`.btn.sm`), ikon kompak | 24px |
 | Tombol, input, select, tombol ikon di bar | 28px |
-| Tab, baris daftar, item menu, nav | 32px |
-| Bar jendela | 44px |
+| Tab, item menu, nav | 32px |
+| Baris daftar project/sesi | 28px |
+| Bar jendela | 40px |
 | Baris status | 28px |
 
 Tidak boleh ada dua kontrol sejajar dengan tinggi berbeda.
@@ -146,12 +147,12 @@ Aturan:
 
 ## 7. Komponen
 
-- **Bar jendela:** brand di atas kolom sidebar berisi tombol collapse dan Settings 28px. Tab 32px menempel pada batas kolom, `+` 6px setelah tab, `Command` dan tombol Agents di kanan. Tab memakai nama project atau label pane, bukan judul window shell, dan dipotong dengan ellipsis. Satu project satu tab: klik folder membuka tab di cwd folder itu; tab lama hanya dipakai ulang bila cwd-nya persis sama, sehingga folder induk dan anak tidak pernah menyatu. Tooltip tab membawa path lengkap. Nama project atau grup history yang kembar menambah nama folder induk (`omnix · packages`), dan path lengkap dipakai bila masih kembar.
+- **Bar jendela:** brand di atas kolom sidebar berisi tombol collapse dan Settings 28px. Tab 32px menempel pada batas kolom, `+` 6px setelah tab, `Command` dan tombol Agents di kanan, lalu kontrol jendela minimize/maximize/close 28px di ujung kanan. Tab memakai nama project atau label pane, bukan judul window shell, dan dipotong dengan ellipsis. Strip tab menampilkan tab project aktif saja: klik folder memindahkan scope, membuka tab di cwd folder itu, dan memakai ulang tab lama hanya bila cwd-nya persis sama, sehingga folder induk dan anak tidak pernah menyatu. Panel Settings/Docs/Search/Browser ikut scope project. Tooltip tab membawa path lengkap. Nama project atau grup history yang kembar menambah nama folder induk (`omnix · packages`), dan path lengkap dipakai bila masih kembar.
 - **Sidebar:** search 28px di paling atas. Baris judul workspace memuat refresh dan add. Tidak ada label section tambahan bila isinya hanya satu grup.
 - **Sidebar collapsed:** lebar 56px, hanya ikon. Logo, nama, search, judul workspace, nama project, branch, dan sesi disembunyikan; folder tetap bisa diklik dan tooltip membawa nama. Tombol collapse tetap di bar jendela.
 - **Panel Agents:** header tanpa ikon dekoratif: judul `Agents`, sub `Indexed history`, lalu tiga tombol ikon 28px (collapse semua grup, filter agent, rescan). Di bawahnya segmented control 28px `Workspace | Project | All`, search 28px, baris status 11px (`History refreshed` + waktu scan), baris ringkasan `N sessions` + sort `Last updated`, lalu grup per project dengan count 18px. Kartu sesi memakai `--surface`, border `--line-soft`, radius 4px. Tombol hide 32px mengambang di kanan bawah panel; setelah tertutup, tombol Agents di bar jendela membukanya lagi.
 - **State yang disimpan:** sidebar collapse, panel Agents terbuka/tertutup, scope history, sort, grup yang dilipat, filter agent, judul workspace, dan project yang dibuka. Data sesi ada di SQLite `.omnix/history.sqlite`, jadi tetap ada setelah aplikasi ditutup.
-- **Baris project:** 32px, twisty, ikon folder 16px, nama 13px/500. Branch dan sesi hanya saat dibuka. Status berjalan memakai dot 6px statis.
+- **Baris project:** 28px, twisty, ikon folder 16px, nama 13px/500. Branch dan sesi hanya saat dibuka. Project aktif memakai `--surface`; pane hidup memakai dot 6px hijau, dan dot berubah jadi spinner 8px saat pane masih mencetak output.
 - **Menu:** lebar 268px, padding 6px, item 32px, ikon 16px, font 13px. Item disabled tidak ditampilkan; deteksi agent yang tidak terpasang tidak masuk menu.
 - **Settings:** nav item 32px, satu section aktif. Tidak ada nav ke halaman yang belum ada.
 - **Tab aktif:** `--surface` dan border tipis. Tidak ada shadow atau garis aksen tambahan.

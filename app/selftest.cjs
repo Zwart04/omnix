@@ -84,6 +84,7 @@ const byId = new Map();
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
   'history-filter', 'history-sort', 'history-collapse-all', 'history-time',
   'project-tree', 'project-refresh', 'project-add-icon', 'side-search', 'side-toggle', 'side-settings', 'rail-agents',
+  'win-min', 'win-max', 'win-close',
   'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
   'workspace-refresh',
   'usage-chip', 'usage-modal', 'usage-close', 'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
@@ -696,7 +697,7 @@ require('./app.js');
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, false, 'Ctrl+K opens the palette');
   const rows = byId.get('palette-list').children;
-  assert.strictEqual(rows.length, 14, 'all commands listed with an empty query');
+  assert.strictEqual(rows.length, 15, 'all commands listed with an empty query');
   byId.get('palette-input').handlers.keydown({ key: 'ArrowDown', preventDefault: noop });
   assert.strictEqual(byId.get('palette-list').children[1].getAttribute('aria-selected'), 'true',
     'arrow down moves the selection');
@@ -856,9 +857,30 @@ require('./app.js');
   window.__omnix.reply(projectSpawn.id, true, '{"paneKey":"tab:9","pid":91}');
   await tick();
 
-  const stripTitles = all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-title');
-  assert.ok(stripTitles.some((n) => String(n.title).indexOf('/home/zwart/git/omnix/packages/tools') >= 0),
-    'tab tooltip carries the nested project path');
+  // tabs are scoped: the strip shows only the project that is active
+  let stripTitles = all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-title');
+  assert.strictEqual(stripTitles.length, 1,
+    'switching project leaves only that project tab in the strip');
+  assert.ok(String(stripTitles[0].title).indexOf('/home/zwart/git/omnix') >= 0,
+    'tab tooltip carries the active project path');
+  assert.ok(String(stripTitles[0].title).indexOf('/packages/tools') < 0,
+    'nested project tab is hidden while the parent project is active');
+  const activeRows = byClass('workspace-list', 'proj').filter((n) =>
+    String(n.className).split(/\s+/).includes('is-active'));
+  assert.strictEqual(activeRows.length, 1, 'exactly one project is marked active');
+  assert.ok(activeRows[0].children[0].title === '/home/zwart/git/omnix',
+    'the active marker follows the clicked project');
+
+  // the sidebar spinner turns only while the pane is printing
+  const liveDot = byClass('workspace-list', 'work-dot')[0];
+  assert.ok(liveDot, 'live project shows a status mark');
+  window.__omnix.emit('ptyData', JSON.stringify({
+    paneKey: projectSpawn.args.paneKey, dataBase64: 'aGk='
+  }));
+  await new Promise((resolve) => setTimeout(resolve, 800));
+  assert.ok(byClass('workspace-list', 'busy').length >= 1,
+    'printing pane animates its project mark');
+
   const beforeReuse = posted.length;
   omnixRow.handlers.click(noop());
   await tick();
@@ -879,6 +901,44 @@ require('./app.js');
     'agent inherits the project folder instead of the home directory');
   window.__omnix.reply(agentSpawn.id, true, '{"paneKey":"tab:10","pid":92}');
   await tick();
+
+  toolsRow.handlers.click(noop());
+  await tick();
+  stripTitles = all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-title');
+  assert.strictEqual(stripTitles.length, 1, 'returning to a project swaps the strip back');
+  assert.ok(String(stripTitles[0].title).indexOf('/packages/tools') >= 0,
+    'nested project tab returns when its row is active');
+
+  // a static panel is one DOM node: it follows the project that opened it
+  function stripCount() {
+    return all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-title').length;
+  }
+  omnixRow.handlers.click(noop());
+  await tick();
+  const omnixTabs = stripCount();
+  panelButtons[0].handlers.click(noop());
+  await tick();
+  assert.strictEqual(stripCount(), omnixTabs + 1, 'panel opens in the active project');
+  toolsRow.handlers.click(noop());
+  await tick();
+  assert.strictEqual(stripCount(), 1, 'panel does not follow the scope');
+  panelButtons[0].handlers.click(noop());
+  await tick();
+  assert.strictEqual(stripCount(), 2, 'panel moves to the new project');
+  omnixRow.handlers.click(noop());
+  await tick();
+  assert.strictEqual(stripCount(), omnixTabs, 'panel left with its project');
+  toolsRow.handlers.click(noop());
+  await tick();
+  assert.strictEqual(stripCount(), 2, 'panel returns with its project');
+
+  // window controls talk to the host; the WebView draws no fake chrome
+  const beforeWindow = posted.length;
+  byId.get('win-min').handlers.click(noop());
+  byId.get('win-max').handlers.click(noop());
+  byId.get('win-close').handlers.click(noop());
+  assert.deepStrictEqual(posted.slice(beforeWindow).map((r) => r.cmd),
+    ['windowMinimize', 'windowMaximize', 'windowClose'], 'window controls reach the host');
 
   console.log('selftest ok: rpc, reply/emit, sidebar, projects+sessions, settings, splits, palette, tabs');
   process.exit(0);

@@ -2,6 +2,11 @@
 
 Harness adalah satu-satunya pintu masuk agent ke browser. Ia tidak peduli engine-nya native atau Lightpanda.
 
+> **Status.** Kontrak JSON Lines di bawah adalah spesifikasi transport. Jalur
+> produksi untuk agent saat ini adalah MCP Lightpanda (`omnix browser mcp`):
+> alat `goto`, `tree`, `markdown`, `findElement`, `click`, `fill`, dan
+> `session_*`. Bridge native (`native-bridge.js`) hanya untuk WebView manusia.
+
 ## Transport
 
 Default: **JSON Lines** di stdio. Satu baris = satu pesan JSON. Baris kosong diabaikan.

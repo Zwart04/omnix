@@ -18,16 +18,23 @@ pub struct Proc {
 /// against the same snapshot without rebuilding the tree.
 pub struct Table {
     procs: Vec<Proc>,
+    index: HashMap<u32, usize>,
     children: HashMap<u32, Vec<usize>>,
 }
 
 impl Table {
     pub fn new(procs: Vec<Proc>) -> Self {
+        let mut index = HashMap::with_capacity(procs.len());
         let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
-        for (index, proc) in procs.iter().enumerate() {
-            children.entry(proc.ppid).or_default().push(index);
+        for (at, proc) in procs.iter().enumerate() {
+            index.insert(proc.pid, at);
+            children.entry(proc.ppid).or_default().push(at);
         }
-        Self { procs, children }
+        Self {
+            procs,
+            index,
+            children,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -84,7 +91,7 @@ impl Table {
             if !seen.insert(pid) {
                 continue;
             }
-            if let Some(index) = self.procs.iter().position(|p| p.pid == pid) {
+            if let Some(&index) = self.index.get(&pid) {
                 rss = rss.saturating_add(self.procs[index].rss);
                 count += 1;
             }
@@ -95,6 +102,50 @@ impl Table {
             }
         }
         (rss, count)
+    }
+
+    /// Processes under `root`, heaviest first. Used by the diagnostics command
+    /// and by the UI to answer "what is actually holding the RAM".
+    pub fn descendants(&self, root: u32) -> Vec<&Proc> {
+        if root == 0 {
+            return Vec::new();
+        }
+        let mut stack = vec![root];
+        let mut seen = HashSet::new();
+        let mut found = Vec::new();
+        while let Some(pid) = stack.pop() {
+            if !seen.insert(pid) {
+                continue;
+            }
+            if let Some(&index) = self.index.get(&pid) {
+                found.push(&self.procs[index]);
+            }
+            if let Some(kids) = self.children.get(&pid) {
+                for &index in kids {
+                    stack.push(self.procs[index].pid);
+                }
+            }
+        }
+        found.sort_by(|a, b| b.rss.cmp(&a.rss));
+        found
+    }
+
+    /// Nearest ancestor of `pid` whose executable is `name`. A CLI started
+    /// inside an Omnix terminal uses this to report the whole app tree instead
+    /// of only itself. Paths and a Windows `.exe` suffix are ignored.
+    pub fn ancestor_named(&self, pid: u32, name: &str) -> Option<u32> {
+        let mut cursor = self.procs.get(*self.index.get(&pid)?)?.ppid;
+        let mut seen = HashSet::new();
+        while cursor != 0 && seen.insert(cursor) {
+            let proc = &self.procs[*self.index.get(&cursor)?];
+            let leaf = proc.name.rsplit('/').next().unwrap_or(&proc.name);
+            let leaf = leaf.strip_suffix(".exe").unwrap_or(leaf);
+            if leaf == name {
+                return Some(cursor);
+            }
+            cursor = proc.ppid;
+        }
+        None
     }
 }
 
@@ -270,5 +321,32 @@ mod tests {
         assert_eq!(table.sum_tree(2), (35, 2));
         assert_eq!(table.top_names(1, 2), vec!["node", "codex"]);
         assert_eq!(table.top_names(99, 3), Vec::<String>::new());
+        let names: Vec<&str> = table
+            .descendants(1)
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["node", "codex", "sh", "worker"]);
+        assert!(table.descendants(99).is_empty());
+    }
+
+    #[test]
+    fn finds_the_nearest_ancestor_by_executable_name() {
+        let table = Table::new(vec![
+            proc(1, 0, 10, "omnix"),
+            proc(2, 1, 20, "bash"),
+            proc(3, 2, 5, "omnix"),
+            proc(4, 0, 7, "/Applications/Omnix.app/Contents/MacOS/omnix"),
+            proc(5, 0, 8, "omnix.exe"),
+            proc(6, 4, 3, "bash"),
+            proc(7, 5, 3, "bash"),
+        ]);
+        assert_eq!(table.ancestor_named(3, "omnix"), Some(1));
+        assert_eq!(table.ancestor_named(6, "omnix"), Some(4));
+        assert_eq!(table.ancestor_named(7, "omnix"), Some(5));
+        assert_eq!(table.ancestor_named(4, "omnix"), None);
+        assert_eq!(table.ancestor_named(5, "omnix"), None);
+        assert_eq!(table.ancestor_named(2, "omnix"), Some(1));
+        assert_eq!(table.ancestor_named(99, "omnix"), None);
     }
 }

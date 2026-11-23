@@ -5,10 +5,10 @@
 :root {
   color-scheme: dark light;
 
-  --bg: #1e1e20;
-  --bg-rail: #232326;
-  --bg-side: #232326;
-  --bg-hist: #1b1b1d;
+  --bg: #171719;
+  --bg-rail: #1b1b1e;
+  --bg-side: #1b1b1e;
+  --bg-hist: #141416;
   --surface: rgba(255, 255, 255, .065);
   --surface-2: rgba(255, 255, 255, .105);
   --field: rgba(0, 0, 0, .30);
@@ -36,9 +36,9 @@
   --mono: ui-monospace, monospace;
 
   --status-h: 28px;
-  --side-w: 264px;
-  --hist-w: 324px;
-  --strip-h: 44px;
+  --side-w: 236px;
+  --hist-w: 292px;
+  --strip-h: 40px;
   --r-sm: 2px;
   --r-ctl: 4px;
   --r-panel: 6px;
@@ -501,8 +501,8 @@ input[type="checkbox"] {
   grid-template-columns: 12px 20px minmax(0, 1fr) 18px;
   align-items: center;
   gap: 4px;
-  min-height: 32px;
-  padding: 4px 8px;
+  min-height: 28px;
+  padding: 2px 8px;
   border: 1px solid transparent;
   border-radius: var(--r-ctl);
   cursor: pointer;
@@ -538,6 +538,15 @@ input[type="checkbox"] {
   background: var(--hover);
   outline: none;
 }
+
+/* The project whose tabs are in the strip. */
+.proj.is-active .proj-row {
+  background: var(--surface);
+  border-color: var(--line-soft);
+}
+
+.proj.is-active .ws-name { color: var(--text); }
+.proj.is-active .proj-icon { opacity: 1; }
 
 .proj-icon {
   display: grid;
@@ -597,7 +606,7 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
-/* Live terminal mark on a project or session row: static, never spins. */
+/* Live terminal mark: static for an idle pane, spinning while it prints. */
 .work-dot {
   display: inline-block;
   flex: none;
@@ -605,6 +614,15 @@ input[type="checkbox"] {
   height: 6px;
   border-radius: 50%;
   background: var(--good);
+}
+
+.work-dot.busy {
+  width: 8px;
+  height: 8px;
+  background: transparent;
+  border: 1.5px solid var(--line-strong);
+  border-top-color: var(--accent);
+  animation: spin .8s linear infinite;
 }
 
 @keyframes spin {
@@ -883,6 +901,35 @@ input[type="checkbox"] {
 }
 
 .strip-new:hover { border-color: var(--line); background: var(--surface); color: var(--text); }
+
+/* Native window controls, far right of the bar. */
+.win-controls {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 2px;
+  margin-left: 4px;
+  padding-right: 6px;
+}
+
+.win-btn {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--meta);
+  cursor: pointer;
+}
+
+.win-btn svg { width: 14px; height: 14px; }
+
+.win-btn:hover { background: var(--hover-strong); color: var(--text); }
+
+.win-btn.close:hover { background: var(--bad); color: #fff; }
 
 .menu {
   position: absolute;
@@ -2518,11 +2565,11 @@ input[type="checkbox"] {
 /* ---------- narrow window ---------- */
 
 @media (max-width: 1180px) {
-  :root { --side-w: 248px; --hist-w: 288px; }
+  :root { --side-w: 216px; --hist-w: 264px; }
 }
 
 @media (max-width: 980px) {
-  :root { --side-w: 224px; --hist-w: 264px; }
+  :root { --side-w: 196px; --hist-w: 240px; }
 }
 
 @media (max-height: 560px) {
@@ -2584,6 +2631,11 @@ input[type="checkbox"] {
 .status-chip:hover {
   border-color: var(--line-strong, var(--line));
   color: var(--text);
+}
+
+.status-chip.over {
+  border-color: var(--warn);
+  color: var(--warn);
 }
 
 .usage-ram {

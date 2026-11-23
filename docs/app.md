@@ -35,6 +35,20 @@ Angka AI menjumlahkan seluruh keturunan proses shell PTY, jadi agent, language
 server, dan child process lain ikut masuk. Snapshot berhenti saat jendela
 tersembunyi dan diperbarui tiap 3,5 detik di Linux atau 8 detik di macOS/Windows.
 
+`OMNIX_AI_RAM_MB` menetapkan budget RAM untuk proses AI. Bila angka AI melewati
+budget, chip berubah amber. Ini pengingat, bukan pagar otomatis: Omnix tidak
+membunuh agent tanpa izin. Untuk menurunkan angka:
+
+1. tutup pane agent yang idle;
+2. `omnix browser stop` untuk mematikan Lightpanda bersama;
+3. cek `omnix diagnostics memory --json` sebelum membuka tool berat lain;
+   dijalankan dari terminal Omnix, perintah ini mengukur seluruh tree app,
+   bukan hanya proses CLI-nya.
+
+Setiap terminal juga mendapat `OMNIX_HARNESS_GUIDE` (path
+`.omnix/agent-guide.md`), `OMNIX_BROWSER=lightpanda`, `OMNIX_LIGHTPANDA`, dan
+`OMNIX_BROWSER_MCP` (binary Omnix untuk `browser mcp`).
+
 ## Instalasi
 
 Omnix adalah satu binary Rust bernama `omnix`. Subcommand tetap berjalan di
@@ -152,14 +166,17 @@ dituju:
 
 - **Bar jendela** — satu baris penuh: brand `Omnix` di atas kolom sidebar,
   diikuti tombol collapse dan Settings, lalu tab yang menempel pada batas
-  kolom, tombol `+`, `Command`, dan toggle Agents di kanan. Sidebar bisa
+  kolom, tombol `+`, `Command`, toggle Agents, dan tiga kontrol jendela
+  (minimize, maximize/restore, close) di ujung kanan. Sidebar bisa
   dilipat menjadi rail ikon 56px; panel Agents ditutup lewat tombol hide di
-  kanan bawah dan dibuka lagi dari toggle di bar jendela. Setiap project punya
-  tab sendiri: klik folder membuka tab baru di cwd folder itu, dan klik lagi
-  mengaktifkan tab yang sama hanya bila cwd-nya persis sama. Folder induk dan
-  anak tidak berbagi tab. Tab terminal memakai nama project atau label pane
+  kanan bawah dan dibuka lagi dari toggle di bar jendela. Tab milik project,
+  bukan milik window: strip hanya menampilkan tab project yang aktif. Klik
+  folder memindahkan scope ke folder itu, membuka tab baru bila belum ada, dan
+  mengaktifkan tab lama hanya bila cwd-nya persis sama. Folder induk dan anak
+  tidak berbagi tab. Tab terminal memakai nama project atau label pane
   (`Vesper`, `OpenCode`, `Terminal`), dipotong dengan ellipsis, dan tooltip
-  membawa path lengkap.
+  membawa path lengkap. Panel Settings/Docs/Search/Browser juga dibuka per
+  project, jadi tidak ikut terbawa ke project lain.
 - **Sidebar kiri** — search field di paling atas. Mengetik memfilter daftar
   project; Enter membuka History Search dengan query yang sama, Escape
   mengosongkan filter. Di bawahnya satu grup workspace yang bisa dilipat dan
@@ -171,7 +188,8 @@ dituju:
   yang kembar menambah nama folder induk (`omnix · packages`); bila masih
   kembar, dipakai path lengkap. Baris project satu baris; klik
   membuka terminal di folder itu, twisty membuka branch dan daftar sesi agent
-  yang dilacak, dan dot hijau statis menandai pty yang masih hidup. Tab baru
+  yang dilacak, dan status pty: dot hijau saat hidup, spinner saat pane masih
+  mencetak output. Tab baru
   dan agent dari menu `+` mewarisi folder tab aktif, bukan home directory. `+ Project`
   memakai dialog folder bawaan OS, bukan file browser milik Omnix: GTK
   `FileChooserNative` di Linux, `FolderBrowserDialog` di Windows, `osascript
@@ -236,7 +254,9 @@ OMNIX_LIGHTPANDA=/opt/lightpanda/lightpanda omnix browser doctor
 ```
 
 `omnix browser serve --port 9222` menjalankan Lightpanda sebagai server CDP di
-`127.0.0.1` dan mencetak alamat WebSocket-nya.
+`127.0.0.1` dan mencetak alamat WebSocket-nya. `omnix browser mcp` membuka MCP
+stdio untuk agent, sedangkan `omnix browser stop` menghentikan daemon bersama
+dan menghapus `.omnix/browser.json`.
 
 ## Pencarian riwayat
 

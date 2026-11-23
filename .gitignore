@@ -4,3 +4,4 @@ node_modules/
 dist/linux/*.deb
 dist/windows/*.zip
 dist/macos/*.tar.gz
+dist/linux/*.pkg.tar.zst

@@ -21,11 +21,11 @@ Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.5.8_amd64.deb` | `sudo apt install ./omnix_0.5.8_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.5.8-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.5.8-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.5.9_amd64.deb` | `sudo apt install ./omnix_0.5.9_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.5.9-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.5.9-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.5.8-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.5.8-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| macOS 11+ arm64 | `Omnix-0.5.9-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
+| macOS 11+ Intel | `Omnix-0.5.9-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -39,7 +39,7 @@ Yang sudah jalan dan dites di repo ini:
 - `history scan` yang membaca langsung transkrip di disk: `~/.codex/sessions`,
   `~/.claude/projects` (tanpa `subagents/`), dan `~/.local/share/opencode/opencode.db`
   read-only. Rescan hanya mem-parse berkas yang mtime-nya berubah.
-- `browser fetch/serve/doctor` untuk backend Lightpanda.
+- `browser fetch/serve/stop/mcp/doctor` untuk backend Lightpanda; `diagnostics memory` untuk snapshot RAM proses (tree app bila dijalankan dari terminal Omnix).
 - GUI satu jendela minimalis: satu bar atas berisi brand, tab, `+`, dan tombol
   `Command`; chrome solid, radius kecil, satu aksen biru. Tetap dirender
   WebView Rust tanpa Electron/React. Aturan visual dan copy ada di `DESIGN.md`.
@@ -49,8 +49,10 @@ Yang sudah jalan dan dites di repo ini:
   sedangkan collapse sidebar, Settings, dan toggle Agents tinggal di bar jendela. Grup itu hanya berisi folder yang kamu pin lewat `+ Project`;
   indexed history cuma memperkaya baris yang path-nya cocok, tidak menambah
   folder. Baris project satu baris; twisty membuka branch dan sesi agent yang
-  terlacak, dan dot hijau statis menandai pty yang hidup dengan cwd di folder
-  itu. Tab baru, termasuk agent dari menu `+`, mewarisi folder tab aktif. Tab
+  terlacak, dan dot hijau menandai pty yang hidup dengan cwd di folder
+  itu; dot berputar saat pane masih mencetak output. Tab atas hanya berisi tab
+  project yang aktif: klik project lain menukar strip, bukan menumpuk tab.
+  Tab baru, termasuk agent dari menu `+`, mewarisi folder tab aktif. Tab
   memakai nama project atau label pane, bukan judul window shell, supaya dua
   terminal di folder berbeda tidak tampil identik. Panel `Agents` berisi
   indexed history semua agent, dikelompokkan per project, dengan segmented
@@ -183,6 +185,8 @@ cargo build --release
 # 6. Browser
 OMNIX_LIGHTPANDA=lightpanda ./target/release/omnix browser fetch https://example.com
 ./target/release/omnix browser serve --port 9222
+./target/release/omnix browser mcp          # MCP stdio untuk agent
+./target/release/omnix browser stop         # bebaskan RAM
 ```
 
 Format transkrip yang dibaca (`*.jsonl`):
@@ -214,6 +218,7 @@ Semua state ada di `.omnix/` di root project (atau `OMNIX_HOME`):
 - `docs/architecture.md` — model data, invariant, dan roadmap.
 - `docs/browser.md` — tutorial lengkap browser native + Lightpanda, command, harness, keamanan.
 - `docs/orca-evidence.md` — bukti kode Orca untuk indexed history, resume worktree, handoff.
+- `harness/AGENT.md` — aturan wajib agent: Lightpanda, tab, dan RAM.
 - `harness/browser-protocol.md` — kontrak tool browser untuk agent.
 - `tutorial/index.html` — onboarding yang bisa dibuka di browser bawaan aplikasi.
 - `evidence/rea-session.json` — bundle bukti REA (kalau diekspor).
@@ -230,3 +235,7 @@ Test tidak memakai framework tambahan. Satu test membuat git repo, commit, workt
 ## Nama
 
 `Omnix` = tempat burung bertengger. Pendek, bahasa Inggris, tidak metaforis berlebihan: worktree adalah tempat kerja bertengger, sesi bisa tidur dan kembali ke ranting yang sama.
+
+## Lisensi
+
+[GNU General Public License v3.0](./LICENSE)

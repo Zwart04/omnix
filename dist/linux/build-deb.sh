@@ -72,9 +72,11 @@ trap 'rm -rf "$STAGE"' EXIT HUP INT TERM
 install -d "$STAGE/DEBIAN" \
     "$STAGE/usr/bin" \
     "$STAGE/usr/share/applications" \
-    "$STAGE/usr/share/icons/hicolor/scalable/apps"
+    "$STAGE/usr/share/icons/hicolor/scalable/apps" \
+    "$STAGE/usr/share/doc/$APP"
 install -m 0755 "$BINARY" "$STAGE/usr/bin/$APP"
 install -m 0644 "$ICON" "$STAGE/usr/share/icons/hicolor/scalable/apps/$APP.svg"
+install -m 0644 "$ROOT_DIR/LICENSE" "$STAGE/usr/share/doc/$APP/copyright"
 
 cat >"$STAGE/usr/share/applications/$APP.desktop" <<'EOF'
 [Desktop Entry]

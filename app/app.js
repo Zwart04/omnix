@@ -420,6 +420,25 @@
   var lastLaunchCwd = '';
   var paneSeq = 0;
   var activeTab = null;
+  /* Tabs belong to the project that opened them, like Orca workspaces. The
+     strip only renders the active scope. */
+  var activeScope = '';
+
+  function normScope(path) {
+    return normPath(path || appRoot || '');
+  }
+
+  function tabInScope(tab) {
+    return !tab || !tab.scope || tab.scope === activeScope;
+  }
+
+  function scopedTabs() {
+    var out = [];
+    for (var i = 0; i < tabs.length; i++) {
+      if (tabInScope(tabs[i])) out.push(tabs[i]);
+    }
+    return out;
+  }
 
   var PANEL_TITLE = { browser: 'Browser', search: 'Search', docs: 'Docs', settings: 'Settings' };
 
@@ -432,7 +451,7 @@
 
   function tabByKind(kind) {
     for (var i = 0; i < tabs.length; i++) {
-      if (tabs[i].kind === kind) return tabs[i];
+      if (tabs[i].kind === kind && tabInScope(tabs[i])) return tabs[i];
     }
     return null;
   }
@@ -440,14 +459,15 @@
   function renderTabs() {
     renderTabStrip();
     var empty = $('pane-empty');
-    if (empty) empty.hidden = tabs.length > 0;
+    if (empty) empty.hidden = scopedTabs().length > 0;
   }
 
   function renderTabStrip() {
     var box = $('tabstrip-tabs');
     if (!box) return;
     box.textContent = '';
-    for (var i = 0; i < tabs.length; i++) {
+    var list = scopedTabs();
+    for (var i = 0; i < list.length; i++) {
       (function (tab) {
         var row = el('div', 'strip-tab' + (tab === activeTab ? ' active' : ''));
         var main = el('button', 'strip-main');
@@ -472,7 +492,7 @@
         row.appendChild(main);
         row.appendChild(close);
         box.appendChild(row);
-      })(tabs[i]);
+      })(list[i]);
     }
   }
 
@@ -511,11 +531,18 @@
       /* keep the page alive: hide the native view instead of destroying it */
       hideBrowser();
     }
+    var scopeChanged = !!(tab.scope && tab.scope !== activeScope);
+    if (scopeChanged) activeScope = tab.scope;
     activeTab = tab;
     var activeGroup = tab.kind === 'terminal' ? tab.group : null;
     for (var i = 0; i < tabs.length; i++) {
       var t = tabs[i];
       if (!t.el) continue;
+      if (!tabInScope(t)) {
+        t.el.hidden = true;
+        if (t.kind === 'terminal' && t.group) t.group.el.hidden = true;
+        continue;
+      }
       if (t.kind === 'terminal') {
         if (t.group) {
           t.el.hidden = false;
@@ -529,6 +556,7 @@
     }
     renderTabs();
     markRail();
+    if (scopeChanged && savedProjects.length) renderProjects(savedProjects);
     if (tab.kind === 'terminal') {
       var panes = tab.group ? tab.group.panes : [tab];
       for (var p = 0; p < panes.length; p++) scheduleFit(panes[p]);
@@ -562,12 +590,22 @@
         toast('error', 'pane not found: ' + kind);
         return null;
       }
+      /* A panel is one DOM node, so it can belong to one project at a time.
+         Take it from a tab left open in another project instead of letting
+         two tabs fight over the same element's hidden flag. */
+      for (var i = tabs.length - 1; i >= 0; i--) {
+        if (tabs[i].kind === kind && tabs[i].el === pane) {
+          if (activeTab === tabs[i]) activeTab = null;
+          tabs.splice(i, 1);
+        }
+      }
       tab = {
         id: 'tab' + (++tabSeq),
         kind: kind,
         el: pane,
         title: PANEL_TITLE[kind] || kind,
-        paneKey: null
+        paneKey: null,
+        scope: normScope(activeScope)
       };
       tabs.push(tab);
     }
@@ -616,7 +654,8 @@
     if (index >= 0) tabs.splice(index, 1);
     if (activeTab === tab) {
       activeTab = null;
-      if (tabs.length) activate(tabs[tabs.length - 1]);
+      var list = scopedTabs();
+      if (list.length) activate(list[list.length - 1]);
       else renderTabs();
     } else {
       renderTabs();
@@ -776,6 +815,7 @@
      active terminal first, then the project last opened from the sidebar. */
   function launchCwd() {
     if (activeTab && activeTab.kind === 'terminal' && activeTab.cwd) return activeTab.cwd;
+    if (activeScope) return activeScope;
     if (lastLaunchCwd) return lastLaunchCwd;
     for (var i = tabs.length - 1; i >= 0; i--) {
       if (tabs[i].kind === 'terminal' && tabs[i].cwd) return tabs[i].cwd;
@@ -857,6 +897,8 @@
       ro: null,
       title: title,
       cwd: opts.cwd || (anchor && anchor.cwd) || null,
+      scope: normScope(opts.scope || opts.cwd || (anchor && anchor.cwd) || activeScope),
+      lastOutput: 0,
       agent: opts.agent || null,
       sessionId: opts.sessionId || null,
       lastCols: 0,
@@ -1757,6 +1799,13 @@
       $('app-version').textContent = 'v' + version;
       applyPlatform(info.platform);
       appRoot = info.root || '';
+      if (!activeScope) {
+        activeScope = normScope(appRoot);
+        /* A tab opened before appInfo landed must not stay global. */
+        for (var i = 0; i < tabs.length; i++) {
+          if (!tabs[i].scope) tabs[i].scope = activeScope;
+        }
+      }
       applyWorkspaceTitle();
       TRACE_KEYS = !!info.traceKeys;
       setAgents(info.agents);
@@ -1826,10 +1875,16 @@
     setTimeout(refreshMemory, 1200);
     var interval = PLATFORM === 'linux' ? 3500 : 8000;
     memoryTimer = setInterval(function () {
-      if (!document.hidden) refreshMemory();
+      if (!document.hidden) {
+        refreshMemory();
+        refreshBusyDots();
+      }
     }, interval);
     document.addEventListener('visibilitychange', function () {
-      if (!document.hidden) refreshMemory();
+      if (!document.hidden) {
+        refreshMemory();
+        refreshBusyDots();
+      }
     });
   }
 
@@ -1864,10 +1919,15 @@
 
     var chip = $('usage-chip');
     if (chip) {
+      var budget = res.budget || {};
+      var over = budget.over === true;
+      if (over) chip.classList.add('over');
+      else chip.classList.remove('over');
       if (appRss > 0) {
         chip.textContent = 'App ' + fmtBytes(appRss) + ' \u00b7 AI ' + fmtBytes(aiRss);
         chip.title = 'Omnix total ' + fmtBytes(appRss) + ' (' + (app.processes || 0) +
-          ' processes), AI terminals ' + fmtBytes(aiRss) + ' (' + (ai.processes || 0) + ')';
+          ' processes), AI terminals ' + fmtBytes(aiRss) + ' (' + (ai.processes || 0) + ')' +
+          (over ? ' \u2014 over the ' + fmtBytes(Number(budget.limitBytes) || 0) + ' AI budget' : '');
       } else {
         chip.textContent = 'RAM -';
         chip.title = 'process memory unavailable';
@@ -2096,6 +2156,9 @@
   function openProject(p) {
     if (!p || !p.path) return;
     var name = disambiguatedName(p.name || baseName(p.path), p.path, savedProjects);
+    var scope = normScope(p.path);
+    var scopeChanged = scope !== activeScope;
+    activeScope = scope;
     var existing = null;
     for (var i = 0; i < tabs.length; i++) {
       if (tabs[i].kind === 'terminal' && normPath(tabs[i].cwd || appRoot) === normPath(p.path)) {
@@ -2103,9 +2166,13 @@
         break;
       }
     }
-    if (existing) { activate(existing); return; }
-    lastLaunchCwd = p.path;
-    createTerminal({ title: name, cwd: p.path });
+    if (existing) {
+      activate(existing);
+    } else {
+      lastLaunchCwd = p.path;
+      createTerminal({ title: name, cwd: p.path, scope: scope });
+    }
+    if (scopeChanged && savedProjects.length) renderProjects(savedProjects);
   }
 
   function normPath(path) {
@@ -2129,12 +2196,48 @@
     return out;
   }
 
-  function workingGlyph(label) {
-    var node = el('span', 'work-dot');
+  function workingGlyph(label, busy) {
+    var node = el('span', 'work-dot' + (busy ? ' busy' : ''));
     node.setAttribute('role', 'status');
     node.setAttribute('aria-label', label || 'working');
     node.title = label || 'working';
     return node;
+  }
+
+  /* A pane counts as busy while it is still printing. Rebuilding the whole
+     sidebar on every chunk would steal clicks, so only the dot classes change. */
+  var busyMarks = [];
+
+  function trackBusy(node, tabsAt) {
+    busyMarks.push({ node: node, tabsAt: tabsAt });
+    return node;
+  }
+
+  function recentlyActive(list, now) {
+    for (var i = 0; i < list.length; i++) {
+      var tab = list[i];
+      if (tab && tab.lastOutput && now - tab.lastOutput < 3000) return true;
+    }
+    return false;
+  }
+
+  function refreshBusyDots() {
+    var now = Date.now();
+    for (var i = 0; i < busyMarks.length; i++) {
+      var mark = busyMarks[i];
+      mark.node.className = recentlyActive(mark.tabsAt(), now) ? 'work-dot busy' : 'work-dot';
+    }
+  }
+
+  var busyTick = 0;
+  function noteOutput(tab) {
+    if (!tab) return;
+    tab.lastOutput = Date.now();
+    if (busyTick) return;
+    busyTick = setTimeout(function () {
+      busyTick = 0;
+      refreshBusyDots();
+    }, 700);
   }
 
   var projExpanded = storedMap('omnix.projExpanded');
@@ -2198,6 +2301,8 @@
       return;
     }
     box.textContent = '';
+    busyMarks = [];
+    var now = Date.now();
     var tracked = trackedByPath();
 
     /* Most recently used first, using the indexed timestamp when the path has
@@ -2244,7 +2349,8 @@
         });
       }
 
-      var wrap = el('div', 'proj' + (live.length ? ' is-working' : ''));
+      var wrap = el('div', 'proj' + (live.length ? ' is-working' : '') +
+        (key === activeScope ? ' is-active' : ''));
       var row = el('div', 'proj-row');
       row.tabIndex = 0;
       row.setAttribute('role', 'button');
@@ -2271,7 +2377,12 @@
       var body = el('div', 'proj-body');
       var top = el('div', 'proj-top');
       top.appendChild(el('span', 'ws-name', name));
-      if (live.length) top.appendChild(workingGlyph(live.length + ' running'));
+      if (live.length) {
+        top.appendChild(trackBusy(
+          workingGlyph(live.length + ' running', recentlyActive(live, now)),
+          function () { return liveTabsAt(p.path); }
+        ));
+      }
       if (ws && ws.sleeping) top.appendChild(el('span', 'ws-state sleeping', 'Sleeping'));
       body.appendChild(top);
       row.appendChild(body);
@@ -2323,7 +2434,10 @@
               : agentLabel(session.agent) + ' ' + shortId(session.sessionId);
             line.appendChild(el('span', 'inv-title', label));
             if (liveTab && liveTab.spawned && !liveTab.exited) {
-              line.appendChild(workingGlyph('agent running'));
+              line.appendChild(trackBusy(
+                workingGlyph('agent running', recentlyActive([liveTab], now)),
+                function () { return liveTab ? [liveTab] : []; }
+              ));
             }
             line.appendChild(el('span', 'proj-time', relTime(session.saved_at)));
             line.addEventListener('click', guard(function () {
@@ -2787,6 +2901,14 @@
 
   /* ---------- command palette ---------- */
 
+  function stopAgentBrowser() {
+    call('browserStop').then(function () {
+      toast('ok', 'Shared Lightpanda browser stopped');
+    }).catch(function (err) {
+      toast('error', 'Stop browser: ' + message(err));
+    });
+  }
+
   var paletteItems = [
     { label: 'New Terminal', hint: '', run: function () { createTerminal({ title: 'Terminal' }); } },
     { label: 'New Browser', hint: '', run: function () { openStatic('browser'); } },
@@ -2802,6 +2924,7 @@
     { label: 'Agent Settings', hint: '', run: openAgentSettings },
     { label: 'Split Terminal', hint: 'Ctrl+Shift+D', run: splitActive },
     { label: 'Usage and Memory', hint: '', run: openUsage },
+    { label: 'Stop Agent Browser', hint: 'Lightpanda', run: stopAgentBrowser },
     { label: 'Add Project Folder', hint: '', run: pickProject },
     { label: 'Add Project by Path', hint: '', run: openProjectModal },
     { label: 'Rescan History', hint: '', run: function () { return loadHistory(); } },
@@ -3069,7 +3192,9 @@
 
   EVENTS.ptyData = function (payload) {
     var tab = byPaneKey(payload.paneKey);
-    if (!tab || !tab.term) return;
+    if (!tab) return;
+    noteOutput(tab);
+    if (!tab.term) return;
     var bytes = b64ToBytes(payload.dataBase64);
     if (!bytes) return;
     tab.term.write(bytes);
@@ -3173,6 +3298,19 @@
 
     var sideSettings = $('side-settings');
     if (sideSettings) sideSettings.addEventListener('click', guard(openAgentSettings));
+
+    var winMin = $('win-min');
+    if (winMin) winMin.addEventListener('click', guard(function () {
+      call('windowMinimize', {});
+    }));
+    var winMax = $('win-max');
+    if (winMax) winMax.addEventListener('click', guard(function () {
+      call('windowMaximize', {});
+    }));
+    var winClose = $('win-close');
+    if (winClose) winClose.addEventListener('click', guard(function () {
+      call('windowClose', {});
+    }));
 
     setSideCollapsed(storeGet('omnix.sideCollapsed') === '1');
 

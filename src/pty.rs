@@ -3,6 +3,34 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::Path;
 
+/// Travels with every terminal. The app writes this to `.omnix/agent-guide.md`
+/// and exports the path as `OMNIX_HARNESS_GUIDE`.
+const AGENT_GUIDE: &str = include_str!("../harness/AGENT.md");
+
+pub fn install_guide(root: &Path) -> Result<()> {
+    let path = root.join(".omnix").join("agent-guide.md");
+    let changed = std::fs::read_to_string(&path)
+        .map(|current| current != AGENT_GUIDE)
+        .unwrap_or(true);
+    if changed {
+        if let Some(dir) = path.parent() {
+            std::fs::create_dir_all(dir)?;
+        }
+        std::fs::write(&path, AGENT_GUIDE)?;
+    }
+    Ok(())
+}
+
+fn browser_env(cmd: &mut CommandBuilder) {
+    let guide = crate::root().join(".omnix").join("agent-guide.md");
+    cmd.env("OMNIX_BROWSER", "lightpanda");
+    cmd.env("OMNIX_HARNESS_GUIDE", guide.to_string_lossy().to_string());
+    cmd.env("OMNIX_LIGHTPANDA", crate::browser::binary());
+    if let Ok(exe) = std::env::current_exe() {
+        cmd.env("OMNIX_BROWSER_MCP", exe.to_string_lossy().to_string());
+    }
+}
+
 pub struct Pty {
     pub writer: Box<dyn Write + Send>,
     pub master: Box<dyn MasterPty + Send>,
@@ -31,6 +59,7 @@ fn open(cmd: CommandBuilder, cwd: &Path) -> Result<Spawned> {
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "omnix");
+    browser_env(&mut cmd);
     let pair = portable_pty::native_pty_system().openpty(PtySize {
         rows: 24,
         cols: 80,

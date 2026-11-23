@@ -2,6 +2,9 @@
 
 Isi folder ini adalah kontrak dan contoh, bukan library produksi.
 
+- `AGENT.md` — aturan wajib untuk setiap agent: Lightpanda, tab, dan RAM.
+  Omnix menyalinnya ke `.omnix/agent-guide.md` dan mengekspor
+  `OMNIX_HARNESS_GUIDE` ke semua PTY.
 - `browser-protocol.md` — request/response JSON Lines untuk agent.
 - `native-bridge.js` — bridge yang di-inject ke WebView native (`window.__omnix`).
 - `lightpanda-demo.mjs` — contoh Puppeteer ke Lightpanda CDP.

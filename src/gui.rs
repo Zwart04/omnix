@@ -57,6 +57,7 @@ struct App {
     content_visible: bool,
     ptys: HashMap<String, pty::Pty>,
     pane_procs: HashMap<String, PaneProc>,
+    quit: bool,
 }
 
 fn px_rect(w: u32, h: u32) -> Rect {
@@ -326,6 +327,19 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     .collect::<Vec<_>>(),
             })
         }),
+        "windowMinimize" => {
+            app.window.set_minimized(true);
+            Ok(json!({ "ok": true }))
+        }
+        "windowMaximize" => {
+            let maximized = !app.window.is_maximized();
+            app.window.set_maximized(maximized);
+            Ok(json!({ "maximized": maximized }))
+        }
+        "windowClose" => {
+            app.quit = true;
+            Ok(json!({ "ok": true }))
+        }
         "projects" => Ok(json!({
             "projects": projects::load(&app.root),
             "path": projects::store_path(&app.root).to_string_lossy(),
@@ -780,6 +794,11 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             }
             rows.sort_by(|a, b| b.0.cmp(&a.0));
             let panes: Vec<Value> = rows.into_iter().map(|(_, row)| row).collect();
+            let limit = std::env::var("OMNIX_AI_RAM_MB")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|mb| *mb > 0)
+                .map(|mb| mb.saturating_mul(1024 * 1024));
             Ok(json!({
                 "available": !table.is_empty(),
                 "pid": pid,
@@ -788,6 +807,10 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "other": {
                     "rss": app_rss.saturating_sub(ai_rss),
                     "processes": app_count.saturating_sub(ai_count),
+                },
+                "budget": {
+                    "limitBytes": limit,
+                    "over": limit.map(|limit| ai_rss > limit).unwrap_or(false),
                 },
                 "panes": panes,
             }))
@@ -833,6 +856,10 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
         "browserClose" => (|| {
             app.content = None;
             app.content_visible = false;
+            Ok(json!({ "ok": true }))
+        })(),
+        "browserStop" => (|| {
+            browser::stop()?;
             Ok(json!({ "ok": true }))
         })(),
         "browserFetch" => (|| {
@@ -1077,6 +1104,13 @@ fn read_rect(args: &Value) -> (f64, f64, f64, f64) {
     (get("x"), get("y"), get("width"), get("height"))
 }
 
+fn shutdown(app: &mut App) {
+    for (_, mut session) in app.ptys.drain() {
+        let _ = session.child.kill();
+    }
+    app.content = None;
+}
+
 fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
     let mut chunks: HashMap<String, Vec<u8>> = HashMap::new();
     let mut exited: Vec<String> = Vec::new();
@@ -1135,6 +1169,10 @@ pub fn run() -> Result<()> {
     let root = std::env::var_os("OMNIX_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    if let Err(err) = pty::install_guide(&root) {
+        eprintln!("omnix: could not write agent guide: {err}");
+    }
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -1232,12 +1270,19 @@ pub fn run() -> Result<()> {
         content_visible: false,
         ptys: HashMap::new(),
         pane_procs: HashMap::new(),
+        quit: false,
     };
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
         match event {
-            Event::UserEvent(UserEvent::Wake) => drain(&mut app, &rx, &tx, &proxy),
+            Event::UserEvent(UserEvent::Wake) => {
+                drain(&mut app, &rx, &tx, &proxy);
+                if app.quit {
+                    shutdown(&mut app);
+                    *control_flow = ControlFlow::Exit;
+                }
+            }
             Event::WindowEvent {
                 event: WindowEvent::Focused(true),
                 ..
@@ -1262,20 +1307,14 @@ pub fn run() -> Result<()> {
                 event: WindowEvent::Destroyed,
                 ..
             } => {
-                for (_, mut session) in app.ptys.drain() {
-                    let _ = session.child.kill();
-                }
-                app.content = None;
+                shutdown(&mut app);
                 *control_flow = ControlFlow::Exit;
             }
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
                 ..
             } => {
-                for (_, mut session) in app.ptys.drain() {
-                    let _ = session.child.kill();
-                }
-                app.content = None;
+                shutdown(&mut app);
                 *control_flow = ControlFlow::Exit;
             }
             _ => {}
