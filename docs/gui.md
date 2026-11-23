@@ -76,6 +76,8 @@ Error: `{"code":"...","message":"..."}` dengan code salah satu
 | `windowMinimize` | `{}` | `{ok}` |
 | `windowMaximize` | `{}` | `{maximized}` |
 | `windowClose` | `{}` | `{ok}` |
+| `windowDrag` | `{}` | `{ok}` |
+| `windowResize` | `{dir:"n"\|"s"\|"e"\|"w"\|"ne"\|"nw"\|"se"\|"sw"}` | `{ok}` |
 | `updateCheck` | `{}` | `{available,current,version?}` |
 | `updateInstall` | `{}` | `{ok,quit,message}` |
 
@@ -99,6 +101,10 @@ menghentikan proses.
 dan menghapus state-nya. `browserClose` hanya menutup WebView konten.
 `windowMinimize`/`windowMaximize` bekerja pada jendela native; `windowClose`
 menjalankan shutdown yang sama dengan tombol close OS (PTY dimatikan).
+`windowDrag` dan `windowResize` hanya dipakai di Linux/Windows: jendela tidak
+memakai frame native, jadi tab strip menjadi title bar dan delapan zona tepi
+memanggil `windowResize` saat ditarik. macOS tetap memakai traffic lights
+native dan menyembunyikan tombol custom.
 `updateCheck` dan `updateInstall` berjalan di thread latar supaya jaringan
 tidak membekukan event loop; balasan tetap lewat `Msg::Reply`. `quit: true`
 berarti UI harus menutup jendela setelah balasan (Windows dan Linux).

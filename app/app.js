@@ -144,6 +144,11 @@
     return err && err.message ? String(err.message) : String(err);
   }
 
+  function chromeDrag(target) {
+    return !(target && target.closest &&
+      target.closest('button, a, input, textarea, select, [role="button"]'));
+  }
+
   function guard(fn) {
     return function (ev) {
       try {
@@ -2248,12 +2253,29 @@
     return a === b || a.indexOf(b + '/') === 0 || a.indexOf(b + '\\') === 0;
   }
 
+  /* A live terminal belongs to the most specific project that contains its
+     cwd. Without this, a terminal in a nested project also shows up under
+     the parent folder. */
+  function projectForPath(path) {
+    var cwd = normPath(path);
+    var best = null;
+    for (var i = 0; i < savedProjects.length; i++) {
+      var p = savedProjects[i] && savedProjects[i].path;
+      if (!p || !pathMatches(cwd, p)) continue;
+      var key = normPath(p);
+      if (!best || key.length > best.length) best = key;
+    }
+    return best || cwd;
+  }
+
   function liveTabsAt(path) {
+    var owner = normPath(path);
     var out = [];
     for (var i = 0; i < tabs.length; i++) {
       var t = tabs[i];
       if (t.kind !== 'terminal' || !t.spawned || t.exited || t.closed) continue;
-      if (pathMatches(t.cwd || appRoot, path)) out.push(t);
+      if (projectForPath(t.cwd || appRoot) !== owner) continue;
+      out.push(t);
     }
     return out;
   }
@@ -3373,6 +3395,29 @@
     if (winClose) winClose.addEventListener('click', guard(function () {
       call('windowClose', {});
     }));
+
+    /* The tab strip is the window title bar: empty space drags the window,
+       double-click maximizes, and real controls keep their own clicks. */
+    var strip = $('tabstrip');
+    if (strip) {
+      strip.addEventListener('mousedown', guard(function (ev) {
+        if (ev.button !== 0 || !chromeDrag(ev.target)) return;
+        call('windowDrag', {}, { quiet: true });
+      }));
+      strip.addEventListener('dblclick', guard(function (ev) {
+        if (!chromeDrag(ev.target)) return;
+        call('windowMaximize', {}, { quiet: true });
+      }));
+    }
+
+    var edges = document.querySelectorAll ? document.querySelectorAll('#resize-edges .rz') : [];
+    for (var edge = 0; edge < edges.length; edge++) {
+      edges[edge].addEventListener('mousedown', guard(function (ev) {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        call('windowResize', { dir: ev.currentTarget.dataset.dir }, { quiet: true });
+      }));
+    }
 
     var appVersion = $('app-version');
     if (appVersion) appVersion.addEventListener('click', guard(function () {

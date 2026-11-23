@@ -9,7 +9,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
-use tao::window::{Window, WindowBuilder};
+use tao::window::{ResizeDirection, Window, WindowBuilder};
 use wry::dpi::{LogicalPosition as WryPos, LogicalSize as WrySize};
 use wry::{Rect, WebView, WebViewBuilder};
 
@@ -340,6 +340,30 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             app.quit = true;
             Ok(json!({ "ok": true }))
         }
+        "windowDrag" => (|| {
+            app.window
+                .drag_window()
+                .map_err(|err| anyhow!("drag window: {err}"))?;
+            Ok(json!({ "ok": true }))
+        })(),
+        "windowResize" => (|| {
+            let dir = as_str(&args, "dir").unwrap_or_default();
+            let dir = match dir.as_str() {
+                "n" => ResizeDirection::North,
+                "s" => ResizeDirection::South,
+                "e" => ResizeDirection::East,
+                "w" => ResizeDirection::West,
+                "ne" => ResizeDirection::NorthEast,
+                "nw" => ResizeDirection::NorthWest,
+                "se" => ResizeDirection::SouthEast,
+                "sw" => ResizeDirection::SouthWest,
+                _ => return Err(anyhow!("unknown resize direction")),
+            };
+            app.window
+                .drag_resize_window(dir)
+                .map_err(|err| anyhow!("resize window: {err}"))?;
+            Ok(json!({ "ok": true }))
+        })(),
         "updateCheck" => {
             let tx = tx.clone();
             let proxy = proxy.clone();
@@ -1198,13 +1222,18 @@ pub fn run() -> Result<()> {
     let proxy = event_loop.create_proxy();
     let (tx, rx) = channel::<Msg>();
 
-    let window = WindowBuilder::new()
+    let builder = WindowBuilder::new()
         .with_title("Omnix")
         .with_window_icon(window_icon())
         .with_inner_size(LogicalSize::new(1240.0, 820.0))
-        .with_min_inner_size(LogicalSize::new(760.0, 480.0))
-        .build(&event_loop)
-        .context("create window")?;
+        .with_min_inner_size(LogicalSize::new(760.0, 480.0));
+    /* Linux and Windows use the page as the title bar: one set of controls,
+    no native frame above it. Dragging and edge resizing are wired through
+    windowDrag/windowResize. macOS keeps its traffic lights and hides the
+    custom buttons instead. */
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.with_decorations(false);
+    let window = builder.build(&event_loop).context("create window")?;
 
     let scale = window.scale_factor();
     let size = window.inner_size().to_logical::<f64>(scale);

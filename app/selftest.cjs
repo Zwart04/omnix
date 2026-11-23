@@ -857,6 +857,24 @@ require('./app.js');
   window.__omnix.reply(projectSpawn.id, true, '{"paneKey":"tab:9","pid":91}');
   await tick();
 
+  // a terminal in a nested project must not also appear under its parent
+  const projWraps = byClass('workspace-list', 'proj');
+  function wrapFor(path) {
+    return projWraps.find((w) => {
+      const row = all(w, (n) => String(n.className).split(/\s+/).includes('proj-row'))[0];
+      return row && row.title === path;
+    });
+  }
+  const parentWrap = wrapFor('/home/zwart/git/omnix');
+  const toolsWrap = wrapFor('/home/zwart/git/omnix/packages/tools');
+  assert.ok(parentWrap && toolsWrap, 'parent and nested project rows exist');
+  const parentLabels = all(parentWrap, (n) => n.className === 'sess-row')
+    .map((n) => all(n, (x) => String(x.className) === 'inv-title')[0].textContent);
+  assert.ok(parentLabels.indexOf('omnix \u00b7 packages') < 0,
+    'nested project terminal stays out of the parent row');
+  assert.strictEqual(all(toolsWrap, (n) => n.className === 'sess-row').length, 1,
+    'nested project lists its own terminal');
+
   // tabs are scoped: the strip shows only the project that is active
   let stripTitles = all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-title');
   assert.strictEqual(stripTitles.length, 1,

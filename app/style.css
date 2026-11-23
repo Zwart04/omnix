@@ -2912,3 +2912,36 @@ button.tag:hover {
   line-height: 1.45;
   color: var(--meta);
 }
+
+/* ---------- frameless window edges ---------- */
+
+#tabstrip { cursor: default; }
+#tabstrip .strip-tab,
+#tabstrip button { cursor: pointer; }
+
+#resize-edges {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+
+.rz { position: absolute; pointer-events: auto; }
+.rz[data-dir="n"], .rz[data-dir="s"] { left: 6px; right: 6px; height: 5px; cursor: ns-resize; }
+.rz[data-dir="e"], .rz[data-dir="w"] { top: 6px; bottom: 6px; width: 5px; cursor: ew-resize; }
+.rz[data-dir="n"] { top: 0; }
+.rz[data-dir="s"] { bottom: 0; }
+.rz[data-dir="e"] { right: 0; }
+.rz[data-dir="w"] { left: 0; }
+.rz[data-dir="ne"], .rz[data-dir="nw"], .rz[data-dir="se"], .rz[data-dir="sw"] {
+  width: 8px;
+  height: 8px;
+}
+.rz[data-dir="ne"] { top: 0; right: 0; cursor: nesw-resize; }
+.rz[data-dir="nw"] { top: 0; left: 0; cursor: nwse-resize; }
+.rz[data-dir="se"] { bottom: 0; right: 0; cursor: nwse-resize; }
+.rz[data-dir="sw"] { bottom: 0; left: 0; cursor: nesw-resize; }
+
+/* macOS keeps the native traffic lights, so the custom set would duplicate. */
+html[data-platform="macos"] .win-controls,
+html[data-platform="macos"] #resize-edges { display: none; }
