@@ -1817,6 +1817,68 @@
     });
   }
 
+  /* ---------- updates ---------- */
+
+  var updateInfo = null;
+
+  function checkUpdates(manual) {
+    return rpc('updateCheck', {}, 25000).then(function (res) {
+      updateInfo = res && res.available ? res : null;
+      var chip = $('update-chip');
+      if (chip) {
+        chip.hidden = !updateInfo;
+        chip.disabled = false;
+        if (updateInfo) {
+          chip.textContent = 'Update ' + updateInfo.version;
+          chip.title = 'Download Omnix ' + updateInfo.version;
+        }
+      }
+      if (manual) {
+        setLast('Update check complete');
+        toast('info', updateInfo
+          ? 'Omnix ' + updateInfo.version + ' is available'
+          : 'Omnix ' + ((res && res.current) || '') + ' is up to date');
+      }
+      return res;
+    }, function (err) {
+      if (manual) {
+        setLast('Update check failed');
+        toast('error', 'Update check failed: ' + message(err));
+      }
+      return null;
+    });
+  }
+
+  function installUpdate() {
+    if (!updateInfo) return null;
+    var version = updateInfo.version;
+    var chip = $('update-chip');
+    if (chip) {
+      chip.disabled = true;
+      chip.textContent = 'Updating...';
+    }
+    setLast('Downloading Omnix ' + version + '...');
+    return call('updateInstall', {}, { quiet: true, timeout: 180000 }).then(function (res) {
+      if (!res || res.ok === false) {
+        if (chip) {
+          chip.disabled = false;
+          chip.textContent = 'Update ' + version;
+        }
+        setLast('Update failed');
+        toast('error', (res && res.message) || 'Update failed. Download it from GitHub instead.');
+        return null;
+      }
+      toast('info', res.message || 'Update started');
+      if (res.quit) {
+        setLast('Restarting Omnix...');
+        setTimeout(function () { call('windowClose', {}, { quiet: true }); }, 1200);
+      } else if (chip) {
+        chip.hidden = true;
+      }
+      return res;
+    });
+  }
+
   var lastStatus = null;
 
   var savedProjects = [];
@@ -3312,6 +3374,13 @@
       call('windowClose', {});
     }));
 
+    var appVersion = $('app-version');
+    if (appVersion) appVersion.addEventListener('click', guard(function () {
+      checkUpdates(true);
+    }));
+    var updateChip = $('update-chip');
+    if (updateChip) updateChip.addEventListener('click', guard(installUpdate));
+
     setSideCollapsed(storeGet('omnix.sideCollapsed') === '1');
 
     var sideToggle = $('side-toggle');
@@ -3580,10 +3649,11 @@
     setHistoryFilter(storeGet('omnix.histFilter') === '1');
     renderHistory();
 
-    refreshAppInfo();
+    refreshAppInfo().then(function () { checkUpdates(false); });
     refreshStatus().then(refreshProjects);
     startMemoryPoll();
     startUsagePoll();
+    setInterval(function () { checkUpdates(false); }, 6 * 60 * 60 * 1000);
   }
 
   if (document.readyState === 'loading') {

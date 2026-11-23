@@ -21,13 +21,28 @@ Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.5.9_amd64.deb` | `sudo apt install ./omnix_0.5.9_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.5.9-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.5.9-1-x86_64.pkg.tar.zst` |
-| Windows x64 | `omnix-windows-x64.zip` | ekstrak, jalankan `omnix.exe` (butuh WebView2 Runtime) |
-| macOS 11+ arm64 | `Omnix-0.5.9-macos-arm64.tar.gz` | ekstrak, pindahkan `Omnix.app` ke `/Applications` |
-| macOS 11+ Intel | `Omnix-0.5.9-macos-x64.tar.gz` | sama, pakai arsitektur yang sesuai |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.0_amd64.deb` | `sudo apt install ./omnix_0.6.0_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.6.0-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.0-1-x86_64.pkg.tar.zst` |
+| Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
+| macOS 11+ (universal) | `Omnix-0.6.0-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 <https://github.com/Zwart04/omnix/releases>
+
+Installer Windows memakai Inno Setup: instalasi per-user tanpa prompt admin,
+shortcut Start Menu, uninstaller, dan WebView2 Evergreen Bootstrapper yang hanya
+jalan kalau runtime belum terpasang. DMG macOS berisi aplikasi universal
+(arm64 + x64) dan pintasan `Applications`.
+
+Omnix memeriksa rilis GitHub saat start dan tiap enam jam. Kalau ada versi baru,
+chip `Update` muncul di status bar; klik untuk mengunduh dan memasang. Linux
+dengan binary yang bisa ditulis mengganti dirinya lalu restart, Windows
+menjalankan installer senyap, macOS membuka DMG lalu menutup aplikasi agar
+bundle bisa diganti. Cek manual dari terminal:
+
+```bash
+omnix update --check   # hanya laporan
+omnix update           # unduh dan pasang
+```
 
 ## Status
 
@@ -138,10 +153,10 @@ sudo apt install dist/linux/omnix_*.deb
 sudo pacman -U dist/linux/omnix-*.pkg.tar.zst
 ```
 
-Windows memakai `dist/windows/build-zip.ps1` (atau `build-zip.sh` untuk hasil
-`cargo xwin`), macOS memakai `dist/macos/build-app.sh`. Paket `.deb`, Arch,
-zip, dan `.app` dibangun oleh GitHub Actions pada tag `v*`. Panduan lengkap, termasuk state, troubleshooting,
-dan batasan: `docs/app.md`.
+Windows memakai `dist/windows/build-installer.ps1`, macOS memakai
+`dist/macos/build-app.sh`. Paket `.deb`, Arch, installer `.exe`, dan DMG
+dibangun oleh GitHub Actions pada tag `v*`. Panduan lengkap, termasuk state,
+troubleshooting, dan batasan: `docs/app.md`.
 
 Jalankan `omnix` tanpa argumen untuk membuka jendela aplikasi. Verifikasi
 end-to-end tanpa screenshot:

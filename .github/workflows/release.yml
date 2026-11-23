@@ -50,19 +50,24 @@ jobs:
         if: runner.os == 'Linux'
         run: sh dist/linux/build-arch.sh
 
-      - name: Package zip (Windows)
+      - name: Stage Linux updater binary
+        if: runner.os == 'Linux'
+        run: cp target/release/omnix dist/linux/omnix-linux-x64
+
+      - name: Build Windows installer
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./dist/windows/build-zip.ps1
+        run: ./dist/windows/build-installer.ps1
 
-      - name: Package app bundle (macOS)
+      - name: Package macOS DMG
         if: runner.os == 'macOS'
         run: |
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
           cargo build --release --target aarch64-apple-darwin
           cargo build --release --target x86_64-apple-darwin
-          OMNIX_ARCH=arm64 sh dist/macos/build-app.sh --binary target/aarch64-apple-darwin/release/omnix
-          OMNIX_ARCH=x64 sh dist/macos/build-app.sh --binary target/x86_64-apple-darwin/release/omnix
+          sh dist/macos/build-app.sh \
+            --binary target/aarch64-apple-darwin/release/omnix \
+            --binary target/x86_64-apple-darwin/release/omnix
 
       - name: Upload Linux packages
         if: runner.os == 'Linux'
@@ -72,6 +77,7 @@ jobs:
           path: |
             dist/linux/*.deb
             dist/linux/*.pkg.tar.zst
+            dist/linux/omnix-linux-x64
           if-no-files-found: error
 
       - name: Attach Linux packages to release
@@ -81,31 +87,32 @@ jobs:
           files: |
             dist/linux/*.deb
             dist/linux/*.pkg.tar.zst
+            dist/linux/omnix-linux-x64
 
-      - name: Upload Windows zip
+      - name: Upload Windows installer
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: omnix-windows-x64
-          path: dist/windows/omnix-windows-x64.zip
+          path: dist/windows/build/omnix-setup-x64.exe
           if-no-files-found: error
 
-      - name: Attach Windows zip to release
+      - name: Attach Windows installer to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/windows/omnix-windows-x64.zip
+          files: dist/windows/build/omnix-setup-x64.exe
 
-      - name: Upload macOS bundle
+      - name: Upload macOS DMG
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: omnix-macos
-          path: dist/macos/Omnix-*-macos*.tar.gz
+          path: dist/macos/Omnix-*-macos*.dmg
           if-no-files-found: error
 
-      - name: Attach macOS bundle to release
+      - name: Attach macOS DMG to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/macos/Omnix-*-macos*.tar.gz
+          files: dist/macos/Omnix-*-macos*.dmg

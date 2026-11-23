@@ -13,6 +13,7 @@ mod pty;
 #[cfg(feature = "gui")]
 mod selftest;
 mod sources;
+mod update;
 mod usage;
 mod workspace;
 
@@ -52,6 +53,8 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
   omnix browser doctor
 
   omnix diagnostics memory [--json]
+
+  omnix update [--check]         install the latest GitHub release
 
   omnix app                      open the desktop app (no arguments does the same)
 
@@ -332,6 +335,31 @@ fn cmd_browser(args: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn cmd_update(args: &[String]) -> Result<()> {
+    if has(args, "--check") {
+        let status = update::check_payload()?;
+        if status["available"].as_bool().unwrap_or(false) {
+            println!(
+                "omnix {} -> {}",
+                status["current"].as_str().unwrap_or("?"),
+                status["version"].as_str().unwrap_or("?")
+            );
+        } else {
+            println!(
+                "omnix {} is up to date",
+                status["current"].as_str().unwrap_or("?")
+            );
+        }
+        return Ok(());
+    }
+    let result = update::install(false)?;
+    println!(
+        "{}",
+        result["message"].as_str().unwrap_or("update finished")
+    );
+    Ok(())
+}
+
 fn cmd_diagnostics(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("memory") => {
@@ -402,6 +430,7 @@ fn run() -> Result<()> {
         Some("handoff") => cmd_handoff(&args[1..]),
         Some("browser") => cmd_browser(&args[1..]),
         Some("diagnostics") => cmd_diagnostics(&args[1..]),
+        Some("update") => cmd_update(&args[1..]),
         Some("app") => start_app(),
         Some("-h" | "--help" | "help") => {
             print!("{HELP}");

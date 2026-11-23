@@ -128,18 +128,21 @@ Build di PowerShell:
 ```powershell
 cd omnix
 cargo build --release
-./dist/windows/build-zip.ps1
+./dist/windows/build-installer.ps1
 ```
 
 Skrip memakai `target\release\omnix.exe`. Untuk build silang dari Linux
 (mis. CI atau mesin tanpa Windows), jalankan
 `cargo xwin build --release --target x86_64-pc-windows-msvc`; skrip otomatis
 memakai `target\x86_64-pc-windows-msvc\release\omnix.exe` kalau berkas
-release biasa tidak ada. Hasilnya `dist\windows\omnix-windows-x64.zip` berisi
-`omnix.exe` dan `README.txt`.
-Ekstrak, lalu jalankan `omnix.exe`. Runtime **Microsoft Edge WebView2** wajib
-ada; Windows 11 sudah membawanya, Windows 10 mungkin perlu memasangnya dari
-situs Microsoft. Build ini belum ditandatangani, jadi SmartScreen bisa meminta
+release biasa tidak ada. Hasilnya `dist\windows\build\omnix-setup-x64.exe`.
+
+Installer memakai Inno Setup 6 (skrip memasangnya lewat Chocolatey bila belum
+ada), memasang per-user tanpa prompt admin, dan menyertakan
+`MicrosoftEdgeWebView2Setup.exe`. Runtime **Microsoft Edge WebView2** hanya
+dipasang kalau registry belum melihat versi Evergreen; kalau unduhan runtime
+gagal, installer berhenti dengan pesan yang jelas, bukan membiarkan aplikasi
+gagal start. Build ini belum ditandatangani, jadi SmartScreen bisa meminta
 konfirmasi.
 
 ### macOS
@@ -147,16 +150,43 @@ konfirmasi.
 ```bash
 cd omnix
 cargo build --release
-sh dist/macos/build-app.sh
+sh dist/macos/build-app.sh --binary <arm64-binary> --binary <x64-binary>
 ```
 
-Hasilnya `Omnix.app` di `dist/macos/build/` dan arsip
-`dist/macos/Omnix-0.1.0-macos.tar.gz` (atau `...-arm64.tar.gz` / `...-x64.tar.gz`
-kalau `OMNIX_ARCH` diset). Bundle memakai
+Dua `--binary` digabung dengan `lipo` menjadi satu aplikasi universal. Hasilnya
+`Omnix.app` di `dist/macos/build/` dan
+`dist/macos/Omnix-<versi>-macos-universal.dmg` berisi aplikasi plus pintasan
+`Applications`. Satu binary tanpa `--binary` ganda menghasilkan
+`...-macos.dmg` (atau `...-arm64.dmg` / `...-x64.dmg` kalau `OMNIX_ARCH` diset).
+Bundle memakai
 `CFBundleIdentifier dev.omnix.app` dan `LSMinimumSystemVersion 11.0`. Skrip
 melakukan ad-hoc codesign kalau `codesign` tersedia; itu bukan notarization.
 Gatekeeper di Mac lain tetap bisa menolak aplikasi yang belum dinotarisasi
 (klik kanan → Open, atau `xattr -dr com.apple.quarantine Omnix.app`).
+
+## Update
+
+`updateCheck` memanggil `https://api.github.com/repos/Zwart04/omnix/releases/latest`
+di thread latar. Kalau tag lebih baru dari `CARGO_PKG_VERSION`, status bar
+menampilkan chip `Update <versi>`; klik chip memanggil `updateInstall`.
+Pemeriksaan berjalan sekali saat start, tiap enam jam, dan saat versi di kiri
+bawah sidebar diklik.
+
+Aset yang dipilih mengikuti platform:
+
+- Windows: `omnix-setup-x64.exe`, dijalankan senyap dengan
+  `/SILENT /CLOSEAPPLICATIONS /NORESTART`; installer menutup proses lama dan
+  meluncurkan Omnix lagi.
+- macOS: DMG dibuka dan aplikasi menutup diri; pengguna menyeret Omnix ke
+  Applications.
+- Linux: binary `omnix-linux-x64` menggantikan executable yang sedang berjalan
+  bila direktori itu bisa ditulis, lalu proses baru dijalankan. Kalau tidak
+  (mis. `/usr/bin` milik root), paket `.deb` / `.pkg.tar.zst` dibuka lewat
+  `xdg-open`.
+
+Terminal juga bisa: `omnix update --check` dan `omnix update`. Tidak ada
+signature selain TLS GitHub; paket tidak diverifikasi dengan checksum
+terpisah.
 
 ## Isi jendela
 
@@ -397,8 +427,9 @@ lain, nama paketnya bisa `webkit2gtk4.1-devel`, `gtk3-devel`, dan
 `libsoup3-devel`.
 
 **Aplikasi tidak mau start karena WebView2 tidak ditemukan (Windows).**
-Pasang Microsoft Edge WebView2 Runtime. Windows 11 umumnya sudah punya; Windows
-10 sering belum. Setelah dipasang, jalankan `omnix.exe` lagi.
+Jalankan ulang `omnix-setup-x64.exe`; installer memasang WebView2 otomatis.
+Kalau mesin sedang offline, unduh Evergreen Bootstrapper dari
+<https://go.microsoft.com/fwlink/p/?LinkId=2124703>, jalankan, lalu buka Omnix.
 
 **`could not run 'lightpanda'. Install Lightpanda or set OMNIX_LIGHTPANDA`.**
 Engine Lightpanda tidak ada di `PATH`. Pasang binary-nya, atau tunjuk lokasinya:

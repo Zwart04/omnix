@@ -649,6 +649,16 @@ input[type="checkbox"] {
   white-space: nowrap;
 }
 
+button.tag {
+  background: none;
+  cursor: pointer;
+}
+
+button.tag:hover {
+  border-color: var(--line-strong, var(--line));
+  color: var(--text);
+}
+
 .tag.branch {
   flex: 0 1 auto;
   min-width: 0;
@@ -2636,6 +2646,16 @@ input[type="checkbox"] {
 .status-chip.over {
   border-color: var(--warn);
   color: var(--warn);
+}
+
+.status-chip.update {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.status-chip.update:hover {
+  background: var(--accent);
+  color: #fff;
 }
 
 .usage-ram {

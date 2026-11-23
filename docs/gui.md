@@ -76,6 +76,8 @@ Error: `{"code":"...","message":"..."}` dengan code salah satu
 | `windowMinimize` | `{}` | `{ok}` |
 | `windowMaximize` | `{}` | `{maximized}` |
 | `windowClose` | `{}` | `{ok}` |
+| `updateCheck` | `{}` | `{available,current,version?}` |
+| `updateInstall` | `{}` | `{ok,quit,message}` |
 
 `hit` = `{agent,sessionId,title,cwd,updatedAt,score,snippet,resumeCommand}`.
 `sessionRow` = `{agent,sessionId,title,cwd,updatedAt,messageCount,resumeCommand,preview}`.
@@ -97,6 +99,9 @@ menghentikan proses.
 dan menghapus state-nya. `browserClose` hanya menutup WebView konten.
 `windowMinimize`/`windowMaximize` bekerja pada jendela native; `windowClose`
 menjalankan shutdown yang sama dengan tombol close OS (PTY dimatikan).
+`updateCheck` dan `updateInstall` berjalan di thread latar supaya jaringan
+tidak membekukan event loop; balasan tetap lewat `Msg::Reply`. `quit: true`
+berarti UI harus menutup jendela setelah balasan (Windows dan Linux).
 `rect` dalam piksel logis relatif jendela, `x/y` sudut kiri atas.
 
 ## Event

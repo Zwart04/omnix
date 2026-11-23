@@ -1,4 +1,4 @@
-use crate::{browser, history, procs, projects, pty, sources, workspace};
+use crate::{browser, history, procs, projects, pty, sources, update, workspace};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -339,6 +339,26 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
         "windowClose" => {
             app.quit = true;
             Ok(json!({ "ok": true }))
+        }
+        "updateCheck" => {
+            let tx = tx.clone();
+            let proxy = proxy.clone();
+            std::thread::spawn(move || {
+                let result = update::check_payload();
+                let _ = tx.send(Msg::Reply(id, result));
+                let _ = proxy.send_event(UserEvent::Wake);
+            });
+            return;
+        }
+        "updateInstall" => {
+            let tx = tx.clone();
+            let proxy = proxy.clone();
+            std::thread::spawn(move || {
+                let result = update::install(true);
+                let _ = tx.send(Msg::Reply(id, result));
+                let _ = proxy.send_event(UserEvent::Wake);
+            });
+            return;
         }
         "projects" => Ok(json!({
             "projects": projects::load(&app.root),

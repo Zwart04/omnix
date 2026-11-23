@@ -72,7 +72,7 @@
         <span class="side-foot-label">
           <span class="side-dot" aria-hidden="true"></span>Local workspace
         </span>
-        <span class="tag mono" id="app-version">-</span>
+        <button class="tag mono" id="app-version" type="button" title="Check for updates">-</button>
       </div>
     </aside>
 
@@ -348,6 +348,9 @@
   <footer id="statusbar">
     <span id="status-left" class="mono">omnix</span>
     <span id="status-right" class="mono"></span>
+    <button id="update-chip" class="status-chip update mono" type="button" hidden>
+      Update
+    </button>
     <button id="usage-chip" class="status-chip mono" type="button" title="Usage and memory">
       App - · AI -
     </button>

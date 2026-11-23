@@ -79,7 +79,7 @@ const byId = new Map();
   'browser-url', 'browser-open', 'browser-engine', 'browser-native', 'browser-text',
   'search-form', 'search-query', 'search-conversation', 'search-agent', 'search-results', 'search-meta',
   'handoff-form', 'handoff-name', 'handoff-agent', 'handoff-base', 'handoff-prompt', 'handoff-result',
-  'docs-frame', 'toasts', 'statusbar', 'status-left', 'status-right', 'status-last',
+  'docs-frame', 'toasts', 'statusbar', 'status-left', 'status-right', 'status-last', 'update-chip',
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
   'history-filter', 'history-sort', 'history-collapse-all', 'history-time',
@@ -932,6 +932,23 @@ require('./app.js');
   await tick();
   assert.strictEqual(stripCount(), 2, 'panel returns with its project');
 
+  // update notification: the host names the release, the chip downloads it
+  const updateReq = posted.find((r) => r.cmd === 'updateCheck');
+  assert.ok(updateReq, 'boot checks for updates');
+  window.__omnix.reply(updateReq.id, true,
+    '{"available":true,"current":"0.6.0","version":"0.6.1"}');
+  await tick();
+  assert.strictEqual(byId.get('update-chip').hidden, false, 'update chip appears');
+  assert.strictEqual(byId.get('update-chip').textContent, 'Update 0.6.1');
+  const beforeUpdate = posted.length;
+  byId.get('update-chip').handlers.click(noop());
+  assert.strictEqual(posted[posted.length - 1].cmd, 'updateInstall', 'chip downloads the release');
+  window.__omnix.reply(posted[posted.length - 1].id, true,
+    '{"ok":true,"quit":false,"message":"opened"}');
+  await tick();
+  assert.strictEqual(byId.get('update-chip').hidden, true, 'chip clears after install');
+  assert.strictEqual(posted.length, beforeUpdate + 1, 'one install request');
+
   // window controls talk to the host; the WebView draws no fake chrome
   const beforeWindow = posted.length;
   byId.get('win-min').handlers.click(noop());
@@ -940,7 +957,7 @@ require('./app.js');
   assert.deepStrictEqual(posted.slice(beforeWindow).map((r) => r.cmd),
     ['windowMinimize', 'windowMaximize', 'windowClose'], 'window controls reach the host');
 
-  console.log('selftest ok: rpc, reply/emit, sidebar, projects+sessions, settings, splits, palette, tabs');
+  console.log('selftest ok: rpc, reply/emit, sidebar, projects+sessions, settings, splits, palette, tabs, updates');
   process.exit(0);
 })().catch((err) => {
   console.error(err && err.stack ? err.stack : err);

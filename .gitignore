@@ -2,6 +2,9 @@
 .omnix/
 node_modules/
 dist/linux/*.deb
-dist/windows/*.zip
-dist/macos/*.tar.gz
 dist/linux/*.pkg.tar.zst
+dist/linux/omnix-linux-x64
+dist/windows/build/
+dist/windows/MicrosoftEdgeWebView2Setup.exe
+dist/macos/*.dmg
+dist/macos/build/
