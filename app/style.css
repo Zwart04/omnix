@@ -874,6 +874,25 @@ button.tag:hover {
 
 .strip-close:hover { background: var(--hover-strong); color: var(--bad); }
 
+.strip-split {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  margin: 0 0 0 2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--meta);
+  cursor: pointer;
+}
+
+.strip-split svg { width: 13px; height: 13px; }
+.strip-split:hover { background: var(--hover-strong); color: var(--text); }
+.strip-split:disabled { opacity: .35; cursor: default; background: none; }
+
 .strip-command {
   display: flex;
   align-items: center;
@@ -1073,50 +1092,7 @@ button.tag:hover {
   min-height: 0;
 }
 
-.pane-term { position: relative; padding: 0; }
-
-/* Pane actions sit at the terminal's top-right corner, out of the text flow. */
-.pane-controls {
-  position: absolute;
-  top: 8px;
-  right: 16px;
-  z-index: 6;
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-ctl);
-  background: var(--float);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .30);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 120ms ease-out;
-}
-
-.pane-term:hover .pane-controls,
-.pane-term:focus-within .pane-controls {
-  opacity: 1;
-  transform: none;
-  pointer-events: auto;
-}
-
-.pane-ctl {
-  display: grid;
-  place-items: center;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: none;
-  color: var(--text-2);
-  cursor: pointer;
-}
-
-.pane-ctl svg { width: 14px; height: 14px; }
-.pane-ctl:hover { background: var(--hover-strong); color: var(--text); }
-.pane-ctl:disabled { opacity: .35; cursor: default; background: none; color: var(--text-2); }
-.pane-ctl.close:hover { color: var(--bad); }
+.pane-term { padding: 0; }
 
 /* Orca insets the terminal by a hairline (4px) instead of a floating card. */
 .term-host {

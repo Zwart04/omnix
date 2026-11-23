@@ -479,7 +479,7 @@
         main.type = 'button';
         if (tab === activeTab) main.setAttribute('aria-current', 'page');
         var title = el('span', 'strip-title', tab.title);
-        title.title = tab.cwd ? tab.title + ' · ' + tab.cwd : (tab.paneKey || tab.title);
+        title.title = tab.cwd ? tab.title + ' · ' + tab.cwd : tab.title;
         main.appendChild(title);
         main.addEventListener('click', guard(function () { activate(tab); }));
         main.addEventListener('pointerdown', guard(function () {
@@ -495,6 +495,20 @@
         });
 
         row.appendChild(main);
+        if (tab.kind === 'terminal') {
+          var split = el('button', 'strip-split');
+          split.type = 'button';
+          split.title = 'Split terminal (Ctrl+Shift+D)';
+          split.setAttribute('aria-label', 'Split ' + tab.title);
+          split.innerHTML = SPLIT_ICON;
+          split.disabled = !!(tab.group && tab.group.panes.length >= maxPanes());
+          split.addEventListener('click', function (ev) {
+            if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+            activate(tab);
+            guard(splitActive)(ev);
+          });
+          row.appendChild(split);
+        }
         row.appendChild(close);
         box.appendChild(row);
       })(list[i]);
@@ -507,12 +521,8 @@
 
   /* All panes in a split share one group wrapper; the wrapper is what the
      workbench shows or hides, so a group can grow past two panes. */
-  function updateSplitControls(group) {
+  function updatePaneCount(group) {
     if (!group) return;
-    var full = group.panes.length >= maxPanes();
-    for (var i = 0; i < group.panes.length; i++) {
-      if (group.panes[i].splitCtl) group.panes[i].splitCtl.disabled = full;
-    }
     if (group.el && group.el.dataset) group.el.dataset.panes = String(group.panes.length);
   }
 
@@ -522,10 +532,7 @@
     var survivor = group.panes.length === 1 ? group.panes[0] : null;
     if (survivor && survivor.el) wrap.parentNode.insertBefore(survivor.el, wrap);
     wrap.parentNode.removeChild(wrap);
-    if (survivor) {
-      survivor.group = null;
-      if (survivor.splitCtl) survivor.splitCtl.disabled = false;
-    }
+    if (survivor) survivor.group = null;
     group.panes = [];
   }
 
@@ -634,7 +641,7 @@
         } else if (group.panes.length === 1) {
           unwrapGroup(group);
         } else {
-          updateSplitControls(group);
+          updatePaneCount(group);
         }
       }
       tab.closed = true;
@@ -798,23 +805,7 @@
     return args;
   }
 
-  var PANE_ICONS = {
-    split: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>',
-    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12"/></svg>'
-  };
-
-  function paneControl(kind, label, run) {
-    var btn = el('button', 'pane-ctl' + (kind === 'close' ? ' close' : ''));
-    btn.type = 'button';
-    btn.title = label;
-    btn.setAttribute('aria-label', label);
-    btn.innerHTML = PANE_ICONS[kind];
-    btn.addEventListener('click', guard(function (ev) {
-      if (ev && ev.stopPropagation) ev.stopPropagation();
-      return run();
-    }));
-    return btn;
-  }
+  var SPLIT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>';
 
   /* New terminals inherit the folder the user is already working in: the
      active terminal first, then the project last opened from the sidebar. */
@@ -843,20 +834,6 @@
     pane.dataset.kind = 'terminal';
     var host = el('div', 'term-host');
     pane.appendChild(host);
-
-    /* Split and close live on the pane itself: the action is where the
-       terminal is, not only in the tab strip or command palette. */
-    var controls = el('div', 'pane-controls');
-    var splitCtl = paneControl('split', 'Split terminal (Ctrl+Shift+D)', function () {
-      activate(tab);
-      return splitActive();
-    });
-    var closeCtl = paneControl('close', 'Close terminal', function () {
-      return closeTab(tab);
-    });
-    controls.appendChild(splitCtl);
-    controls.appendChild(closeCtl);
-    pane.appendChild(controls);
     var panes = $('panes');
     if (!panes) {
       toast('error', 'Pane container is missing.');
@@ -912,16 +889,12 @@
       closed: false,
       exited: false,
       handoffBrief: opts.handoffBrief || null,
-      group: anchor ? anchor.group : null,
-      splitCtl: splitCtl,
-      closeCtl: closeCtl
+      group: anchor ? anchor.group : null
     };
     if (anchor) {
       var g = anchor.group;
       g.panes[g.panes.length - 1] = tab;
-      updateSplitControls(g);
-    } else {
-      splitCtl.disabled = false;
+      updatePaneCount(g);
     }
     tabs.push(tab);
     if (tab.cwd) lastLaunchCwd = tab.cwd;
@@ -945,7 +918,7 @@
         cursorStyle: 'block',
         cursorBlink: true,
         minimumContrastRatio: 4.5,
-        scrollback: 10000,
+        scrollback: 2000,
         scrollSensitivity: 3,
         smoothScrollDuration: 80,
         macOptionIsMeta: true,

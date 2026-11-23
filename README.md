@@ -21,10 +21,10 @@ Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.3_amd64.deb` | `sudo apt install ./omnix_0.6.3_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.6.3-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.3-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.4_amd64.deb` | `sudo apt install ./omnix_0.6.4_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.6.4-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.4-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (universal) | `Omnix-0.6.3-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| macOS 11+ (universal) | `Omnix-0.6.4-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -82,12 +82,13 @@ Yang sudah jalan dan dites di repo ini:
   `Add Project by Path` di palette. Indexed history hanya mengisi jumlah sesi
   dan logo agent untuk path yang cocok, tidak menambah baris.
 - Terminal bisa di-split sampai empat pane dalam satu grup: `Ctrl+Shift+D`,
-  menu `+`, palette `Split Terminal`, atau tombol split di sudut kanan atas
-  pane. Dua pane tampil berdampingan, tiga pane jadi dua di atas plus satu
-  lebar di bawah, empat pane jadi grid 2x2. Tiap pane punya pty sendiri; tombol
-  close menutup pty itu dan pane terakhir kembali menjadi satu pane penuh.
-  Tombol pane muncul saat hover atau focus-within supaya tidak menutupi teks,
-  dan tombol split baru dinonaktifkan saat grup sudah berisi empat pane.
+  menu `+`, palette `Split Terminal`, atau ikon split di tab strip, tepat di
+  samping `×`. Aksi itu ada di tab, bukan menumpuk di atas isi terminal, jadi
+  tidak pernah menutupi tombol atau teks di dalam pane. Dua pane tampil
+  berdampingan, tiga pane jadi dua di atas plus satu lebar di bawah, empat pane
+  jadi grid 2x2. Tiap pane punya pty sendiri; tombol close menutup pty itu dan
+  pane terakhir kembali menjadi satu pane penuh. Ikon split dinonaktifkan saat
+  grup sudah berisi empat pane.
 - Status bar menampilkan RAM proses Omnix dan RAM semua terminal/agent yang
   dijalankannya: `App X · AI Y`. Klik chip itu (atau palette
   `Usage and Memory`) untuk modal usage: total process tree Omnix, bagian
