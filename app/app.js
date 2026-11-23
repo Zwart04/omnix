@@ -478,6 +478,14 @@
         var main = el('button', 'strip-main');
         main.type = 'button';
         if (tab === activeTab) main.setAttribute('aria-current', 'page');
+        if (tab.kind === 'terminal') {
+          var mark = el('span', null);
+          tab.statusNode = mark;
+          paintTabStatus(tab);
+          main.appendChild(mark);
+        } else {
+          tab.statusNode = null;
+        }
         var title = el('span', 'strip-title', tab.title);
         title.title = tab.cwd ? tab.title + ' · ' + tab.cwd : tab.title;
         main.appendChild(title);
@@ -628,6 +636,11 @@
       closeBrowser({ quiet: true });
     }
     if (tab.kind === 'terminal') {
+      if (tab.settleTimer) {
+        clearTimeout(tab.settleTimer);
+        tab.settleTimer = 0;
+      }
+      tab.handoffSend = null;
       var group = tab.group;
       if (group) {
         group.panes = group.panes.filter(function (p) { return p !== tab; });
@@ -755,6 +768,10 @@
     box.appendChild(menuRow('Custom CLI\u2026', '', 'command', function () {
       closeTabMenu();
       openCmdModal();
+    }));
+    box.appendChild(menuRow('Hand Off to Agent\u2026', '', 'handoff', function () {
+      closeTabMenu();
+      openHandoff(null);
     }));
     /* Orca lists only the CLIs it can actually launch: an item that would fail
        on click is noise, and most agents are simply not installed. */
@@ -987,6 +1004,10 @@
       cwd: opts.cwd || (anchor && anchor.cwd) || null,
       scope: normScope(opts.scope || opts.cwd || (anchor && anchor.cwd) || activeScope),
       lastOutput: 0,
+      status: 'working',
+      statusNode: null,
+      tailText: '',
+      settleTimer: 0,
       agent: opts.agent || null,
       sessionId: opts.sessionId || null,
       lastCols: 0,
@@ -995,6 +1016,8 @@
       closed: false,
       exited: false,
       handoffBrief: opts.handoffBrief || null,
+      handoffPrompt: opts.handoffPrompt || null,
+      handoffPending: false,
       group: anchor ? anchor.group : null,
       splitCtl: null
     };
@@ -1088,6 +1111,7 @@
       traceLine({ kind: 'ptyData', len: data.length, pane: paneKey });
       /* typing can beat the spawn reply; hold keystrokes until the pty exists */
       if (tab.exited) return;
+      noteInput(tab);
       if (!tab.spawned) {
         var queued = tab.pendingWrites || '';
         if (queued.length < 4096) tab.pendingWrites = (queued + data).slice(0, 4096);
@@ -1129,10 +1153,38 @@
         tab.term.write('\x1b[38;5;244m[omnix] handoff brief: ' +
           tab.handoffBrief + '\x1b[0m\r\n');
       }
+      if (tab.handoffPrompt) queueHandoffPrompt(tab);
       if (res.pid != null) setLast('Terminal started (PID ' + res.pid + ')');
     });
 
     return tab;
+  }
+
+  /* The new agent TUI must be in raw mode before the brief can be typed in.
+     Its first output is the signal; a short fallback covers silent starts.
+     Bracketed paste keeps the transcript lines from submitting one by one. */
+  function queueHandoffPrompt(tab) {
+    if (!tab || !tab.handoffPrompt) return;
+    var done = false;
+    var fallback = setTimeout(send, 3500);
+
+    function send() {
+      if (done || tab.closed || tab.exited || !tab.handoffPrompt) return;
+      done = true;
+      clearTimeout(fallback);
+      tab.handoffSend = null;
+      var text = tab.handoffPrompt;
+      tab.handoffPrompt = null;
+      var paste = '\x1b[200~' + text + '\x1b[201~\r';
+      call('ptyWrite', { paneKey: tab.paneKey, data: paste }, { quiet: true })
+        .then(function () {
+          noteInput(tab);
+          toast('ok', 'Handoff prompt sent to ' + tab.title);
+          setLast('Handoff prompt sent \u00b7 ' + tab.title);
+        });
+    }
+
+    tab.handoffSend = send;
   }
 
   function focusTerm(tab) {
@@ -1179,6 +1231,20 @@
     } catch (err) {
       toast('error', 'Terminal data is not valid base64.');
       return null;
+    }
+  }
+
+  /* Approval prompts are plain ASCII, so a streaming decoder is enough. The
+     browser test stub has no TextDecoder and gets an empty string. */
+  var ptyDecoder = null;
+
+  function bytesText(bytes) {
+    if (!bytes || typeof window.TextDecoder !== 'function') return '';
+    if (!ptyDecoder) ptyDecoder = new window.TextDecoder();
+    try {
+      return ptyDecoder.decode(bytes, { stream: true });
+    } catch (err) {
+      return '';
     }
   }
 
@@ -1639,6 +1705,7 @@
     'claude': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"></path></svg>`,
     'codex': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path></svg>`,
     'command': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.6 8.6 8 4 12.4"/><path d="M9.4 12.4H12.4"/></svg>`,
+    'handoff': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8h8"/><path d="m7.5 4.5 3.5 3.5-3.5 3.5"/><path d="M13 3v10"/></svg>`,
     folder: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L12.5 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>`,
     file: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>`,
     'copilot': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M16.295 5.29l-0.242 0.986h-2.32c-1.721 0-3.22 1.197-3.638 2.902l-2.101 8.593H3.798c-2.44 0-4.229-2.342-3.637-4.761l2.106-8.612c0.557-2.274 2.556-3.87 4.85-3.87h5.54c2.44 0 4.23 2.343 3.638 4.761"></path><path d="M16.295 5.29l-0.242 0.986h-2.32c-1.721 0-3.22 1.197-3.638 2.902l-2.101 8.593H3.798c-2.44 0-4.229-2.342-3.637-4.761l2.106-8.612c0.557-2.274 2.556-3.87 4.85-3.87h5.54c2.44 0 4.23 2.343 3.638 4.761M7.752 18.758l0.242-0.986h2.321c1.72 0 3.22-1.197 3.637-2.903l2.102-8.593h4.196c2.439 0 4.228 2.343 3.637 4.762l-2.107 8.611c-0.556 2.274-2.555 3.87-4.85 3.87h-5.54c-2.44 0-4.229-2.342-3.638-4.761"></path><path d="M7.752 18.758l0.242-0.986h2.321c1.72 0 3.22-1.197 3.637-2.903l2.102-8.593h4.196c2.439 0 4.228 2.343 3.637 4.762l-2.107 8.611c-0.556 2.274-2.555 3.87-4.85 3.87h-5.54c-2.44 0-4.229-2.342-3.638-4.761"></path></svg>`,
@@ -1832,9 +1899,11 @@
       createTerminal({
         paneKey: 'hf:' + agent + ':' + Date.now(),
         command: agentBin(agent),
+        agent: agent,
         cwd: res.cwd,
         title: agent + ' handoff',
-        handoffBrief: res.brief
+        handoffBrief: res.brief,
+        handoffPrompt: res.prompt || ''
       });
       toast('ok', 'Handoff to ' + agent + ' \u00b7 ' + res.messages + ' messages');
       setLast('Handoff brief ready');
@@ -2436,48 +2505,144 @@
     return out;
   }
 
-  function workingGlyph(label, busy) {
-    var node = el('span', 'work-dot' + (busy ? ' busy' : ''));
+  /* A pane is working while output flows, needs approval when the CLI asks a
+     yes/no question, failed on a non-zero exit, and done once a turn goes
+     quiet. A project row shows the most urgent state of its panes. */
+  var STATUS_RANK = { idle: 0, done: 1, working: 2, failed: 3, approval: 4 };
+
+  function statusRank(status) {
+    return STATUS_RANK[status] || 0;
+  }
+
+  function statusLabel(status, count) {
+    if (status === 'approval') return 'needs approval';
+    if (status === 'failed') return 'failed';
+    if (status === 'working') return count > 1 ? count + ' working' : 'working';
+    if (status === 'done') return 'done';
+    return count > 1 ? count + ' running' : 'running';
+  }
+
+  function aggregateStatus(list) {
+    var best = 'idle';
+    for (var i = 0; i < (list ? list.length : 0); i++) {
+      if (statusRank(list[i].status) > statusRank(best)) best = list[i].status;
+    }
+    return best;
+  }
+
+  function paintStatus(node, status, label) {
+    if (!node) return;
+    node.className = 'work-dot is-' + (status || 'idle');
     node.setAttribute('role', 'status');
-    node.setAttribute('aria-label', label || 'working');
-    node.title = label || 'working';
+    node.setAttribute('aria-label', label || 'status');
+    node.title = label || '';
+  }
+
+  function workingGlyph(label, status) {
+    var node = el('span', null);
+    paintStatus(node, status || 'idle', label);
     return node;
   }
 
-  /* A pane counts as busy while it is still printing. Rebuilding the whole
-     sidebar on every chunk would steal clicks, so only the dot classes change. */
-  var busyMarks = [];
+  function aggregateLabel(list) {
+    return statusLabel(aggregateStatus(list), (list || []).length);
+  }
+
+  /* A pane still counts for the project mark after it exits, so a crash stays
+     visible until the tab is closed. */
+  function statusTabsAt(path) {
+    var owner = normPath(path);
+    var out = [];
+    for (var i = 0; i < tabs.length; i++) {
+      var tab = tabs[i];
+      if (tab.kind !== 'terminal' || tab.closed) continue;
+      if (!tab.spawned && !tab.exited) continue;
+      if (projectForPath(tab.cwd || appRoot) !== owner) continue;
+      out.push(tab);
+    }
+    return out;
+  }
+
+  var STATUS_APPROVAL = /(waiting for approval|requires approval|approval needed|do you want to (proceed|run|allow|continue|trust)|would you like to (proceed|run|allow)|run (this|the) command|allow (this|the) (command|tool|action|edit)|permission to (run|use|edit|write)|press enter to confirm|\(y\/n\)|\[y\/n\]|\[y\/n\/a\]|(?:❯|›|>)\s*1\.\s*yes)/i;
+
+  function looksLikeApproval(text) {
+    if (STATUS_APPROVAL.test(text)) return true;
+    return /\b1[.)]\s*(yes|allow|approve|proceed)/i.test(text) &&
+      /\b2[.)]\s*(no|deny|cancel)/i.test(text);
+  }
+
+  function stripAnsi(text) {
+    return String(text || '')
+      .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, ' ')
+      .replace(/\r/g, '\n');
+  }
+
+  function setTabStatus(tab, status) {
+    if (!tab || tab.kind !== 'terminal' || tab.closed) return;
+    if (!status) status = 'idle';
+    if (tab.status === status) return;
+    tab.status = status;
+    paintTabStatus(tab);
+    refreshBusyDots();
+  }
+
+  function paintTabStatus(tab) {
+    if (!tab || !tab.statusNode) return;
+    var label = statusLabel(tab.status || 'idle', 1);
+    tab.statusNode.className = 'tab-status is-' + (tab.status || 'idle');
+    tab.statusNode.setAttribute('role', 'status');
+    tab.statusNode.setAttribute('aria-label', label);
+    tab.statusNode.title = label;
+  }
 
   function trackBusy(node, tabsAt) {
     busyMarks.push({ node: node, tabsAt: tabsAt });
+    paintStatus(node, aggregateStatus(tabsAt()), aggregateLabel(tabsAt()));
     return node;
   }
 
-  function recentlyActive(list, now) {
-    for (var i = 0; i < list.length; i++) {
-      var tab = list[i];
-      if (tab && tab.lastOutput && now - tab.lastOutput < 3000) return true;
-    }
-    return false;
-  }
+  var busyMarks = [];
 
   function refreshBusyDots() {
-    var now = Date.now();
     for (var i = 0; i < busyMarks.length; i++) {
       var mark = busyMarks[i];
-      mark.node.className = recentlyActive(mark.tabsAt(), now) ? 'work-dot busy' : 'work-dot';
+      var list = mark.tabsAt() || [];
+      paintStatus(mark.node, aggregateStatus(list), aggregateLabel(list));
     }
   }
 
-  var busyTick = 0;
-  function noteOutput(tab) {
+  function noteInput(tab) {
+    if (!tab || tab.kind !== 'terminal') return;
+    tab.tailText = '';
+    if (tab.settleTimer) {
+      clearTimeout(tab.settleTimer);
+      tab.settleTimer = 0;
+    }
+    setTabStatus(tab, 'working');
+  }
+
+  function noteOutput(tab, text) {
     if (!tab) return;
     tab.lastOutput = Date.now();
-    if (busyTick) return;
-    busyTick = setTimeout(function () {
-      busyTick = 0;
-      refreshBusyDots();
-    }, 700);
+    if (text) {
+      tab.tailText = ((tab.tailText || '') + stripAnsi(text)).slice(-4000);
+      if (looksLikeApproval(tab.tailText)) {
+        if (tab.settleTimer) {
+          clearTimeout(tab.settleTimer);
+          tab.settleTimer = 0;
+        }
+        setTabStatus(tab, 'approval');
+        return;
+      }
+      if (tab.status !== 'approval') setTabStatus(tab, 'working');
+    }
+    if (tab.status === 'approval') return;
+    if (tab.settleTimer) clearTimeout(tab.settleTimer);
+    tab.settleTimer = setTimeout(function () {
+      tab.settleTimer = 0;
+      if (tab.closed || tab.exited) return;
+      if (tab.status === 'working') setTabStatus(tab, 'done');
+    }, 5000);
   }
 
   var projExpanded = storedMap('omnix.projExpanded');
@@ -2542,7 +2707,6 @@
     }
     box.textContent = '';
     busyMarks = [];
-    var now = Date.now();
     var tracked = trackedByPath();
 
     /* Most recently used first, using the indexed timestamp when the path has
@@ -2574,6 +2738,7 @@
       let key = normPath(p.path);
       var expanded = !!projExpanded[key];
       var live = liveTabsAt(p.path);
+      var marks = statusTabsAt(p.path);
       var running = sessions.slice();
       for (var l = 0; l < live.length; l++) {
         var lt = live[l];
@@ -2617,10 +2782,10 @@
       var body = el('div', 'proj-body');
       var top = el('div', 'proj-top');
       top.appendChild(el('span', 'ws-name', name));
-      if (live.length) {
+      if (marks.length) {
         top.appendChild(trackBusy(
-          workingGlyph(live.length + ' running', recentlyActive(live, now)),
-          function () { return liveTabsAt(p.path); }
+          workingGlyph(aggregateLabel(marks), aggregateStatus(marks)),
+          function () { return statusTabsAt(p.path); }
         ));
       }
       if (ws && ws.sleeping) top.appendChild(el('span', 'ws-state sleeping', 'Sleeping'));
@@ -2675,7 +2840,7 @@
             line.appendChild(el('span', 'inv-title', label));
             if (liveTab && liveTab.spawned && !liveTab.exited) {
               line.appendChild(trackBusy(
-                workingGlyph('agent running', recentlyActive([liveTab], now)),
+                workingGlyph(statusLabel(liveTab.status, 1), liveTab.status),
                 function () { return liveTab ? [liveTab] : []; }
               ));
             }
@@ -3410,6 +3575,172 @@
     }
   }
 
+  /* ---------- panel resize ---------- */
+
+  /* The sidebar and history panel are px-wide CSS variables, so a drag only
+     rewrites one custom property. The tabstrip brand reads the same variable,
+     which keeps the window bar aligned with the sidebar at any width. */
+  var PANEL_CFG = {
+    side: { key: 'omnix.sideW', varName: '--side-w', min: 180, max: 420, def: 236 },
+    hist: { key: 'omnix.histW', varName: '--hist-w', min: 220, max: 520, def: 292 }
+  };
+
+  function panelViewport() {
+    var width = Number(window.innerWidth);
+    return width > 0 ? width : 1240;
+  }
+
+  function panelStored(kind) {
+    var width = Number(storeGet(PANEL_CFG[kind].key));
+    return width > 0 ? width : 0;
+  }
+
+  function panelLimit(kind) {
+    var cfg = PANEL_CFG[kind];
+    var room = panelViewport() - (kind === 'side' ? 470 : 510);
+    return Math.max(cfg.min, Math.min(cfg.max, room));
+  }
+
+  function setPanelWidth(kind, px) {
+    var cfg = PANEL_CFG[kind];
+    var width = Math.round(Number(px));
+    if (!isFinite(width) || width <= 0) return 0;
+    width = Math.max(cfg.min, Math.min(panelLimit(kind), width));
+    var app = $('app');
+    if (app && app.style) {
+      if (typeof app.style.setProperty === 'function') {
+        app.style.setProperty(cfg.varName, width + 'px');
+      } else {
+        app.style[cfg.varName] = width + 'px';
+      }
+    }
+    return width;
+  }
+
+  function clearPanelWidth(kind) {
+    var cfg = PANEL_CFG[kind];
+    var app = $('app');
+    if (app && app.style) {
+      if (typeof app.style.removeProperty === 'function') app.style.removeProperty(cfg.varName);
+      else delete app.style[cfg.varName];
+    }
+  }
+
+  function applyStoredPanelWidth(kind) {
+    var stored = panelStored(kind);
+    if (stored) setPanelWidth(kind, stored);
+  }
+
+  function forgetPanelWidth(kind) {
+    clearPanelWidth(kind);
+    try {
+      if (window.localStorage) window.localStorage.removeItem(PANEL_CFG[kind].key);
+    } catch (err) { /* private mode */ }
+  }
+
+  function currentPanelWidth(kind) {
+    var app = $('app');
+    var inline = '';
+    if (app && app.style && typeof app.style.getPropertyValue === 'function') {
+      inline = app.style.getPropertyValue(PANEL_CFG[kind].varName);
+    }
+    var width = parseFloat(inline);
+    if (width > 0) return width;
+    var node = kind === 'side' ? $('sidebar') : $('agents-panel');
+    var rect = node && node.getBoundingClientRect ? node.getBoundingClientRect() : null;
+    return (rect && rect.width) || PANEL_CFG[kind].def;
+  }
+
+  function wirePanelResizer(kind) {
+    var handle = $(kind + '-resize');
+    if (!handle) return;
+    var cfg = PANEL_CFG[kind];
+    var startX = 0;
+    var startW = 0;
+    var last = 0;
+    var frame = 0;
+    var dragging = false;
+
+    function paint(px) {
+      last = setPanelWidth(kind, px);
+    }
+
+    function begin(ev) {
+      if (ev && ev.button != null && ev.button !== 0) return;
+      dragging = true;
+      startX = Number(ev && ev.clientX) || 0;
+      startW = currentPanelWidth(kind);
+      last = startW;
+      if (handle.classList) handle.classList.add('dragging');
+      if (document.body && document.body.classList) document.body.classList.add('is-resizing');
+      if (ev && ev.preventDefault) ev.preventDefault();
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', stop);
+      window.addEventListener('pointercancel', stop);
+    }
+
+    function move(ev) {
+      if (!dragging) return;
+      var delta = (Number(ev && ev.clientX) || 0) - startX;
+      var next = kind === 'side' ? startW + delta : startW - delta;
+      if (typeof window.requestAnimationFrame === 'function') {
+        if (frame) window.cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(function () { frame = 0; paint(next); });
+      } else {
+        paint(next);
+      }
+    }
+
+    function stop() {
+      if (!dragging) return;
+      dragging = false;
+      if (frame) {
+        if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(frame);
+        frame = 0;
+      }
+      if (handle.classList) handle.classList.remove('dragging');
+      if (document.body && document.body.classList) document.body.classList.remove('is-resizing');
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      if (last) storeSet(cfg.key, String(last));
+      refreshBusyDots();
+    }
+
+    handle.addEventListener('pointerdown', guard(begin));
+    handle.addEventListener('dblclick', guard(function () { forgetPanelWidth(kind); }));
+    handle.addEventListener('keydown', guard(function (ev) {
+      var step = ev && ev.shiftKey ? 48 : 16;
+      var dir = ev && ev.key === 'ArrowRight' ? 1 : ev && ev.key === 'ArrowLeft' ? -1 : 0;
+      if (!dir) return;
+      if (ev.preventDefault) ev.preventDefault();
+      var next = kind === 'side'
+        ? currentPanelWidth(kind) + dir * step
+        : currentPanelWidth(kind) - dir * step;
+      var width = setPanelWidth(kind, next);
+      if (width) storeSet(cfg.key, String(width));
+    }));
+  }
+
+  function wirePanelResizers() {
+    wirePanelResizer('side');
+    wirePanelResizer('hist');
+    var resizeTimer = 0;
+    window.addEventListener('resize', function () {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        resizeTimer = 0;
+        var app = $('app');
+        if (!app || !app.classList) return;
+        if (!app.classList.contains('side-collapsed')) applyStoredPanelWidth('side');
+        if (!app.classList.contains('hist-collapsed')) applyStoredPanelWidth('hist');
+      }, 120);
+    });
+    var app = $('app');
+    if (!app || !app.classList || !app.classList.contains('side-collapsed')) applyStoredPanelWidth('side');
+    if (app && app.classList && !app.classList.contains('hist-collapsed')) applyStoredPanelWidth('hist');
+  }
+
   /* ---------- panel collapse ---------- */
 
   function setSideCollapsed(collapsed) {
@@ -3419,6 +3750,8 @@
       if (collapsed) app.classList.add('side-collapsed');
       else app.classList.remove('side-collapsed');
     }
+    if (collapsed) clearPanelWidth('side');
+    else applyStoredPanelWidth('side');
     if (btn) {
       btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       btn.title = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
@@ -3441,6 +3774,8 @@
       else panel.classList.remove('collapsed');
     }
     if (btn) btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    if (collapsed) clearPanelWidth('hist');
+    else applyStoredPanelWidth('hist');
     if (rail) {
       rail.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
       rail.setAttribute('aria-current', collapsed ? 'false' : 'true');
@@ -3486,10 +3821,15 @@
   EVENTS.ptyData = function (payload) {
     var tab = byPaneKey(payload.paneKey);
     if (!tab) return;
-    noteOutput(tab);
-    if (!tab.term) return;
     var bytes = b64ToBytes(payload.dataBase64);
     if (!bytes) return;
+    noteOutput(tab, bytesText(bytes));
+    if (tab.handoffSend) {
+      var send = tab.handoffSend;
+      tab.handoffSend = null;
+      setTimeout(send, 400);
+    }
+    if (!tab.term) return;
     tab.term.write(bytes);
   };
 
@@ -3498,13 +3838,19 @@
     if (!tab || tab.exited) return;
     tab.exited = true;
     tab.spawned = false;
+    tab.handoffSend = null;
+    if (tab.settleTimer) {
+      clearTimeout(tab.settleTimer);
+      tab.settleTimer = 0;
+    }
     var code = payload.code == null ? '?' : payload.code;
     if (tab.term) {
       tab.term.write('\r\n\x1b[38;5;244m[pty exit ' + code + ']\x1b[0m\r\n');
     }
     tab.title = tab.title + ' (exited)';
+    setTabStatus(tab, code === 0 ? 'done' : 'failed');
     renderTabs();
-    updateWorkingMarks();
+    refreshBusyDots();
     setLast('Terminal exited (code ' + code + ')');
   };
 
@@ -3545,6 +3891,7 @@
   }
 
   function wire() {
+    wirePanelResizers();
     fillAgents($('search-agent'), 'any agent', '');
     fillAgentSelect($('handoff-target'), 'opencode2');
 

@@ -973,6 +973,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "messages": messages,
                 "sourceCwd": source_cwd,
                 "preview": text.chars().take(1400).collect::<String>(),
+                "prompt": text,
             }))
         })(),
         "selftest" => {

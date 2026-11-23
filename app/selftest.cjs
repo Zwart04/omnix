@@ -73,6 +73,7 @@ function fakeEl(tag) {
 const byId = new Map();
 [
   'app', 'app-version', 'sidebar', 'workspace-list', 'tab-list', 'panes', 'tabstrip',
+  'side-resize', 'hist-resize',
   'tabstrip-tabs', 'new-project', 'pane-empty', 'pane-empty-terminal', 'pane-empty-browser',
   'project-modal', 'project-close', 'project-cancel', 'project-add', 'project-path', 'project-error',
   'tab-new', 'tab-new-menu', 'strip-command', 'tab-new-terminal', 'tab-new-browser',
@@ -125,6 +126,8 @@ const posted = [];
 const docHandlers = {};
 
 const storage = new Map();
+storage.set('omnix.sideW', '310');
+storage.set('omnix.histW', '340');
 
 global.window = {
   localStorage: {
@@ -134,6 +137,9 @@ global.window = {
   },
   ipc: { postMessage(raw) { posted.push(JSON.parse(raw)); } },
   atob(value) { return Buffer.from(value, 'base64').toString('binary'); },
+  TextDecoder: class FakeDecoder {
+    decode(bytes) { return Buffer.from(bytes).toString('utf8'); }
+  },
   addEventListener() {},
   Terminal: class FakeTerminal {
     constructor() {
@@ -257,6 +263,8 @@ require('./app.js');
 
   const bootRows = byClass('workspace-list', 'proj-row');
   assert.strictEqual(bootRows.length, 2, 'only saved projects render, never every indexed folder');
+  assert.strictEqual(byId.get('app').style['--side-w'], '310px',
+    'the saved sidebar width applies at boot');
   assert.strictEqual(all(bootRows[0], (n) => n.className === 'ws-name')[0].textContent, 'crm-sb',
     'projects sorted by indexed updatedAt desc');
   assert.strictEqual(all(bootRows[1], (n) => n.className === 'ws-name')[0].textContent, 'omnix',
@@ -655,6 +663,8 @@ require('./app.js');
   assert.ok(byId.get('app').classList.contains('hist-collapsed'), 'history panel collapses');
   byId.get('rail-agents').handlers.click(noop);
   assert.ok(!byId.get('app').classList.contains('hist-collapsed'), 'history panel reopens');
+  assert.strictEqual(byId.get('app').style['--hist-w'], '340px',
+    'the saved history width comes back when the panel reopens');
 
   // ---- settings / agents ----
   panelButtons[3].handlers.click(noop());
@@ -812,7 +822,8 @@ require('./app.js');
   assert.strictEqual(handoffReq.args.sessionId, 'uuid-1');
   assert.strictEqual(handoffReq.args.context, 'focused');
   window.__omnix.reply(handoffReq.id, true,
-    '{"agent":"codex","cwd":"/repo","brief":"/repo/.omnix/handoffs/1-to-codex.md","messages":12}');
+    '{"agent":"codex","cwd":"/repo","brief":"/repo/.omnix/handoffs/1-to-codex.md",' +
+    '"prompt":"# Handoff to codex\\n\\n## Stopping point\\n\\ncontinue","messages":12}');
   await tick();
   const handoffSpawn = posted[posted.length - 1];
   assert.strictEqual(handoffSpawn.cmd, 'ptySpawn', 'handoff starts a new agent session');
@@ -821,6 +832,19 @@ require('./app.js');
   window.__omnix.reply(handoffSpawn.id, true, '{"paneKey":"hf:codex:1","pid":79}');
   await tick();
   assert.strictEqual(byId.get('handoff-modal').hidden, true, 'handoff modal closes');
+
+  // the brief is typed into the new agent once its TUI prints the first frame
+  window.__omnix.emit('ptyData', {
+    paneKey: handoffSpawn.args.paneKey,
+    dataBase64: Buffer.from('agent ready').toString('base64')
+  });
+  await new Promise((r) => setTimeout(r, 450));
+  const handoffWrite = posted.filter((r) => r.cmd === 'ptyWrite').pop();
+  assert.ok(handoffWrite, 'handoff types the brief into the new terminal');
+  assert.ok(handoffWrite.args.data.startsWith('\x1b[200~'), 'brief arrives as a bracketed paste');
+  assert.match(handoffWrite.args.data, /# Handoff to codex/, 'the prompt carries the transcript');
+  assert.ok(handoffWrite.args.data.endsWith('\x1b[201~\r'),
+    'the prompt is submitted with enter');
 
   byId.get('tab-new').handlers.click(noop());
   byId.get('tab-new-menu').children[1].handlers.click(noop());
@@ -969,7 +993,7 @@ require('./app.js');
     paneKey: projectSpawn.args.paneKey, dataBase64: 'aGk='
   }));
   await new Promise((resolve) => setTimeout(resolve, 800));
-  assert.ok(byClass('workspace-list', 'busy').length >= 1,
+  assert.ok(byClass('workspace-list', 'is-working').length >= 1,
     'printing pane animates its project mark');
 
   const beforeReuse = posted.length;
@@ -977,6 +1001,23 @@ require('./app.js');
   await tick();
   assert.strictEqual(posted.length, beforeReuse,
     'clicking an open project activates its tab instead of spawning another');
+
+  // tab marks: working, approval, failed, done
+  const statusMarks = byClass('tabstrip-tabs', 'tab-status');
+  assert.ok(statusMarks.length >= 1, 'terminal tabs carry a status mark');
+  assert.ok(statusMarks.some((n) => /is-working/.test(n.className)),
+    'a printing terminal spins in the tab strip');
+  window.__omnix.emit('ptyData', {
+    paneKey: projectSpawn.args.paneKey,
+    dataBase64: Buffer.from('Do you want to proceed?\n❯ 1. Yes\n  2. No').toString('base64')
+  });
+  await tick();
+  assert.ok(byClass('tabstrip-tabs', 'is-approval').length >= 1,
+    'an approval question turns the tab amber');
+  window.__omnix.emit('ptyExit', { paneKey: projectSpawn.args.paneKey, code: 2 });
+  await tick();
+  assert.ok(byClass('tabstrip-tabs', 'is-failed').length >= 1,
+    'a non-zero exit marks the tab failed');
 
   byId.get('tab-new-menu').hidden = true;
   byId.get('tab-new').handlers.click(noop());

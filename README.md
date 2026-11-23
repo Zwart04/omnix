@@ -21,10 +21,10 @@ Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.8_amd64.deb` | `sudo apt install ./omnix_0.6.8_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.6.8-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.8-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.9_amd64.deb` | `sudo apt install ./omnix_0.6.9_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.6.9-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.9-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (universal) | `Omnix-0.6.8-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| macOS 11+ (universal) | `Omnix-0.6.9-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -64,8 +64,13 @@ Yang sudah jalan dan dites di repo ini:
   sedangkan collapse sidebar, Settings, dan toggle Agents tinggal di bar jendela. Grup itu hanya berisi folder yang kamu pin lewat `+ Project`;
   indexed history cuma memperkaya baris yang path-nya cocok, tidak menambah
   folder. Baris project satu baris; twisty membuka branch dan sesi agent yang
-  terlacak, dan dot hijau menandai pty yang hidup dengan cwd di folder
-  itu; dot berputar saat pane masih mencetak output. Tab atas hanya berisi tab
+  terlacak, dan satu mark menandai keadaan pane: spinner biru saat bekerja,
+  titik amber saat agent minta persetujuan (`[y/n]`, "Do you want to proceed"),
+  titik merah saat pty keluar non-zero, dan centang hijau saat giliran selesai.
+  Tab atas memakai mark yang sama, jadi status terlihat tanpa membuka pane.
+  Sidebar dan panel `Agents` bisa di-resize lewat tepinya (drag, panah saat
+  fokus, double-click untuk reset); lebarnya disimpan di `localStorage` dan
+  tidak berubah saat collapse/expand. Tab atas hanya berisi tab
   project yang aktif: klik project lain menukar strip, bukan menumpuk tab.
   Tab baru, termasuk agent dari menu `+`, mewarisi folder tab aktif. Tab
   memakai nama project atau label pane, bukan judul window shell, supaya dua
@@ -117,7 +122,10 @@ Yang sudah jalan dan dites di repo ini:
   dan muncul satu toast.
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
-  sama. Panel `Agents` mengikuti state terakhir: terbuka/tertutup, scope,
+  sama dan brief itu langsung diketik ke terminalnya sebagai bracketed paste
+  plus Enter, tanpa perlu copy-paste manual. `Focused` membawa ringkasan
+  stopping point + 40 pesan terakhir; `Full` membawa seluruh transkrip (dibatasi
+  160k karakter). Panel `Agents` mengikuti state terakhir: terbuka/tertutup, scope,
   sort, grup yang dilipat, dan filter agent disimpan di `localStorage`, jadi
   tidak hilang setelah aplikasi ditutup. Index sesi disimpan di
   `~/.omnix/history.sqlite`; rescan hanya mem-parse transkrip yang baru atau

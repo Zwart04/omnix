@@ -999,8 +999,45 @@ mod tests {
     }
 
     #[test]
-    fn trailing_punctuation_and_camel_case_still_match() {
-        let dir = temp_dir("punct");
+    fn transcript_keeps_recent_messages_for_handoff() {
+        let dir = temp_dir("transcript");
+        let db = dir.join("history.sqlite");
+        let conn = open(&db).unwrap();
+        conn.execute(
+            "INSERT INTO sessions(id,agent,session_id,file_path,title,cwd,resume_command)
+             VALUES(1,'codex','s1','/tmp/s1.jsonl','fix tabs','/repo','codex resume s1')",
+            [],
+        )
+        .unwrap();
+        for i in 1..=45 {
+            conn.execute(
+                "INSERT INTO messages(id,session_row_id,role,text_truncated)
+                 VALUES(?1,1,'user',0)",
+                [i],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages_fts(rowid,user_text,assistant_text,tool_text,identifiers)
+                 VALUES(?1,?2,'','','')",
+                rusqlite::params![i, format!("msg-{i}")],
+            )
+            .unwrap();
+        }
+
+        let focused = transcript(&conn, "codex", "s1", true).unwrap();
+        assert_eq!(focused.title, "fix tabs");
+        assert_eq!(focused.cwd.as_deref(), Some("/repo"));
+        assert_eq!(focused.messages, 40, "focused keeps the last 40 messages");
+        assert!(focused.text.contains("msg-45"), "newest message survives");
+        assert!(!focused.text.contains("msg-1\n"), "focused drops the start");
+
+        let full = transcript(&conn, "codex", "s1", false).unwrap();
+        assert_eq!(full.messages, 45);
+        assert!(full.text.contains("msg-1\n"), "full keeps the whole session");
+    }
+
+    #[test]
+    fn trailing_punctuation_and_camel_case_still_match() {        let dir = temp_dir("punct");
         let tx_dir = dir.join("transcripts");
         fs::create_dir_all(&tx_dir).unwrap();
         let mut f = fs::File::create(tx_dir.join("s2.jsonl")).unwrap();

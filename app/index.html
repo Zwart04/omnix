@@ -11,6 +11,10 @@
 </head>
 <body>
   <div id="app">
+    <div id="side-resize" class="panel-resizer" role="separator" aria-orientation="vertical"
+         aria-label="Resize sidebar" tabindex="0"></div>
+    <div id="hist-resize" class="panel-resizer" role="separator" aria-orientation="vertical"
+         aria-label="Resize history panel" tabindex="0"></div>
     <aside id="sidebar" aria-label="Workspace">
       <div class="side-search-row">
         <label class="side-search" id="side-search-box">
@@ -381,7 +385,8 @@
         </button>
       </header>
       <p class="modal-sub">
-        Start a fresh Agent session from this stopping point. The original session stays unchanged.
+        Start a fresh Agent session from this stopping point. The brief is typed
+        into the new terminal automatically; the original session stays unchanged.
       </p>
 
       <div class="modal-session">
@@ -397,7 +402,7 @@
         <button class="radio-row" type="button" role="radio" data-context="focused"
                 aria-checked="true">
           <span class="radio-mark" aria-hidden="true"></span>
-          <span>Focused handoff <span class="radio-note">(Recommended)</span></span>
+          <span>Focused handoff <span class="radio-note">(summary + recent messages)</span></span>
         </button>
         <button class="radio-row" type="button" role="radio" data-context="full"
                 aria-checked="false">
