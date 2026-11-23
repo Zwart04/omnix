@@ -870,28 +870,6 @@
     return btn;
   }
 
-  var uptimeTimer = null;
-
-  function fmtUptime(ms) {
-    var sec = Math.max(0, Math.floor(ms / 1000));
-    var h = Math.floor(sec / 3600);
-    var m = Math.floor((sec % 3600) / 60);
-    var s = sec % 60;
-    function pad(n) { return n < 10 ? '0' + n : String(n); }
-    return h > 0 ? h + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s);
-  }
-
-  function updateUptimes() {
-    if (document.hidden) return;
-    var now = Date.now();
-    for (var i = 0; i < tabs.length; i++) {
-      var tab = tabs[i];
-      if (tab.kind === 'terminal' && tab.headTime && tab.startedAt) {
-        tab.headTime.textContent = fmtUptime(now - tab.startedAt);
-      }
-    }
-  }
-
   function paneHeadBtn(cls, label, svg, run) {
     var btn = el('button', 'pane-head-btn ' + cls);
     btn.type = 'button';
@@ -905,15 +883,13 @@
     return btn;
   }
 
-  /* Split panes get a thin bar with split, handoff, close, and a live uptime.
-     A lone terminal keeps only the floating split pill, so it stays clean. */
+  /* Split panes get a thin bar with split, handoff, and close. A lone
+     terminal keeps only the floating split pill, so it stays clean. */
   function makePaneHead(tab) {
     var head = el('div', 'pane-head');
     var title = el('span', 'pane-head-title', tab.title);
     title.title = tab.title;
     head.appendChild(title);
-    var time = el('span', 'pane-head-time mono', '0:00');
-    head.appendChild(time);
     var actions = el('div', 'pane-head-actions');
     var split = paneHeadBtn('pane-head-split', 'Split terminal', SPLIT_ICON, function () {
       activate(tab);
@@ -934,13 +910,7 @@
     actions.appendChild(close);
     head.appendChild(actions);
     tab.el.insertBefore(head, tab.host);
-    tab.headTime = time;
     tab.headSplit = split;
-    tab.startedAt = Date.now();
-    updateUptimes();
-    if (!uptimeTimer) {
-      uptimeTimer = setInterval(updateUptimes, 1000);
-    }
   }
 
   /* New terminals inherit the folder the user is already working in: the
@@ -2111,15 +2081,9 @@
       }
       if (over) chip.classList.add('over');
       else chip.classList.remove('over');
-      if (appRss > 0) {
-        chip.textContent = 'App ' + fmtBytes(appRss) + ' \u00b7 AI ' + fmtBytes(aiRss);
-        chip.title = 'Omnix total ' + fmtBytes(appRss) + ' (' + (app.processes || 0) +
-          ' processes), AI terminals ' + fmtBytes(aiRss) + ' (' + (ai.processes || 0) + ')' +
-          (over ? ' \u2014 over the ' + fmtBytes(Number(budget.limitBytes) || 0) + ' AI budget' : '');
-      } else {
-        chip.textContent = 'RAM -';
-        chip.title = 'process memory unavailable';
-      }
+      chip.title = 'AI usage and memory' +
+        (over ? ' \u2014 AI terminals over the ' + fmtBytes(Number(budget.limitBytes) || 0) +
+          ' budget' : '');
     }
 
     var totalNode = $('memory-total');
@@ -2203,12 +2167,58 @@
     return best;
   }
 
+  /* "Gemini Models \u00b7 Weekly" becomes "Gemini wk" in the status bar. */
+  function compactWindow(win) {
+    var parts = String((win && win.label) || '').split('\u00b7');
+    if (parts.length < 2) return '';
+    var group = parts[0].trim().split(/\s+/)[0];
+    var span = parts[1].trim().toLowerCase();
+    if (!group) return '';
+    if (span.indexOf('week') === 0) span = 'wk';
+    else if (span.indexOf('five hour') === 0 || span === '5h') span = '5h';
+    else span = span.replace(/[^a-z0-9]+/g, '').slice(0, 4);
+    return span ? group + ' ' + span : group;
+  }
+
+  /* Bottom bar, like Orca: the brand mark, the window closest to its limit,
+     and the percentage used. The modal keeps the full detail. */
+  function renderUsageStrip(agents) {
+    var strip = $('usage-strip');
+    if (!strip) return;
+    strip.textContent = '';
+    var shown = 0;
+    for (var i = 0; i < agents.length; i++) {
+      var agent = agents[i] || {};
+      var best = peakWindow(Array.isArray(agent.windows) ? agent.windows : []);
+      if (!best) continue;
+      var name = String(agent.agent || 'agent');
+      var key = iconKey(name);
+      var item = el('span', 'usage-item is-' + key);
+      item.appendChild(iconNode(name, 'usage-mark'));
+      var tag = key === 'antigravity' ? compactWindow(best.win) : '';
+      if (tag) item.appendChild(el('span', 'usage-tag', tag));
+      item.appendChild(el('span', 'usage-pct', Math.round(best.used) + '%'));
+      if (key !== 'antigravity') {
+        item.appendChild(el('span', 'usage-reset', fmtReset(best.win.resetsInSeconds)));
+      }
+      item.title = agentLabel(name) +
+        (best.win.label ? ' \u00b7 ' + String(best.win.label) : '') +
+        ' \u00b7 ' + Math.round(best.used) + '% used \u00b7 resets in ' +
+        fmtReset(best.win.resetsInSeconds);
+      strip.appendChild(item);
+      shown++;
+    }
+    if (!shown) strip.appendChild(el('span', 'usage-strip-empty', '\u2014'));
+  }
+
   function renderUsage() {
     var ram = usageData.ram || {};
     var total = Number(ram.totalBytes) || 0;
     var used = Number(ram.usedBytes) || 0;
     var pct = total > 0 ? Math.round(used / total * 100) : null;
     var agents = Array.isArray(usageData.agents) ? usageData.agents : [];
+
+    renderUsageStrip(agents);
 
     var ramNode = $('usage-ram');
     if (ramNode) {
@@ -2269,6 +2279,9 @@
   function startUsagePoll() {
     if (usageTimer) return;
     setTimeout(function () { refreshUsage(); }, 4000);
+    /* `agy` answers on a worker started by the first read; a second read
+       picks the quota up without waiting for the full minute. */
+    setTimeout(function () { refreshUsage(); }, 8000);
     usageTimer = setInterval(function () {
       if (!document.hidden) refreshUsage();
     }, 60000);
@@ -3630,8 +3643,12 @@
       sideSearch.addEventListener('keydown', guard(onSideSearchKey));
     }
 
-    var usageChip = $('usage-chip');
-    if (usageChip) usageChip.addEventListener('click', guard(openUsage));
+    var usageOpen = $('usage-open');
+    if (usageOpen) usageOpen.addEventListener('click', guard(openUsage));
+    var usageStripRefresh = $('usage-strip-refresh');
+    if (usageStripRefresh) usageStripRefresh.addEventListener('click', guard(function () {
+      return refreshUsage();
+    }));
     var usageRefresh = $('usage-refresh');
     if (usageRefresh) usageRefresh.addEventListener('click', guard(function () {
       refreshMemory();

@@ -87,7 +87,8 @@ const byId = new Map();
   'win-min', 'win-max', 'win-close',
   'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
   'workspace-refresh',
-  'usage-chip', 'usage-modal', 'usage-close', 'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
+  'usage-chip', 'usage-open', 'usage-strip', 'usage-strip-refresh', 'usage-modal', 'usage-close',
+  'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
   'agent-settings', 'agent-settings-meta', 'agent-settings-refresh',
@@ -613,8 +614,8 @@ require('./app.js');
   assert.strictEqual(floatSplits[0].disabled, false, 'a pair can split again');
   const paneHeads = byClass('panes', 'pane-head');
   assert.strictEqual(paneHeads.length, 2, 'each split pane has a header');
-  const paneHeadTimes = byClass('panes', 'pane-head-time');
-  assert.match(paneHeadTimes[0].textContent, /^\d+:\d{2}$/, 'pane header shows uptime');
+  assert.strictEqual(byClass('panes', 'pane-head-time').length, 0,
+    'the header skips the uptime clock');
   assert.strictEqual(byClass('panes', 'pane-head-btn').length, 6,
     'header carries split, handoff, and close');
   byClass('panes', 'pane-head-handoff')[0].handlers.click({ stopPropagation: noop });
@@ -1016,7 +1017,7 @@ require('./app.js');
   assert.strictEqual(posted.length, beforeUpdate + 1, 'one install request');
 
   // usage modal: one limit line per agent, not aggregate token totals
-  byId.get('usage-chip').handlers.click(noop());
+  byId.get('usage-open').handlers.click(noop());
   await tick();
   const usageReq = lastReq('usage');
   assert.ok(usageReq, 'usage modal reads quotas');
@@ -1047,6 +1048,30 @@ require('./app.js');
   assert.strictEqual(codexPct.textContent, '100%', 'the tightest window wins');
   const agPct = all(limits[1], (n) => n.className === 'usage-window-pct')[0];
   assert.strictEqual(agPct.textContent, '1%', 'antigravity reports remaining quota');
+
+  // the same snapshot fills the Orca-style strip in the status bar
+  const stripItems = byClass('usage-strip', 'usage-item');
+  assert.strictEqual(stripItems.length, 2, 'bottom bar lists every agent');
+  const stripPcts = all(byId.get('usage-strip'), (n) => n.className === 'usage-pct');
+  assert.deepStrictEqual(stripPcts.map((n) => n.textContent), ['100%', '1%'],
+    'bottom bar shows the tightest window percentage');
+  const stripTags = all(byId.get('usage-strip'), (n) => n.className === 'usage-tag');
+  assert.strictEqual(stripTags.length, 1, 'only antigravity needs a window tag');
+  assert.strictEqual(stripTags[0].textContent, 'Gemini wk', 'window label is compact');
+  const stripMarks = byClass('usage-strip', 'usage-mark');
+  assert.strictEqual(stripMarks.length, 2, 'each entry has a brand mark');
+  const stripResets = byClass('usage-strip', 'usage-reset');
+  assert.strictEqual(stripResets.length, 1, 'codex keeps the reset countdown');
+  assert.strictEqual(stripResets[0].textContent, '15m', 'reset countdown is compact');
+  const beforeUsage = posted.length;
+  byId.get('usage-strip-refresh').handlers.click(noop());
+  assert.strictEqual(posted.length, beforeUsage + 1, 'strip refresh reads quotas again');
+  assert.strictEqual(posted[posted.length - 1].cmd, 'usage', 'refresh uses the usage RPC');
+  window.__omnix.reply(posted[posted.length - 1].id, true,
+    '{"ram":{},"agents":[]}');
+  await tick();
+  assert.strictEqual(byClass('usage-strip', 'usage-strip-empty').length, 1,
+    'an empty snapshot leaves a dash');
 
   // window controls talk to the host; the WebView draws no fake chrome
   const beforeWindow = posted.length;
