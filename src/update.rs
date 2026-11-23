@@ -224,17 +224,19 @@ fn install_asset(name: &str, bytes: &[u8], version: &str, _restart: bool) -> Res
 
 #[cfg(target_os = "linux")]
 fn install_asset(name: &str, bytes: &[u8], version: &str, restart: bool) -> Result<Value> {
-    if name == "omnix-linux-x64" && replace_exe(bytes).is_ok() {
-        if restart {
-            if let Ok(exe) = std::env::current_exe() {
-                let _ = Command::new(exe).spawn();
+    if name == "omnix-linux-x64" {
+        if let Ok(exe) = replace_exe(bytes) {
+            if restart {
+                /* current_exe() after the rename reports "... (deleted)", so
+                   relaunch the path captured before the swap. */
+                let _ = Command::new(&exe).spawn();
             }
+            return Ok(json!({
+                "ok": true,
+                "quit": restart,
+                "message": format!("Omnix {version} installed."),
+            }));
         }
-        return Ok(json!({
-            "ok": true,
-            "quit": restart,
-            "message": format!("Omnix {version} installed."),
-        }));
     }
     let path = temp_file(name, bytes)?;
     let opened = Command::new("xdg-open")
@@ -258,17 +260,25 @@ fn install_asset(name: &str, bytes: &[u8], version: &str, restart: bool) -> Resu
 }
 
 #[cfg(target_os = "linux")]
-fn replace_exe(bytes: &[u8]) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
+fn replace_exe(bytes: &[u8]) -> Result<PathBuf> {
     let exe = std::env::current_exe().context("locate the running binary")?;
+    replace_at(&exe, bytes)
+}
+
+/// Swap a binary in place and hand back the path captured before the rename.
+/// Afterwards `/proc/self/exe` reports `"<path> (deleted)"`, so the caller must
+/// relaunch this path instead of asking for `current_exe()` again.
+#[cfg(target_os = "linux")]
+fn replace_at(exe: &Path, bytes: &[u8]) -> Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
     let staged = exe.with_extension("new");
     fs::write(&staged, bytes).with_context(|| format!("write {}", staged.display()))?;
     fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
-    if let Err(err) = fs::rename(&staged, &exe) {
+    if let Err(err) = fs::rename(&staged, exe) {
         let _ = fs::remove_file(&staged);
         return Err(err).with_context(|| format!("replace {}", exe.display()));
     }
-    Ok(())
+    Ok(exe.to_path_buf())
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
@@ -293,5 +303,20 @@ mod tests {
         assert!(safe_name("omnix-setup-x64.exe").is_ok());
         assert!(safe_name("../evil").is_err());
         assert!(safe_name("").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn replace_hands_back_the_path_to_relaunch() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("omnix-update-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("omnix");
+        fs::write(&exe, b"old").unwrap();
+        let path = replace_at(&exe, b"new").unwrap();
+        assert_eq!(path, exe, "the pre-rename path is the one callers spawn");
+        assert_eq!(fs::read(&path).unwrap(), b"new");
+        assert_ne!(fs::metadata(&path).unwrap().permissions().mode() & 0o111, 0);
+        fs::remove_dir_all(&dir).ok();
     }
 }
