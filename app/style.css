@@ -1781,6 +1781,7 @@ button.tag:hover {
   max-width: 100%;
   max-height: calc(100vh - 80px);
   overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 20px;
   border: 1px solid var(--line);
   border-radius: var(--r-panel);
@@ -2668,8 +2669,6 @@ button.tag:hover {
   display: flex;
   flex-direction: column;
   gap: var(--s3);
-  max-height: 46vh;
-  overflow-y: auto;
 }
 
 .usage-agent {
@@ -2857,11 +2856,7 @@ button.tag:hover {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-height: 42vh;
   margin-top: 12px;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scroll) transparent;
 }
 
 .mem-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }

@@ -731,6 +731,81 @@ pub fn status(conn: &Connection, db_path: &Path) -> Result<(i64, i64, u64)> {
     Ok((sessions, messages, bytes))
 }
 
+/// Drop indexed sessions whose transcript file is gone. Only agents whose
+/// source root was walked are touched, and a folder we cannot read keeps its
+/// rows: a permission error must never look like a deleted transcript.
+pub fn prune_missing(
+    conn: &mut Connection,
+    agents: &[&str],
+    keep: &HashSet<String>,
+) -> Result<usize> {
+    let mut stale = Vec::new();
+    for agent in agents {
+        let mut stmt = conn.prepare("SELECT id, file_path FROM sessions WHERE agent=?1")?;
+        let rows = stmt.query_map([agent], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for row in rows {
+            let (id, path) = row?;
+            if keep.contains(&path) {
+                continue;
+            }
+            let parent = Path::new(&path).parent();
+            let gone = match parent {
+                Some(dir) => match fs::read_dir(dir) {
+                    Ok(_) => true,
+                    Err(_) => !dir.exists(),
+                },
+                None => false,
+            };
+            if gone {
+                stale.push(id);
+            }
+        }
+    }
+    if stale.is_empty() {
+        return Ok(0);
+    }
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    for id in &stale {
+        tx.execute(
+            "DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_row_id = ?1)",
+            params![id],
+        )?;
+        tx.execute(
+            "DELETE FROM messages WHERE session_row_id = ?1",
+            params![id],
+        )?;
+        tx.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+    }
+    tx.commit()?;
+    Ok(stale.len())
+}
+
+/// Post-scan housekeeping: truncate the WAL and vacuum only when free pages
+/// make the file noticeably larger than its contents. Returns bytes reclaimed.
+pub fn maintain(conn: &Connection) -> Result<u64> {
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA optimize;")?;
+    let free: i64 = conn
+        .query_row("PRAGMA freelist_count", [], |row| row.get(0))
+        .unwrap_or(0);
+    let page: i64 = conn
+        .query_row("PRAGMA page_size", [], |row| row.get(0))
+        .unwrap_or(0);
+    let freed = free.max(0) as u64 * page.max(0) as u64;
+    if freed >= 8 << 20 {
+        conn.execute_batch("VACUUM")?;
+        return Ok(freed);
+    }
+    Ok(0)
+}
+
+/// Force a compact pass, for `omnix history compact` after deleting transcripts.
+pub fn compact(conn: &Connection) -> Result<()> {
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA optimize;")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

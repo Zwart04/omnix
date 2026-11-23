@@ -42,9 +42,17 @@ daemon. Keep the footprint bounded:
   900 seconds).
 - Check the process tree with `omnix diagnostics memory --json` before
   starting another heavy tool.
-- Omnix treats `OMNIX_AI_RAM_MB` as an AI process budget. If the AI number in
-  the status bar turns amber, close idle terminals before opening more.
+- Omnix treats `OMNIX_AI_RAM_MB` as an AI process budget; without it the budget
+  is a quarter of system RAM. If the AI number in the status bar turns amber,
+  close idle terminals before opening more.
 - Do not keep a browser, language server, and multiple agents alive for a task
   that only needs one of them.
 - A stopped agent is not resumed by Omnix automatically unless the workspace
   state says so; save the session id before closing a pane.
+
+## Files
+
+Keep scratch output in the workspace or the system temp dir, not in the
+project root. Omnix state belongs in `.omnix/` (index, session records,
+handoffs, worktrees); do not edit those files by hand. `omnix history compact`
+reclaims the index after transcripts are deleted.

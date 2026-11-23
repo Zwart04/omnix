@@ -11,7 +11,7 @@ use crate::history::{self, Entry, TranscriptLine};
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -31,6 +31,7 @@ pub struct ScanReport {
     /// agent -> (sessions, messages)
     pub agents: BTreeMap<String, (usize, usize)>,
     pub unchanged: usize,
+    pub pruned: usize,
 }
 
 impl ScanReport {
@@ -443,16 +444,21 @@ pub fn scan(conn: &mut Connection) -> Result<ScanReport> {
     let _guard = SCAN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut report = ScanReport::default();
 
+    let codex = codex_root();
+    let claude = claude_root();
     let mut files = Vec::new();
-    walk_jsonl(&codex_root(), &mut files);
-    walk_jsonl(&claude_root(), &mut files);
+    walk_jsonl(&codex, &mut files);
+    walk_jsonl(&claude, &mut files);
     files.sort();
+    let keep: HashSet<String> = files
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
 
     let verbose = std::env::var_os("OMNIX_GUI_PROBE").is_some();
     if verbose {
         eprintln!("scan: {} jsonl files", files.len());
     }
-    let codex = codex_root();
     for path in files {
         let key = path.to_string_lossy().to_string();
         if is_fresh(conn, &key, history::file_mtime(&path)) {
@@ -482,6 +488,18 @@ pub fn scan(conn: &mut Connection) -> Result<ScanReport> {
             report.skipped += 1;
         }
     }
+
+    // Only prune agents whose roots exist here; a missing ~/.codex must not
+    // wipe the sessions of someone who never installed Codex.
+    let mut agents = Vec::new();
+    if codex.is_dir() {
+        agents.push("codex");
+    }
+    if claude.is_dir() {
+        agents.push("claude");
+    }
+    report.pruned = history::prune_missing(conn, &agents, &keep)?;
+    history::maintain(conn)?;
 
     Ok(report)
 }

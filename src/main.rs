@@ -37,6 +37,7 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
   omnix history index [dir] [--agent A] [--cwd PATH]
   omnix history search <query...> [--agent A] [--conversation] [--newest] [--limit N] [--json]
   omnix history scan             index every local agent transcript
+  omnix history compact          vacuum the index after deleting transcripts
   omnix history status
 
   omnix agent track --agent A --session ID [--cwd PATH] [--pane KEY] [--workspace PATH]
@@ -184,8 +185,8 @@ fn cmd_history(args: &[String]) -> Result<()> {
             }
             let report = sources::scan(&mut conn)?;
             println!(
-                "scanned {} files, {} messages ({} unchanged, {} unreadable)",
-                report.files, report.messages, report.unchanged, report.skipped
+                "scanned {} files, {} messages ({} unchanged, {} unreadable, {} pruned)",
+                report.files, report.messages, report.unchanged, report.skipped, report.pruned
             );
             for count in history::agent_counts(&conn)? {
                 println!(
@@ -194,6 +195,23 @@ fn cmd_history(args: &[String]) -> Result<()> {
                 );
             }
             println!("db {}", db.display());
+        }
+        "compact" => {
+            let db = omnix_dir().join("history.sqlite");
+            if !db.exists() {
+                println!("no index at {}", db.display());
+                return Ok(());
+            }
+            let before = std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
+            let conn = history::open(&db)?;
+            history::compact(&conn)?;
+            let after = std::fs::metadata(&db).map(|m| m.len()).unwrap_or(0);
+            println!(
+                "compacted {:.1} MiB -> {:.1} MiB  {}",
+                before as f64 / 1_048_576.0,
+                after as f64 / 1_048_576.0,
+                db.display()
+            );
         }
         "status" => {
             let db = omnix_dir().join("history.sqlite");
@@ -205,7 +223,7 @@ fn cmd_history(args: &[String]) -> Result<()> {
                 db.display()
             );
         }
-        _ => bail!("usage: omnix history index|scan|search|status"),
+        _ => bail!("usage: omnix history index|scan|search|compact|status"),
     }
     Ok(())
 }

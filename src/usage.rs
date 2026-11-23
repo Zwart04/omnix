@@ -197,6 +197,14 @@ pub fn snapshot(home: &Path) -> Value {
     json!({ "ram": ram(), "agents": agents })
 }
 
+/// Ceiling for terminal and agent memory when `OMNIX_AI_RAM_MB` is unset:
+/// a quarter of system RAM, so the status chip warns before the machine swaps.
+pub fn default_budget() -> Option<u64> {
+    ram()
+        .and_then(|value| value.get("totalBytes").and_then(Value::as_u64))
+        .map(|total| total / 4)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

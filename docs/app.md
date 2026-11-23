@@ -35,8 +35,10 @@ Angka AI menjumlahkan seluruh keturunan proses shell PTY, jadi agent, language
 server, dan child process lain ikut masuk. Snapshot berhenti saat jendela
 tersembunyi dan diperbarui tiap 3,5 detik di Linux atau 8 detik di macOS/Windows.
 
-`OMNIX_AI_RAM_MB` menetapkan budget RAM untuk proses AI. Bila angka AI melewati
-budget, chip berubah amber. Ini pengingat, bukan pagar otomatis: Omnix tidak
+`OMNIX_AI_RAM_MB` menetapkan budget RAM untuk proses AI. Bila variabel itu
+tidak diset, budget default-nya seperempat RAM sistem. Saat angka AI melewati
+budget, chip berubah amber dan Omnix menampilkan satu toast per pelanggaran
+(bukan berulang tiap polling). Ini pengingat, bukan pagar otomatis: Omnix tidak
 membunuh agent tanpa izin. Untuk menurunkan angka:
 
 1. tutup pane agent yang idle;
@@ -44,6 +46,12 @@ membunuh agent tanpa izin. Untuk menurunkan angka:
 3. cek `omnix diagnostics memory --json` sebelum membuka tool berat lain;
    dijalankan dari terminal Omnix, perintah ini mengukur seluruh tree app,
    bukan hanya proses CLI-nya.
+
+Di Linux renderer DMA-BUF WebKit dimatikan secara default (peak startup turun
+sekitar 100 MB); `OMNIX_DMABUF=1` mengembalikannya bila driver GPU justru butuh.
+Omnix tidak memaksa WebKit membuang cache saat idle: trim bawaan WebKit hanya
+bereaksi di bawah tekanan memori sistem, dan menurunkan limitnya sendiri membuat
+engine terus membuang cache (lebih lambat) demi penghematan yang kecil.
 
 Setiap terminal juga mendapat `OMNIX_HARNESS_GUIDE` (path
 `.omnix/agent-guide.md`), `OMNIX_BROWSER=lightpanda`, `OMNIX_LIGHTPANDA`, dan

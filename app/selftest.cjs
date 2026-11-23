@@ -720,6 +720,37 @@ require('./app.js');
   assert.match(byId.get('status-last').textContent, /code 0/, 'ptyExit rendered');
   assert.ok(byId.get('toasts').children.length >= 1, 'toast event rendered');
 
+  // the AI memory budget warns once when the terminal tree crosses it
+  docHandlers.visibilitychange();
+  await tick();
+  const memReq = lastReq('memory');
+  assert.ok(memReq, 'visibility refresh asks for memory');
+  window.__omnix.reply(memReq.id, true, JSON.stringify({
+    available: true, pid: 1,
+    app: { rss: 104857600, processes: 3 },
+    ai: { rss: 10485760, processes: 1 },
+    other: { rss: 94371840, processes: 2 },
+    budget: { limitBytes: 1048576, over: true },
+    panes: []
+  }));
+  await tick();
+  const budgetToasts = () => byId.get('toasts').children
+    .filter((n) => /budget/.test(String(n.textContent)));
+  assert.strictEqual(budgetToasts().length, 1, 'over-budget toast appears');
+  docHandlers.visibilitychange();
+  await tick();
+  const memAgain = lastReq('memory');
+  window.__omnix.reply(memAgain.id, true, JSON.stringify({
+    available: true, pid: 1,
+    app: { rss: 104857600, processes: 3 },
+    ai: { rss: 10485760, processes: 1 },
+    other: { rss: 94371840, processes: 2 },
+    budget: { limitBytes: 1048576, over: true },
+    panes: []
+  }));
+  await tick();
+  assert.strictEqual(budgetToasts().length, 1, 'over-budget warning is one-shot');
+
   // ---- error state ----
   byId.get('history-rescan').handlers.click(noop());
   await tick();

@@ -147,6 +147,21 @@ fn temp_file(name: &str, bytes: &[u8]) -> Result<PathBuf> {
     let name = safe_name(name)?;
     let dir = std::env::temp_dir().join("omnix-update");
     fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    // Downloads pile up when an installer is never opened; keep a week.
+    if let Ok(entries) = fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let old = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|time| time.elapsed().ok())
+                .map(|age| age.as_secs() > 7 * 24 * 3600)
+                .unwrap_or(false);
+            if old {
+                let _ = fs::remove_file(entry.path());
+            }
+        }
+    }
     let path = dir.join(name);
     fs::write(&path, bytes).with_context(|| format!("write {}", path.display()))?;
     Ok(path)

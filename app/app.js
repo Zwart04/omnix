@@ -1921,6 +1921,7 @@
   var memData = null;
   var memoryTimer = null;
   var memoryBusy = false;
+  var ramOverWarned = false;
 
   function refreshMemory() {
     if (memoryBusy) return Promise.resolve(memData);
@@ -1988,6 +1989,13 @@
     if (chip) {
       var budget = res.budget || {};
       var over = budget.over === true;
+      if (over && !ramOverWarned) {
+        ramOverWarned = true;
+        toast('warn', 'AI terminals use ' + fmtBytes(aiRss) + ', over the ' +
+          fmtBytes(Number(budget.limitBytes) || 0) + ' budget. Close idle terminals.');
+      } else if (!over) {
+        ramOverWarned = false;
+      }
       if (over) chip.classList.add('over');
       else chip.classList.remove('over');
       if (appRss > 0) {

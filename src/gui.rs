@@ -1,4 +1,4 @@
-use crate::{browser, history, procs, projects, pty, sources, update, workspace};
+use crate::{browser, history, procs, projects, pty, sources, update, usage, workspace};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -565,6 +565,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                         "messages": report.messages,
                         "skipped": report.skipped,
                         "unchanged": report.unchanged,
+                        "pruned": report.pruned,
                         "db": db.to_string_lossy(),
                         "agents": counts
                             .iter()
@@ -842,7 +843,8 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 .ok()
                 .and_then(|value| value.parse::<u64>().ok())
                 .filter(|mb| *mb > 0)
-                .map(|mb| mb.saturating_mul(1024 * 1024));
+                .map(|mb| mb.saturating_mul(1024 * 1024))
+                .or_else(usage::default_budget);
             Ok(json!({
                 "available": !table.is_empty(),
                 "pid": pid,
@@ -1208,6 +1210,16 @@ pub fn run() -> Result<()> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() && std::env::var_os("GDK_BACKEND").is_none() {
         // SAFETY: called before any GTK/WebKit initialisation and before threads start.
         unsafe { std::env::set_var("GDK_BACKEND", "x11") };
+    }
+    // The DMA-BUF renderer keeps extra GPU buffers alive; on a text UI the
+    // fallback path is lighter (measured ~100 MB less at startup) and avoids
+    // the driver crashes it is known for. OMNIX_DMABUF=1 opts back in.
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+        && std::env::var_os("OMNIX_DMABUF").is_none()
+    {
+        // SAFETY: same, before GTK/WebKit initialisation.
+        unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };
     }
 
     let root = std::env::var_os("OMNIX_HOME")

@@ -21,10 +21,10 @@ Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.2_amd64.deb` | `sudo apt install ./omnix_0.6.2_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.6.2-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.2-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.3_amd64.deb` | `sudo apt install ./omnix_0.6.3_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.6.3-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.3-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (universal) | `Omnix-0.6.2-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| macOS 11+ (universal) | `Omnix-0.6.3-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -98,6 +98,8 @@ Yang sudah jalan dan dites di repo ini:
   3,5 detik di Linux (baca `/proc` murah), 8 detik di macOS/Windows (hindari
   spawn proses polling terlalu sering). Modal yang sama tetap
   menampilkan memori sistem dan kuota provider yang punya data lokal.
+  Budget AI default-nya seperempat RAM sistem (`OMNIX_AI_RAM_MB` untuk
+  menimpanya); saat terlampaui chip jadi amber dan muncul satu toast.
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
   sama. Panel `Agents` mengikuti state terakhir: terbuka/tertutup, scope,
@@ -226,6 +228,10 @@ Semua state ada di `.omnix/` di root project (atau `OMNIX_HOME`):
   worktrees/<name>/       git worktree hasil handoff
   transcripts/            input indexing (opsional)
 ```
+
+Scan membersihkan baris sesi yang transkripnya sudah hilang, memotong WAL, dan
+mem-vacuum index hanya kalau halaman bebasnya sudah signifikan. Untuk merapikan
+setelah menghapus banyak transkrip secara manual: `omnix history compact`.
 
 ## Docs
 

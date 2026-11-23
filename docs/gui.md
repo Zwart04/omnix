@@ -94,9 +94,10 @@ are skipped, so a rescan is cheap.
 setiap pane PTY (agent + child process), `memory.other` adalah sisa app shell
 dan WebKit. Ketiganya memakai satu snapshot `/proc` (Linux), `ps` (macOS), atau
 CIM (Windows) supaya tidak ada proses yang dihitung dua kali.
-`budget.limitBytes` berasal dari `OMNIX_AI_RAM_MB`; `budget.over` true saat
-`ai.rss` melewati batas. UI memakai flag itu untuk mewarnai chip, bukan untuk
-menghentikan proses.
+`budget.limitBytes` berasal dari `OMNIX_AI_RAM_MB`, atau seperempat RAM sistem
+bila variabel itu kosong; `budget.over` true saat `ai.rss` melewati batas. UI
+memakai flag itu untuk mewarnai chip dan memberi satu toast per pelanggaran,
+bukan untuk menghentikan proses.
 `browserStop` menghentikan daemon Lightpanda bersama dari `.omnix/browser.json`
 dan menghapus state-nya. `browserClose` hanya menutup WebView konten.
 `windowMinimize`/`windowMaximize` bekerja pada jendela native; `windowClose`
