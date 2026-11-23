@@ -407,7 +407,48 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 .filter(|path| path.is_dir());
             Ok(json!({ "path": native_pick_folder(app, start)? }))
         })(),
-        "usage" => Ok(crate::usage::snapshot(home_dir().as_path())),
+        "usage" => (|| {
+            let mut out = crate::usage::snapshot(home_dir().as_path());
+            let db = history_db(&app.root);
+            if db.exists() {
+                if let Ok(conn) = history::open(&db) {
+                    if let Ok(rows) = history::token_totals(&conn) {
+                        let mut total = [0i64; 5];
+                        let agents: Vec<Value> = rows
+                            .iter()
+                            .map(|row| {
+                                total[0] += row.sessions;
+                                total[1] += row.input;
+                                total[2] += row.cache_read;
+                                total[3] += row.cache_write;
+                                total[4] += row.output;
+                                json!({
+                                    "agent": row.agent,
+                                    "sessions": row.sessions,
+                                    "input": row.input,
+                                    "cacheRead": row.cache_read,
+                                    "cacheWrite": row.cache_write,
+                                    "output": row.output,
+                                })
+                            })
+                            .collect();
+                        if !agents.is_empty() {
+                            out["ai"] = json!({
+                                "totals": {
+                                    "sessions": total[0],
+                                    "input": total[1],
+                                    "cacheRead": total[2],
+                                    "cacheWrite": total[3],
+                                    "output": total[4],
+                                },
+                                "agents": agents,
+                            });
+                        }
+                    }
+                }
+            }
+            Ok(out)
+        })(),
         "agentSettings" => (|| {
             let saved = crate::agent::load_settings(&app.root);
             let defaults = crate::agent::load_defaults(&app.root);

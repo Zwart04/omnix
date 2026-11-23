@@ -1,6 +1,6 @@
 [package]
 name = "omnix"
-version = "0.6.4"
+version = "0.6.5"
 edition = "2024"
 description = "A light Rust desktop workbench for terminals, worktrees, agent sessions, and a swappable browser."
 license = "GPL-3.0-or-later"

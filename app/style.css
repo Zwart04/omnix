@@ -874,25 +874,6 @@ button.tag:hover {
 
 .strip-close:hover { background: var(--hover-strong); color: var(--bad); }
 
-.strip-split {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 20px;
-  height: 20px;
-  margin: 0 0 0 2px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: none;
-  color: var(--meta);
-  cursor: pointer;
-}
-
-.strip-split svg { width: 13px; height: 13px; }
-.strip-split:hover { background: var(--hover-strong); color: var(--text); }
-.strip-split:disabled { opacity: .35; cursor: default; background: none; }
-
 .strip-command {
   display: flex;
   align-items: center;
@@ -1092,7 +1073,66 @@ button.tag:hover {
   min-height: 0;
 }
 
-.pane-term { padding: 0; }
+.pane-term { position: relative; padding: 0; }
+
+/* Split lives in a small floating pill: quiet while idle, solid on hover,
+   and draggable by its grip so it never has to cover terminal text. */
+.pane-float {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  opacity: .4;
+  transition: opacity 120ms ease-out, background-color 120ms ease-out,
+    border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.pane-term:hover .pane-float,
+.pane-float:focus-within,
+.pane-float.dragging {
+  opacity: 1;
+  border-color: var(--line-soft);
+  background: var(--float);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .30);
+}
+
+.pane-grip {
+  flex: none;
+  width: 12px;
+  height: 24px;
+  cursor: grab;
+  touch-action: none;
+  background-image: radial-gradient(circle, var(--meta) 1px, transparent 1px);
+  background-size: 4px 4px;
+  background-position: center;
+  background-repeat: repeat-y;
+  opacity: .7;
+}
+
+.pane-grip:active { cursor: grabbing; }
+
+.pane-float-split {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.pane-float-split svg { width: 14px; height: 14px; }
+.pane-float-split:hover { background: var(--hover-strong); color: var(--text); }
+.pane-float-split:disabled { opacity: .35; cursor: default; background: none; }
 
 /* Orca insets the terminal by a hairline (4px) instead of a floating card. */
 .term-host {
@@ -2157,12 +2197,16 @@ button.tag:hover {
 .hist-group-head:hover { background: var(--surface-2); color: var(--text); }
 
 .hist-group-chev {
+  display: grid;
+  place-items: center;
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
+  color: var(--meta);
   transition: transform 120ms ease-out;
 }
 
+.hist-group-chev svg { width: 13px; height: 13px; }
 .hist-group-head[aria-expanded="true"] .hist-group-chev { transform: rotate(90deg); }
 
 .hist-group-name {
@@ -2299,18 +2343,15 @@ button.tag:hover {
   color: var(--text);
 }
 
-.hist-hide {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  width: 32px;
-  height: 32px;
-  border-color: var(--line);
-  background: var(--float);
-  color: var(--text-2);
-}
+#history-collapse-all.all-closed svg { transform: rotate(180deg); }
+#history-collapse-all svg { transition: transform 120ms ease-out; }
 
-.hist-hide:hover { border-color: var(--accent); color: var(--accent); }
+.hist-more {
+  padding: 10px 8px 4px;
+  color: var(--meta);
+  font-size: 11px;
+  line-height: 1.5;
+}
 
 /* history panel states */
 
@@ -2670,6 +2711,17 @@ button.tag:hover {
 .usage-agent-plan {
   font-size: 12px;
   color: var(--meta);
+}
+
+.usage-ai-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.usage-ai-line {
+  font-size: 12px;
+  color: var(--text-2);
 }
 
 .usage-window {

@@ -351,7 +351,7 @@ require('./app.js');
   // ---- historySessions: scope arg, count, cards ----
   const sessionsReq = posted[posted.length - 1];
   assert.strictEqual(sessionsReq.cmd, 'historySessions', 'scan is followed by historySessions');
-  assert.deepStrictEqual(sessionsReq.args, { scope: 'all', limit: 80 }, 'default scope is all');
+  assert.deepStrictEqual(sessionsReq.args, { scope: 'all', limit: 500 }, 'default scope is all');
 
   window.__omnix.reply(sessionsReq.id, true, JSON.stringify({
     scope: 'all',
@@ -470,7 +470,7 @@ require('./app.js');
   await tick();
   req = posted[posted.length - 1];
   assert.strictEqual(req.args.scope, 'all', 'all chip sends scope all');
-  assert.strictEqual(window.localStorage.getItem('omnix.histScope'), 'all',
+  assert.strictEqual(window.localStorage.getItem('omnix.histScope2'), 'all',
     'scope choice persists across restarts');
   window.__omnix.reply(req.id, true, JSON.stringify({
     scope: 'all',
@@ -608,11 +608,11 @@ require('./app.js');
   const splitWraps = byClass('panes', 'pane-split');
   assert.strictEqual(splitWraps.length, 1, 'panes wrapped side by side');
   assert.strictEqual(splitWraps[0].children.length, 2, 'both terminals stay mounted');
-  const stripSplits = byClass('tabstrip-tabs', 'strip-split');
-  assert.strictEqual(stripSplits.length, 2, 'each terminal tab carries a split control');
-  assert.strictEqual(stripSplits[0].disabled, false, 'a pair can split again');
-  // a third pane joins the same group from the tab-strip split control
-  stripSplits[1].handlers.click({ stopPropagation: noop });
+  const floatSplits = byClass('panes', 'pane-float-split');
+  assert.strictEqual(floatSplits.length, 2, 'each pane carries a split control');
+  assert.strictEqual(floatSplits[0].disabled, false, 'a pair can split again');
+  // a third pane joins the same group from the floating split control
+  floatSplits[1].handlers.click({ stopPropagation: noop });
   await tick();
   const thirdSpawn = posted[posted.length - 1];
   assert.strictEqual(thirdSpawn.cmd, 'ptySpawn', 'third pane spawns');

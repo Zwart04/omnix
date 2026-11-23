@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const MAX_MESSAGE_CHARS: usize = 8_000;
 
 const SCHEMA: &str = r#"
@@ -22,7 +22,12 @@ CREATE TABLE IF NOT EXISTS sessions(
   updated_at INTEGER,
   message_count INTEGER NOT NULL DEFAULT 0,
   resume_command TEXT NOT NULL,
-  content_hash TEXT
+  content_hash TEXT,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+  cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  model TEXT
 );
 CREATE INDEX IF NOT EXISTS sessions_agent ON sessions(agent);
 CREATE INDEX IF NOT EXISTS sessions_updated_at ON sessions(updated_at);
@@ -75,6 +80,7 @@ pub fn open(db_path: &Path) -> Result<Connection> {
         )
         .unwrap_or(0);
     conn.execute_batch(SCHEMA)?;
+    ensure_session_columns(&conn)?;
     if prior < 2 {
         migrate_fts(&conn)?;
     }
@@ -84,6 +90,44 @@ pub fn open(db_path: &Path) -> Result<Connection> {
         params![SCHEMA_VERSION.to_string()],
     )?;
     Ok(conn)
+}
+
+/// Databases created before token accounting get the new columns in place;
+/// their values remain zero until the next scan backfills them.
+fn ensure_session_columns(conn: &Connection) -> Result<()> {
+    let mut stmt = conn.prepare("SELECT name FROM pragma_table_info('sessions')")?;
+    let existing: HashSet<String> = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .filter_map(Result::ok)
+        .collect();
+    for (name, decl) in [
+        ("input_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("cache_read_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("cache_write_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("output_tokens", "INTEGER NOT NULL DEFAULT 0"),
+        ("model", "TEXT"),
+    ] {
+        if !existing.contains(name) {
+            conn.execute(&format!("ALTER TABLE sessions ADD COLUMN {name} {decl}"), [])?;
+        }
+    }
+    Ok(())
+}
+
+pub fn meta(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| {
+        r.get(0)
+    })
+    .ok()
+}
+
+pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO meta(key,value) VALUES(?1,?2)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![key, value],
+    )?;
+    Ok(())
 }
 
 /// `detail=full` stores a position for every token; `detail=column` keeps
@@ -267,6 +311,7 @@ pub fn index_dir(
                 resume_command: &resume_command,
                 hash: &hash,
                 lines: &lines,
+                usage: Usage::default(),
             },
         )?;
         report.files += 1;
@@ -327,7 +372,7 @@ pub fn list(
                 COALESCE((SELECT substr(f.user_text, 1, 220) FROM messages m
                           JOIN messages_fts f ON f.rowid = m.id
                           WHERE m.session_row_id = s.id AND m.role = 'user'
-                          ORDER BY m.id LIMIT 1), '')
+                          ORDER BY m.id DESC LIMIT 1), '')
          FROM sessions s WHERE 1=1",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -381,7 +426,42 @@ pub struct ProjectRow {
     pub agents: String,
 }
 
-/// Distinct working directories, the way the left project tree groups sessions.
+#[derive(Debug, Default)]
+pub struct AgentUsage {
+    pub agent: String,
+    pub sessions: i64,
+    pub input: i64,
+    pub cache_read: i64,
+    pub cache_write: i64,
+    pub output: i64,
+}
+
+/// Token totals per agent, straight from the indexed session counters. Agents
+/// that never report usage (for example OpenCode) are left out.
+pub fn token_totals(conn: &Connection) -> Result<Vec<AgentUsage>> {
+    let mut stmt = conn.prepare(
+        "SELECT agent, COUNT(*),
+                COALESCE(SUM(input_tokens), 0),
+                COALESCE(SUM(cache_read_tokens), 0),
+                COALESCE(SUM(cache_write_tokens), 0),
+                COALESCE(SUM(output_tokens), 0)
+         FROM sessions
+         GROUP BY agent
+         HAVING SUM(input_tokens + cache_read_tokens + cache_write_tokens + output_tokens) > 0
+         ORDER BY SUM(input_tokens + cache_read_tokens + cache_write_tokens + output_tokens) DESC",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(AgentUsage {
+            agent: row.get(0)?,
+            sessions: row.get(1)?,
+            input: row.get(2)?,
+            cache_read: row.get(3)?,
+            cache_write: row.get(4)?,
+            output: row.get(5)?,
+        })
+    })?;
+    Ok(rows.filter_map(Result::ok).collect())
+}/// Distinct working directories, the way the left project tree groups sessions.
 pub fn projects(conn: &Connection, limit: usize) -> Result<Vec<ProjectRow>> {
     let mut stmt = conn.prepare(
         "SELECT cwd, COUNT(*), COALESCE(SUM(message_count), 0), MAX(updated_at),
@@ -423,6 +503,17 @@ pub fn agent_counts(conn: &Connection) -> Result<Vec<AgentCount>> {
     Ok(rows.filter_map(Result::ok).collect())
 }
 
+/// Token counters reported by an agent transcript. `input` is uncached prompt
+/// text, so prompt tokens = input + cache_read + cache_write.
+#[derive(Debug, Default, Clone)]
+pub struct Usage {
+    pub input: i64,
+    pub cache_read: i64,
+    pub cache_write: i64,
+    pub output: i64,
+    pub model: Option<String>,
+}
+
 pub struct Entry<'a> {
     pub key: &'a str,
     pub agent: &'a str,
@@ -433,6 +524,7 @@ pub struct Entry<'a> {
     pub resume_command: &'a str,
     pub hash: &'a str,
     pub lines: &'a [TranscriptLine],
+    pub usage: Usage,
 }
 
 pub fn session_title(lines: &[TranscriptLine], fallback: &str) -> String {
@@ -476,13 +568,16 @@ pub fn upsert(conn: &mut Connection, entry: &Entry) -> Result<usize> {
         )?;
     }
     tx.execute(
-        r#"INSERT INTO sessions(agent,session_id,file_path,title,cwd,updated_at,message_count,resume_command,content_hash)
-           VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)
+        r#"INSERT INTO sessions(agent,session_id,file_path,title,cwd,updated_at,message_count,resume_command,content_hash,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens,model)
+           VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
            ON CONFLICT(file_path) DO UPDATE SET
              agent=excluded.agent, session_id=excluded.session_id, title=excluded.title,
              cwd=excluded.cwd, updated_at=excluded.updated_at,
              message_count=excluded.message_count, resume_command=excluded.resume_command,
-             content_hash=excluded.content_hash"#,
+             content_hash=excluded.content_hash, input_tokens=excluded.input_tokens,
+             cache_read_tokens=excluded.cache_read_tokens,
+             cache_write_tokens=excluded.cache_write_tokens,
+             output_tokens=excluded.output_tokens, model=excluded.model"#,
         params![
             entry.agent,
             entry.session_id,
@@ -492,7 +587,12 @@ pub fn upsert(conn: &mut Connection, entry: &Entry) -> Result<usize> {
             entry.updated_at,
             entry.lines.len() as i64,
             entry.resume_command,
-            entry.hash
+            entry.hash,
+            entry.usage.input,
+            entry.usage.cache_read,
+            entry.usage.cache_write,
+            entry.usage.output,
+            entry.usage.model
         ],
     )?;
     let session_row: i64 = tx.query_row(
@@ -825,6 +925,41 @@ mod tests {
     }
 
     #[test]
+    fn aggregates_token_totals_per_agent() {
+        let dir = temp_dir("tokens");
+        let conn = open(&dir.join("history.db")).unwrap();
+        conn.execute(
+            "INSERT INTO sessions(agent,session_id,file_path,title,resume_command,
+                message_count,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens)
+             VALUES('claude','a','/a','A','',2,10,100,5,20)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions(agent,session_id,file_path,title,resume_command,
+                message_count,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens)
+             VALUES('claude','b','/b','B','',3,1,2,3,4)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions(agent,session_id,file_path,title,resume_command,message_count)
+             VALUES('opencode','c','/c','C','',1)",
+            [],
+        )
+        .unwrap();
+        let rows = token_totals(&conn).unwrap();
+        assert_eq!(rows.len(), 1, "only agents with counters are listed");
+        assert_eq!(rows[0].agent, "claude");
+        assert_eq!(rows[0].sessions, 2);
+        assert_eq!(rows[0].input, 11);
+        assert_eq!(rows[0].cache_read, 102);
+        assert_eq!(rows[0].cache_write, 8);
+        assert_eq!(rows[0].output, 24);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn migrates_full_fts_to_column_and_keeps_search() {
         let dir = temp_dir("fts-migrate");
         let db = dir.join("history.db");
@@ -875,7 +1010,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(version, "2");
+        assert_eq!(version, SCHEMA_VERSION.to_string());
     }
 
     #[test]

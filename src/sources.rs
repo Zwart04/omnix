@@ -8,8 +8,7 @@
 //! - OpenCode: `~/.local/share/opencode/opencode.db` (sessions + messages)
 
 use crate::history::{self, Entry, TranscriptLine};
-use anyhow::{Context, Result};
-use rusqlite::{Connection, OpenFlags};
+use anyhow::{Context, Result};use rusqlite::{Connection, OpenFlags, params};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -50,6 +49,7 @@ struct Parsed {
     cwd: Option<String>,
     updated_at: i64,
     lines: Vec<TranscriptLine>,
+    usage: history::Usage,
 }
 
 fn home() -> PathBuf {
@@ -147,6 +147,7 @@ fn parse_codex(path: &Path) -> Option<Parsed> {
     let mut cwd = None;
     let mut session_id = None;
     let mut lines = Vec::new();
+    let mut usage = history::Usage::default();
     let mut seen = 0usize;
 
     for line in std::io::BufRead::lines(reader) {
@@ -200,6 +201,22 @@ fn parse_codex(path: &Path) -> Option<Parsed> {
             }
             Some("event_msg") => {
                 let payload = &value["payload"];
+                if payload.get("type").and_then(Value::as_str) == Some("token_count") {
+                    /* Codex writes the running total after every turn; the
+                       last snapshot is the session's usage. */
+                    if let Some(total) = payload.pointer("/info/total_token_usage") {
+                        let input = total.get("input_tokens").and_then(Value::as_i64).unwrap_or(0);
+                        let cached = total
+                            .get("cached_input_tokens")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0);
+                        usage.input = (input - cached).max(0);
+                        usage.cache_read = cached;
+                        usage.cache_write = 0;
+                        usage.output = total.get("output_tokens").and_then(Value::as_i64).unwrap_or(0);
+                    }
+                    continue;
+                }
                 if payload.get("type").and_then(Value::as_str) != Some("item_completed") {
                     continue;
                 }
@@ -249,6 +266,7 @@ fn parse_codex(path: &Path) -> Option<Parsed> {
         cwd,
         updated_at: history::file_mtime(path),
         lines,
+        usage,
     })
 }
 
@@ -260,6 +278,7 @@ fn parse_claude(path: &Path) -> Option<Parsed> {
     let mut cwd = None;
     let mut session_id = None;
     let mut lines = Vec::new();
+    let mut usage = history::Usage::default();
     let mut seen = 0usize;
 
     for line in std::io::BufRead::lines(reader) {
@@ -288,6 +307,25 @@ fn parse_claude(path: &Path) -> Option<Parsed> {
             continue;
         }
         let message = &value["message"];
+        if kind == "assistant" {
+            if let Some(reported) = message.get("usage") {
+                usage.input += reported.get("input_tokens").and_then(Value::as_i64).unwrap_or(0);
+                usage.cache_write += reported
+                    .get("cache_creation_input_tokens")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                usage.cache_read += reported
+                    .get("cache_read_input_tokens")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
+                usage.output += reported.get("output_tokens").and_then(Value::as_i64).unwrap_or(0);
+            }
+            if let Some(model) = message.get("model").and_then(Value::as_str) {
+                if !model.is_empty() {
+                    usage.model = Some(model.to_string());
+                }
+            }
+        }
         let text = text_of(&message["content"]);
         if text.trim().is_empty() {
             continue;
@@ -316,6 +354,7 @@ fn parse_claude(path: &Path) -> Option<Parsed> {
         cwd,
         updated_at: history::file_mtime(path),
         lines,
+        usage,
     })
 }
 
@@ -394,6 +433,7 @@ fn opencode_scan(conn: &mut Connection, db: &Path, report: &mut ScanReport) -> R
             cwd: meta.cwd,
             updated_at,
             lines,
+            usage: history::Usage::default(),
         };
         store(conn, &key, parsed, report)?;
     }
@@ -430,6 +470,7 @@ fn store(conn: &mut Connection, key: &str, parsed: Parsed, report: &mut ScanRepo
             resume_command: &resume_command,
             hash: "",
             lines: &parsed.lines,
+            usage: parsed.usage.clone(),
         },
     )?;
     report.add(&parsed.agent, stored);
@@ -438,6 +479,39 @@ fn store(conn: &mut Connection, key: &str, parsed: Parsed, report: &mut ScanRepo
 
 /// One scan at a time: the GUI boot scan and a manual rescan can overlap.
 static SCAN_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+const USAGE_VERSION: &str = "1";
+
+/// Existing indexes predate token counters. Read each transcript once more and
+/// update only those columns, so the search index is not rebuilt.
+fn backfill_usage(conn: &Connection, files: &[PathBuf], codex: &Path) -> Result<()> {
+    if history::meta(conn, "usage_version").as_deref() == Some(USAGE_VERSION) {
+        return Ok(());
+    }
+    let mut stmt = conn.prepare(
+        "UPDATE sessions SET input_tokens=?1, cache_read_tokens=?2,
+                cache_write_tokens=?3, output_tokens=?4, model=?5
+         WHERE file_path=?6",
+    )?;
+    for path in files {
+        let parsed = if path.starts_with(codex) {
+            parse_codex(path)
+        } else {
+            parse_claude(path)
+        };
+        let Some(parsed) = parsed else { continue };
+        stmt.execute(params![
+            parsed.usage.input,
+            parsed.usage.cache_read,
+            parsed.usage.cache_write,
+            parsed.usage.output,
+            parsed.usage.model,
+            path.to_string_lossy(),
+        ])?;
+    }
+    history::set_meta(conn, "usage_version", USAGE_VERSION)?;
+    Ok(())
+}
 
 /// Index every transcript found under the known agent roots.
 pub fn scan(conn: &mut Connection) -> Result<ScanReport> {
@@ -459,7 +533,7 @@ pub fn scan(conn: &mut Connection) -> Result<ScanReport> {
     if verbose {
         eprintln!("scan: {} jsonl files", files.len());
     }
-    for path in files {
+    for path in &files {
         let key = path.to_string_lossy().to_string();
         if is_fresh(conn, &key, history::file_mtime(&path)) {
             report.unchanged += 1;
@@ -480,6 +554,8 @@ pub fn scan(conn: &mut Connection) -> Result<ScanReport> {
             eprintln!("scan: {} files, {} msgs", report.files, report.messages);
         }
     }
+
+    backfill_usage(conn, &files, &codex)?;
 
     let db = opencode_db();
     if db.exists() {

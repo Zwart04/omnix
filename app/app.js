@@ -4,7 +4,7 @@
 
   var RPC_TIMEOUT_MS = 20000;
   var SCAN_TIMEOUT_MS = 180000;
-  var HISTORY_LIMIT = 80;
+  var HISTORY_LIMIT = 500;
   var SEARCH_DEBOUNCE_MS = 200;
 
   /* Terminal palettes copied from each OS's shipped default profile so the
@@ -495,20 +495,6 @@
         });
 
         row.appendChild(main);
-        if (tab.kind === 'terminal') {
-          var split = el('button', 'strip-split');
-          split.type = 'button';
-          split.title = 'Split terminal (Ctrl+Shift+D)';
-          split.setAttribute('aria-label', 'Split ' + tab.title);
-          split.innerHTML = SPLIT_ICON;
-          split.disabled = !!(tab.group && tab.group.panes.length >= maxPanes());
-          split.addEventListener('click', function (ev) {
-            if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
-            activate(tab);
-            guard(splitActive)(ev);
-          });
-          row.appendChild(split);
-        }
         row.appendChild(close);
         box.appendChild(row);
       })(list[i]);
@@ -521,8 +507,12 @@
 
   /* All panes in a split share one group wrapper; the wrapper is what the
      workbench shows or hides, so a group can grow past two panes. */
-  function updatePaneCount(group) {
+  function updateSplitControls(group) {
     if (!group) return;
+    var full = group.panes.length >= maxPanes();
+    for (var i = 0; i < group.panes.length; i++) {
+      if (group.panes[i] && group.panes[i].splitCtl) group.panes[i].splitCtl.disabled = full;
+    }
     if (group.el && group.el.dataset) group.el.dataset.panes = String(group.panes.length);
   }
 
@@ -532,7 +522,10 @@
     var survivor = group.panes.length === 1 ? group.panes[0] : null;
     if (survivor && survivor.el) wrap.parentNode.insertBefore(survivor.el, wrap);
     wrap.parentNode.removeChild(wrap);
-    if (survivor) survivor.group = null;
+    if (survivor) {
+      survivor.group = null;
+      if (survivor.splitCtl) survivor.splitCtl.disabled = false;
+    }
     group.panes = [];
   }
 
@@ -641,7 +634,7 @@
         } else if (group.panes.length === 1) {
           unwrapGroup(group);
         } else {
-          updatePaneCount(group);
+          updateSplitControls(group);
         }
       }
       tab.closed = true;
@@ -807,6 +800,70 @@
 
   var SPLIT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>';
 
+  /* A small floating split control that stays out of the terminal text and can
+     be dragged anywhere inside its pane. It is translucent while idle and
+     becomes a solid pill on hover or focus. */
+  function makePaneFloat(tab) {
+    var pane = tab.el;
+    var box = el('div', 'pane-float');
+    var grip = el('span', 'pane-grip');
+    grip.title = 'Drag to move \u00b7 double-click to reset';
+    grip.setAttribute('aria-hidden', 'true');
+    var btn = el('button', 'pane-float-split');
+    btn.type = 'button';
+    btn.title = 'Split terminal (Ctrl+Shift+D)';
+    btn.setAttribute('aria-label', 'Split ' + tab.title);
+    btn.innerHTML = SPLIT_ICON;
+    btn.addEventListener('click', guard(function (ev) {
+      if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+      activate(tab);
+      return splitActive();
+    }));
+    box.appendChild(grip);
+    box.appendChild(btn);
+
+    grip.addEventListener('pointerdown', function (ev) {
+      if (ev && ev.button) return;
+      if (ev && ev.preventDefault) ev.preventDefault();
+      var paneRect = pane.getBoundingClientRect();
+      var boxRect = box.getBoundingClientRect();
+      var dx = ev.clientX - boxRect.left;
+      var dy = ev.clientY - boxRect.top;
+      box.classList.add('dragging');
+      var startLeft = boxRect.left - paneRect.left;
+      var startTop = boxRect.top - paneRect.top;
+      function place(left, top) {
+        var maxLeft = Math.max(4, pane.clientWidth - box.offsetWidth - 4);
+        var maxTop = Math.max(4, pane.clientHeight - box.offsetHeight - 4);
+        box.style.left = Math.max(4, Math.min(maxLeft, left)) + 'px';
+        box.style.top = Math.max(4, Math.min(maxTop, top)) + 'px';
+        box.style.right = 'auto';
+      }
+      function move(e) {
+        place(e.clientX - paneRect.left - dx, e.clientY - paneRect.top - dy);
+      }
+      function stop() {
+        box.classList.remove('dragging');
+        window.removeEventListener('pointermove', move);
+        window.removeEventListener('pointerup', stop);
+        window.removeEventListener('pointercancel', stop);
+      }
+      place(startLeft, startTop);
+      window.addEventListener('pointermove', move);
+      window.addEventListener('pointerup', stop);
+      window.addEventListener('pointercancel', stop);
+    });
+
+    box.addEventListener('dblclick', function () {
+      box.style.left = '';
+      box.style.top = '';
+      box.style.right = '';
+    });
+
+    pane.appendChild(box);
+    return btn;
+  }
+
   /* New terminals inherit the folder the user is already working in: the
      active terminal first, then the project last opened from the sidebar. */
   function launchCwd() {
@@ -889,16 +946,19 @@
       closed: false,
       exited: false,
       handoffBrief: opts.handoffBrief || null,
-      group: anchor ? anchor.group : null
+      group: anchor ? anchor.group : null,
+      splitCtl: null
     };
     if (anchor) {
       var g = anchor.group;
       g.panes[g.panes.length - 1] = tab;
-      updatePaneCount(g);
+      updateSplitControls(g);
     }
     tabs.push(tab);
     if (tab.cwd) lastLaunchCwd = tab.cwd;
     activate(tab);
+    tab.splitCtl = makePaneFloat(tab);
+    if (tab.group) updateSplitControls(tab.group);
 
     if (typeof window.Terminal !== 'function') {
       host.appendChild(el('div', 'side-empty', 'xterm.js global Terminal is missing'));
@@ -2029,6 +2089,14 @@
     return Math.round(n / 1048576) + ' MB';
   }
 
+  function fmtTokens(value) {
+    var n = Math.max(0, Number(value) || 0);
+    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+    return String(Math.round(n));
+  }
+
   function fmtReset(seconds) {
     var sec = Number(seconds) || 0;
     if (sec <= 0) return 'now';
@@ -2048,12 +2116,51 @@
     return String(win.kind || 'window');
   }
 
+  function renderAIUsage() {
+    var ai = usageData.ai || {};
+    var totals = ai.totals || {};
+    var agents = Array.isArray(ai.agents) ? ai.agents : [];
+    var totalNode = $('usage-ai-total');
+    var list = $('usage-ai-list');
+    if (totalNode) {
+      totalNode.textContent = agents.length
+        ? fmtTokens(Number(totals.input) + Number(totals.cacheRead) +
+            Number(totals.cacheWrite)) + ' prompt \u00b7 ' +
+            fmtTokens(totals.output) + ' output \u00b7 ' +
+            fmtNum(totals.sessions) + ' sessions'
+        : 'No token usage indexed yet';
+    }
+    if (!list) return;
+    list.textContent = '';
+    if (!agents.length) {
+      list.appendChild(el('div', 'usage-empty',
+        'Agents that report tokens in their transcripts show up here.'));
+      return;
+    }
+    for (var i = 0; i < agents.length; i++) {
+      var agent = agents[i] || {};
+      var prompt = Number(agent.input) + Number(agent.cacheRead) + Number(agent.cacheWrite);
+      var card = el('div', 'usage-agent');
+      var head = el('div', 'usage-agent-head');
+      head.appendChild(el('span', 'usage-agent-name', String(agent.agent || 'agent')));
+      head.appendChild(el('span', 'usage-agent-plan',
+        fmtNum(agent.sessions) + ' session' + (Number(agent.sessions) === 1 ? '' : 's')));
+      card.appendChild(head);
+      card.appendChild(el('div', 'usage-ai-line mono',
+        fmtTokens(prompt) + ' prompt \u00b7 ' + fmtTokens(agent.output) + ' output \u00b7 ' +
+        fmtTokens(agent.cacheRead) + ' cached'));
+      list.appendChild(card);
+    }
+  }
+
   function renderUsage() {
     var ram = usageData.ram || {};
     var total = Number(ram.totalBytes) || 0;
     var used = Number(ram.usedBytes) || 0;
     var pct = total > 0 ? Math.round(used / total * 100) : null;
     var agents = Array.isArray(usageData.agents) ? usageData.agents : [];
+
+    renderAIUsage();
 
     var ramNode = $('usage-ram');
     if (ramNode) {
@@ -2530,8 +2637,10 @@
 
   /* ---------- indexed history panel ---------- */
 
+  /* Default to the whole index so the header count matches the status bar.
+     The old key stored `workspace` by default, which hid ~46 sessions. */
   function storedScope() {
-    var scope = storeGet('omnix.histScope');
+    var scope = storeGet('omnix.histScope2');
     return scope === 'workspace' || scope === 'project' ? scope : 'all';
   }
 
@@ -2753,6 +2862,16 @@
     renderHistoryList();
   }
 
+  function syncHistoryCollapseAll(allClosed, hasGroups) {
+    var btn = $('history-collapse-all');
+    if (!btn) return;
+    if (hasGroups && allClosed) btn.classList.add('all-closed');
+    else btn.classList.remove('all-closed');
+    btn.title = hasGroups && allClosed ? 'Expand All Groups' : 'Collapse All Groups';
+    btn.setAttribute('aria-label', btn.title);
+    btn.disabled = !hasGroups;
+  }
+
   function renderHistoryList() {
     var list = $('history-list');
     if (!list) return;
@@ -2763,6 +2882,7 @@
       var loading = el('div', 'loading', 'Checking for new or changed sessions\u2026');
       loading.setAttribute('role', 'status');
       list.appendChild(loading);
+      syncHistoryCollapseAll(false, false);
       return;
     }
 
@@ -2772,12 +2892,14 @@
       err.setAttribute('role', 'alert');
       list.appendChild(err);
       list.appendChild(el('div', 'empty', 'Press Rescan to try again.'));
+      syncHistoryCollapseAll(false, false);
       return;
     }
 
     if (!hist.sessions.length) {
       var empty = el('div', 'empty', 'No sessions indexed yet. Press Rescan.');
       list.appendChild(empty);
+      syncHistoryCollapseAll(false, false);
       return;
     }
 
@@ -2795,8 +2917,9 @@
         head.setAttribute('aria-expanded', closed ? 'false' : 'true');
         head.setAttribute('aria-label',
           (closed ? 'Expand ' : 'Collapse ') + group.name + ' sessions');
-        var chev = el('span', 'hist-group-chev', '\u25b8');
+        var chev = el('span', 'hist-group-chev');
         chev.setAttribute('aria-hidden', 'true');
+        chev.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 6 6 6-6 6"/></svg>';
         head.appendChild(chev);
         head.appendChild(el('span', 'hist-group-name', group.name));
         head.appendChild(el('span', 'hist-group-count', fmtNum(group.sessions.length)));
@@ -2813,13 +2936,29 @@
         list.appendChild(section);
       })(groups[g]);
     }
+
+    var total = historyCount();
+    if (total > hist.sessions.length) {
+      list.appendChild(el('div', 'hist-more mono',
+        'Showing ' + fmtNum(hist.sessions.length) + ' of ' + fmtNum(total) +
+        ' \u00b7 narrow the search to see the rest'));
+    }
+
+    var allClosed = true;
+    for (var k = 0; k < hist.groupKeys.length; k++) {
+      if (!hist.collapsed[hist.groupKeys[k]]) { allClosed = false; break; }
+    }
+    syncHistoryCollapseAll(allClosed, hist.groupKeys.length > 0);
   }
 
-  /* history titles often start with <system-reminder> scaffolding */
+  /* history titles often start with <system-reminder> scaffolding, quotes, or
+     markdown heading markers; the panel wants the sentence, not the markup */
   function cleanText(text) {
     return String(text == null ? '' : text)
       .replace(/<system-reminder>[\s\S]*?<\/system-reminder>/gi, ' ')
       .replace(/<[^>]{1,80}>/g, ' ')
+      .replace(/^\s*["'\u201c\u201d`]+/, '')
+      .replace(/^\s*(?:#{1,6}|>|[-*+]|\d+\.)\s+/, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -2841,7 +2980,9 @@
     main.appendChild(top);
 
     var preview = cleanText(s.preview);
-    if (preview) main.appendChild(el('span', 'sess-preview', preview));
+    if (preview && titleText && preview.indexOf(titleText.slice(0, 40)) !== 0) {
+      main.appendChild(el('span', 'sess-preview', preview));
+    }
 
     var meta = el('span', 'sess-meta');
     meta.appendChild(el('span', null, fmtNum(s.messageCount || 0) + ' msgs'));
@@ -3621,7 +3762,7 @@
           chip.addEventListener('click', guard(function () {
             if (hist.scope === scope) return;
             hist.scope = scope;
-            storeSet('omnix.histScope', scope);
+            storeSet('omnix.histScope2', scope);
             renderHistory();
             return loadSessions().then(renderHistory);
           }));

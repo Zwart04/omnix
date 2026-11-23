@@ -8,3 +8,4 @@ dist/windows/build/
 dist/windows/MicrosoftEdgeWebView2Setup.exe
 dist/macos/*.dmg
 dist/macos/build/
+*.excalidraw
