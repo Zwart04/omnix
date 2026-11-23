@@ -1,5 +1,9 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// One rate-limit window reported by an agent CLI.
 #[derive(Debug, PartialEq)]
@@ -115,7 +119,173 @@ pub fn codex_quota(home: &Path) -> Option<Value> {
     None
 }
 
+/// Antigravity's CLI answers `/usage` with one JSON object whose
+/// `command.data.groups[].buckets[]` lists the remaining quota per window.
+/// Only lines starting with `{` are JSON; the CLI may print log noise first.
+pub fn parse_antigravity_output(text: &str) -> Option<Value> {
+    let value = text.lines().rev().find_map(|line| {
+        let line = line.trim();
+        if !line.starts_with('{') {
+            return None;
+        }
+        serde_json::from_str::<Value>(line).ok()
+    })?;
+    let groups = value.pointer("/command/data/groups")?.as_array()?;
+    let now = unix_now();
+    let mut windows = Vec::new();
+    for group in groups {
+        let group_name = group
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Antigravity");
+        let Some(buckets) = group.get("buckets").and_then(Value::as_array) else {
+            continue;
+        };
+        for bucket in buckets {
+            let Some(remaining) = bucket.get("remaining_fraction").and_then(Value::as_f64)
+            else {
+                continue;
+            };
+            let window = bucket.get("window").and_then(Value::as_str).unwrap_or("");
+            let (minutes, label) = match window {
+                "weekly" => (10080, "Weekly".to_string()),
+                "5h" => (300, "5h".to_string()),
+                other => (
+                    0,
+                    bucket
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or(other)
+                        .to_string(),
+                ),
+            };
+            let resets_in_seconds = bucket
+                .get("reset_time")
+                .and_then(Value::as_str)
+                .and_then(parse_iso_seconds)
+                .map(|reset| (reset - now).max(0))
+                .unwrap_or(0);
+            windows.push(json!({
+                "kind": bucket.get("id").and_then(Value::as_str).unwrap_or(window),
+                "label": format!("{group_name} \u{00b7} {label}"),
+                "usedPercent": (1.0 - remaining.clamp(0.0, 1.0)) * 100.0,
+                "resetsInSeconds": resets_in_seconds,
+                "windowMinutes": minutes,
+            }));
+        }
+    }
+    if windows.is_empty() {
+        return None;
+    }
+    Some(json!({ "agent": "antigravity", "plan": Value::Null, "windows": windows }))
+}
+
+/// Reset timestamps are ISO-8601 UTC (`2026-11-28T15:19:11Z`); a civil-date
+/// conversion keeps the quota parser dependency-free.
+fn parse_iso_seconds(text: &str) -> Option<i64> {
+    let number = |range: std::ops::Range<usize>| text.get(range)?.parse::<i64>().ok();
+    let year = number(0..4)?;
+    let month = number(5..7)?;
+    let day = number(8..10)?;
+    let hour = number(11..13)?;
+    let minute = number(14..16)?;
+    let second = number(17..19)?;
+    if month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let doy = (153 * ((month + 9) % 12) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(days * 86400 + hour * 3600 + minute * 60 + second)
+}
+
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn agy_binary(home: &Path) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "agy.exe" } else { "agy" };
+    let candidates = [
+        home.join(".local").join("bin").join(name),
+        home.join(".local").join("share").join("isle").join(name),
+    ];
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+/// `agy` takes a second or two and must never block the GUI thread, so the
+/// quota is fetched on a worker and served from a short cache.
+const AGY_TTL: Duration = Duration::from_secs(45);
+static AGY_CACHE: Mutex<Option<(Instant, Option<Value>)>> = Mutex::new(None);
+static AGY_RUNNING: AtomicBool = AtomicBool::new(false);
+
+pub fn antigravity_quota(home: &Path) -> Option<Value> {
+    let cached = AGY_CACHE.lock().ok().and_then(|guard| guard.clone());
+    if let Some((at, value)) = &cached {
+        if at.elapsed() < AGY_TTL {
+            return value.clone();
+        }
+    }
+    if !AGY_RUNNING.swap(true, Ordering::SeqCst) {
+        let home = home.to_path_buf();
+        std::thread::spawn(move || {
+            let value = query_antigravity(&home);
+            if let Ok(mut guard) = AGY_CACHE.lock() {
+                *guard = Some((Instant::now(), value));
+            }
+            AGY_RUNNING.store(false, Ordering::SeqCst);
+        });
+    }
+    cached.and_then(|(_, value)| value)
+}
+
+fn query_antigravity(home: &Path) -> Option<Value> {
+    let mut command = match agy_binary(home) {
+        Some(path) => Command::new(path),
+        None => Command::new("agy"),
+    };
+    command
+        .args([
+            "-p",
+            "/usage",
+            "--output-format",
+            "json",
+            "--print-timeout",
+            "20s",
+        ])
+        .env("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn().ok()?;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    }
+    let output = child.wait_with_output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_antigravity_output(&String::from_utf8_lossy(&output.stdout))
+}
+
 /// System memory in bytes. Linux reads /proc, macOS shells out to sysctl and
+
 /// vm_stat, Windows reads the Win32 memory counters via PowerShell.
 pub fn ram() -> Option<Value> {
     #[cfg(target_os = "linux")]
@@ -194,6 +364,9 @@ pub fn snapshot(home: &Path) -> Value {
     if let Some(codex) = codex_quota(home) {
         agents.push(codex);
     }
+    if let Some(antigravity) = antigravity_quota(home) {
+        agents.push(antigravity);
+    }
     json!({ "ram": ram(), "agents": agents })
 }
 
@@ -220,6 +393,28 @@ mod tests {
         assert_eq!(windows[0].resets_in_seconds, 900000);
         assert_eq!(plan.as_deref(), Some("free"));
         assert!(parse_codex_line(r#"{"payload":{}}"#).is_none());
+    }
+
+    #[test]
+    fn parses_antigravity_quota() {
+        let text = r#"log noise
+{"status":"SUCCESS","command":{"name":"usage","data":{"groups":[{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":0.9874580502510071,"reset_time":"2026-11-28T15:19:11Z"},{"id":"gemini-5h","name":"Five Hour Limit Remaining","window":"5h","remaining_fraction":1,"reset_time":"2026-11-23T11:59:04Z"}]},{"name":"Claude and GPT models","buckets":[{"id":"3p-weekly","name":"Weekly Limit Remaining","window":"weekly","remaining_fraction":1,"reset_time":"2026-11-30T06:59:04Z"}]}]}}}"#;
+        let quota = parse_antigravity_output(text).expect("quota");
+        assert_eq!(quota["agent"], "antigravity");
+        let windows = quota["windows"].as_array().unwrap();
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0]["windowMinutes"], 10080);
+        assert_eq!(windows[0]["label"], "Gemini Models \u{00b7} Weekly");
+        assert!((windows[0]["usedPercent"].as_f64().unwrap() - 1.25419497489929).abs() < 1e-9);
+        assert!(windows[0]["resetsInSeconds"].as_i64().unwrap() >= 0);
+        assert!(parse_antigravity_output("no json").is_none());
+    }
+
+    #[test]
+    fn parses_iso_reset_times() {
+        assert_eq!(parse_iso_seconds("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_iso_seconds("2026-11-28T15:19:11Z"), Some(1795879151));
+        assert_eq!(parse_iso_seconds("not a date"), None);
     }
 
     #[test]

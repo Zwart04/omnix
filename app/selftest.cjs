@@ -611,6 +611,16 @@ require('./app.js');
   const floatSplits = byClass('panes', 'pane-float-split');
   assert.strictEqual(floatSplits.length, 2, 'each pane carries a split control');
   assert.strictEqual(floatSplits[0].disabled, false, 'a pair can split again');
+  const paneHeads = byClass('panes', 'pane-head');
+  assert.strictEqual(paneHeads.length, 2, 'each split pane has a header');
+  const paneHeadTimes = byClass('panes', 'pane-head-time');
+  assert.match(paneHeadTimes[0].textContent, /^\d+:\d{2}$/, 'pane header shows uptime');
+  assert.strictEqual(byClass('panes', 'pane-head-btn').length, 6,
+    'header carries split, handoff, and close');
+  byClass('panes', 'pane-head-handoff')[0].handlers.click({ stopPropagation: noop });
+  await tick();
+  assert.strictEqual(byId.get('handoff-modal').hidden, false, 'header handoff opens the modal');
+  byId.get('handoff-modal').hidden = true;
   // a third pane joins the same group from the floating split control
   floatSplits[1].handlers.click({ stopPropagation: noop });
   await tick();
@@ -627,6 +637,16 @@ require('./app.js');
   assert.strictEqual(splitKill.cmd, 'ptyKill', 'pane close control kills its pty');
   assert.strictEqual(splitWraps[0].children.length, 2, 'closing keeps the remaining pair');
   window.__omnix.reply(splitKill.id, true, '{"ok":true}');
+  await tick();
+
+  // a pane header can close its own pane; one survivor drops the split wrapper
+  const headClose = byClass('panes', 'pane-head-close')[1];
+  headClose.handlers.click({ stopPropagation: noop });
+  await tick();
+  const headKill = posted[posted.length - 1];
+  assert.strictEqual(headKill.cmd, 'ptyKill', 'header close kills its pty');
+  assert.strictEqual(byClass('panes', 'pane-split').length, 0, 'last pair unwraps to one pane');
+  window.__omnix.reply(headKill.id, true, '{"ok":true}');
   await tick();
 
   // ---- history panel closes and reopens from the window bar ----
@@ -994,6 +1014,39 @@ require('./app.js');
   await tick();
   assert.strictEqual(byId.get('update-chip').hidden, true, 'chip clears after install');
   assert.strictEqual(posted.length, beforeUpdate + 1, 'one install request');
+
+  // usage modal: one limit line per agent, not aggregate token totals
+  byId.get('usage-chip').handlers.click(noop());
+  await tick();
+  const usageReq = lastReq('usage');
+  assert.ok(usageReq, 'usage modal reads quotas');
+  window.__omnix.reply(usageReq.id, true, JSON.stringify({
+    ram: { totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 6 * 1024 * 1024 * 1024 },
+    agents: [
+      { agent: 'codex', plan: 'free', windows: [
+        { kind: 'primary', usedPercent: 100, resetsInSeconds: 900, windowMinutes: 300 },
+        { kind: 'secondary', usedPercent: 11, resetsInSeconds: 4000, windowMinutes: 10080 }
+      ] },
+      { agent: 'antigravity', plan: null, windows: [
+        { kind: 'gemini-weekly', label: 'Gemini Models \u00b7 Weekly',
+          usedPercent: 1.254, resetsInSeconds: 460800, windowMinutes: 10080 },
+        { kind: 'gemini-5h', label: 'Gemini Models \u00b7 5h',
+          usedPercent: 0, resetsInSeconds: 900, windowMinutes: 300 }
+      ] }
+    ]
+  }));
+  await tick();
+  const limits = byClass('usage-list', 'usage-limit');
+  assert.strictEqual(limits.length, 2, 'one quota line per agent');
+  const codexName = all(limits[0], (n) => n.className === 'usage-agent-name')[0];
+  assert.strictEqual(codexName.textContent, 'Codex', 'agent name is readable');
+  const codexSub = all(limits[0], (n) => n.className === 'usage-limit-sub')[0];
+  assert.match(codexSub.textContent, /Free plan/, 'plan is shown');
+  assert.match(codexSub.textContent, /resets in/, 'reset countdown is shown');
+  const codexPct = all(limits[0], (n) => n.className === 'usage-window-pct')[0];
+  assert.strictEqual(codexPct.textContent, '100%', 'the tightest window wins');
+  const agPct = all(limits[1], (n) => n.className === 'usage-window-pct')[0];
+  assert.strictEqual(agPct.textContent, '1%', 'antigravity reports remaining quota');
 
   // window controls talk to the host; the WebView draws no fake chrome
   const beforeWindow = posted.length;

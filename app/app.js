@@ -511,7 +511,10 @@
     if (!group) return;
     var full = group.panes.length >= maxPanes();
     for (var i = 0; i < group.panes.length; i++) {
-      if (group.panes[i] && group.panes[i].splitCtl) group.panes[i].splitCtl.disabled = full;
+      var pane = group.panes[i];
+      if (!pane) continue;
+      if (pane.splitCtl) pane.splitCtl.disabled = full;
+      if (pane.headSplit) pane.headSplit.disabled = full;
     }
     if (group.el && group.el.dataset) group.el.dataset.panes = String(group.panes.length);
   }
@@ -525,6 +528,7 @@
     if (survivor) {
       survivor.group = null;
       if (survivor.splitCtl) survivor.splitCtl.disabled = false;
+      if (survivor.headSplit) survivor.headSplit.disabled = false;
     }
     group.panes = [];
   }
@@ -799,6 +803,8 @@
   }
 
   var SPLIT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>';
+  var CLOSE_ICON = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8"/></svg>';
+  var HANDOFF_ICON = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 9h8"/><path d="m7.5 5.5 3.5 3.5-3.5 3.5"/><path d="M13.5 3v12"/></svg>';
 
   /* A small floating split control that stays out of the terminal text and can
      be dragged anywhere inside its pane. It is translucent while idle and
@@ -862,6 +868,79 @@
 
     pane.appendChild(box);
     return btn;
+  }
+
+  var uptimeTimer = null;
+
+  function fmtUptime(ms) {
+    var sec = Math.max(0, Math.floor(ms / 1000));
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = sec % 60;
+    function pad(n) { return n < 10 ? '0' + n : String(n); }
+    return h > 0 ? h + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s);
+  }
+
+  function updateUptimes() {
+    if (document.hidden) return;
+    var now = Date.now();
+    for (var i = 0; i < tabs.length; i++) {
+      var tab = tabs[i];
+      if (tab.kind === 'terminal' && tab.headTime && tab.startedAt) {
+        tab.headTime.textContent = fmtUptime(now - tab.startedAt);
+      }
+    }
+  }
+
+  function paneHeadBtn(cls, label, svg, run) {
+    var btn = el('button', 'pane-head-btn ' + cls);
+    btn.type = 'button';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.innerHTML = svg;
+    btn.addEventListener('click', guard(function (ev) {
+      if (ev && typeof ev.stopPropagation === 'function') ev.stopPropagation();
+      return run();
+    }));
+    return btn;
+  }
+
+  /* Split panes get a thin bar with split, handoff, close, and a live uptime.
+     A lone terminal keeps only the floating split pill, so it stays clean. */
+  function makePaneHead(tab) {
+    var head = el('div', 'pane-head');
+    var title = el('span', 'pane-head-title', tab.title);
+    title.title = tab.title;
+    head.appendChild(title);
+    var time = el('span', 'pane-head-time mono', '0:00');
+    head.appendChild(time);
+    var actions = el('div', 'pane-head-actions');
+    var split = paneHeadBtn('pane-head-split', 'Split terminal', SPLIT_ICON, function () {
+      activate(tab);
+      return splitActive();
+    });
+    split.disabled = !!(tab.group && tab.group.panes.length >= maxPanes());
+    var handoff = paneHeadBtn('pane-head-handoff', 'Hand off to agent', HANDOFF_ICON, function () {
+      activate(tab);
+      openHandoff(tab.agent && tab.sessionId
+        ? { agent: tab.agent, sessionId: tab.sessionId, cwd: tab.cwd, title: tab.title }
+        : null);
+    });
+    var close = paneHeadBtn('pane-head-close', 'Close terminal', CLOSE_ICON, function () {
+      closeTab(tab);
+    });
+    actions.appendChild(split);
+    actions.appendChild(handoff);
+    actions.appendChild(close);
+    head.appendChild(actions);
+    tab.el.insertBefore(head, tab.host);
+    tab.headTime = time;
+    tab.headSplit = split;
+    tab.startedAt = Date.now();
+    updateUptimes();
+    if (!uptimeTimer) {
+      uptimeTimer = setInterval(updateUptimes, 1000);
+    }
   }
 
   /* New terminals inherit the folder the user is already working in: the
@@ -954,6 +1033,7 @@
       g.panes[g.panes.length - 1] = tab;
       updateSplitControls(g);
     }
+    makePaneHead(tab);
     tabs.push(tab);
     if (tab.cwd) lastLaunchCwd = tab.cwd;
     activate(tab);
@@ -2089,14 +2169,6 @@
     return Math.round(n / 1048576) + ' MB';
   }
 
-  function fmtTokens(value) {
-    var n = Math.max(0, Number(value) || 0);
-    if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
-    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';
-    return String(Math.round(n));
-  }
-
   function fmtReset(seconds) {
     var sec = Number(seconds) || 0;
     if (sec <= 0) return 'now';
@@ -2116,41 +2188,19 @@
     return String(win.kind || 'window');
   }
 
-  function renderAIUsage() {
-    var ai = usageData.ai || {};
-    var totals = ai.totals || {};
-    var agents = Array.isArray(ai.agents) ? ai.agents : [];
-    var totalNode = $('usage-ai-total');
-    var list = $('usage-ai-list');
-    if (totalNode) {
-      totalNode.textContent = agents.length
-        ? fmtTokens(Number(totals.input) + Number(totals.cacheRead) +
-            Number(totals.cacheWrite)) + ' prompt \u00b7 ' +
-            fmtTokens(totals.output) + ' output \u00b7 ' +
-            fmtNum(totals.sessions) + ' sessions'
-        : 'No token usage indexed yet';
+  /* One line per agent, like Orca: show the window that is closest to its
+     limit; on a tie the longer window explains the reset better. */
+  function peakWindow(rows) {
+    var best = null;
+    for (var i = 0; i < rows.length; i++) {
+      var win = rows[i] || {};
+      var used = Math.max(0, Math.min(100, Number(win.usedPercent) || 0));
+      var minutes = Number(win.windowMinutes) || 0;
+      if (!best || used > best.used || (used === best.used && minutes > best.minutes)) {
+        best = { win: win, used: used, minutes: minutes };
+      }
     }
-    if (!list) return;
-    list.textContent = '';
-    if (!agents.length) {
-      list.appendChild(el('div', 'usage-empty',
-        'Agents that report tokens in their transcripts show up here.'));
-      return;
-    }
-    for (var i = 0; i < agents.length; i++) {
-      var agent = agents[i] || {};
-      var prompt = Number(agent.input) + Number(agent.cacheRead) + Number(agent.cacheWrite);
-      var card = el('div', 'usage-agent');
-      var head = el('div', 'usage-agent-head');
-      head.appendChild(el('span', 'usage-agent-name', String(agent.agent || 'agent')));
-      head.appendChild(el('span', 'usage-agent-plan',
-        fmtNum(agent.sessions) + ' session' + (Number(agent.sessions) === 1 ? '' : 's')));
-      card.appendChild(head);
-      card.appendChild(el('div', 'usage-ai-line mono',
-        fmtTokens(prompt) + ' prompt \u00b7 ' + fmtTokens(agent.output) + ' output \u00b7 ' +
-        fmtTokens(agent.cacheRead) + ' cached'));
-      list.appendChild(card);
-    }
+    return best;
   }
 
   function renderUsage() {
@@ -2159,8 +2209,6 @@
     var used = Number(ram.usedBytes) || 0;
     var pct = total > 0 ? Math.round(used / total * 100) : null;
     var agents = Array.isArray(usageData.agents) ? usageData.agents : [];
-
-    renderAIUsage();
 
     var ramNode = $('usage-ram');
     if (ramNode) {
@@ -2178,29 +2226,30 @@
     }
     for (var i = 0; i < agents.length; i++) {
       var agent = agents[i] || {};
-      var card = el('div', 'usage-agent');
-      var head = el('div', 'usage-agent-head');
-      head.appendChild(el('span', 'usage-agent-name', String(agent.agent || 'agent')));
-      if (agent.plan) head.appendChild(el('span', 'usage-agent-plan', String(agent.plan) + ' plan'));
-      card.appendChild(head);
       var rows = Array.isArray(agent.windows) ? agent.windows : [];
-      for (var r = 0; r < rows.length; r++) {
-        var win = rows[r] || {};
-        var value = Math.max(0, Math.min(100, Number(win.usedPercent) || 0));
-        var row = el('div', 'usage-window');
-        var label = el('span', 'usage-window-label');
-        label.appendChild(el('span', '', windowLabel(win)));
-        label.appendChild(el('small', '', 'resets in ' + fmtReset(win.resetsInSeconds)));
-        row.appendChild(label);
-        var bar = el('div', 'usage-bar');
-        var fill = el('span', value >= 90 ? 'high' : '');
-        fill.style.width = value + '%';
-        bar.appendChild(fill);
-        row.appendChild(bar);
-        row.appendChild(el('span', 'usage-window-pct', Math.round(value) + '%'));
-        card.appendChild(row);
+      var best = peakWindow(rows);
+      var row = el('div', 'usage-limit');
+      var id = el('div', 'usage-limit-id');
+      id.appendChild(el('span', 'usage-agent-name', agentLabel(String(agent.agent || 'agent'))));
+      var bits = [];
+      if (agent.plan) {
+        var plan = String(agent.plan);
+        bits.push(plan.charAt(0).toUpperCase() + plan.slice(1) + ' plan');
       }
-      list.appendChild(card);
+      if (best) {
+        bits.push(String(best.win.label || windowLabel(best.win)));
+        bits.push('resets in ' + fmtReset(best.win.resetsInSeconds));
+      }
+      id.appendChild(el('span', 'usage-limit-sub', best ? bits.join(' \u00b7 ') : 'No quota window reported'));
+      row.appendChild(id);
+
+      var bar = el('div', 'usage-bar');
+      var fill = el('span', best && best.used >= 90 ? 'high' : '');
+      fill.style.width = (best ? best.used : 0) + '%';
+      bar.appendChild(fill);
+      row.appendChild(bar);
+      row.appendChild(el('span', 'usage-window-pct', best ? Math.round(best.used) + '%' : '-'));
+      list.appendChild(row);
     }
   }
 
@@ -2209,6 +2258,11 @@
     renderMemory();
     showModal($('usage-modal'));
     refreshMemory();
+    /* Antigravity is fetched on a worker; a second read picks it up without
+       freezing the modal while `agy` starts. */
+    setTimeout(function () {
+      if (!$('usage-modal').hidden) refreshUsage();
+    }, 2500);
     return refreshUsage();
   }
 

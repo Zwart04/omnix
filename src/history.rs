@@ -426,42 +426,7 @@ pub struct ProjectRow {
     pub agents: String,
 }
 
-#[derive(Debug, Default)]
-pub struct AgentUsage {
-    pub agent: String,
-    pub sessions: i64,
-    pub input: i64,
-    pub cache_read: i64,
-    pub cache_write: i64,
-    pub output: i64,
-}
-
-/// Token totals per agent, straight from the indexed session counters. Agents
-/// that never report usage (for example OpenCode) are left out.
-pub fn token_totals(conn: &Connection) -> Result<Vec<AgentUsage>> {
-    let mut stmt = conn.prepare(
-        "SELECT agent, COUNT(*),
-                COALESCE(SUM(input_tokens), 0),
-                COALESCE(SUM(cache_read_tokens), 0),
-                COALESCE(SUM(cache_write_tokens), 0),
-                COALESCE(SUM(output_tokens), 0)
-         FROM sessions
-         GROUP BY agent
-         HAVING SUM(input_tokens + cache_read_tokens + cache_write_tokens + output_tokens) > 0
-         ORDER BY SUM(input_tokens + cache_read_tokens + cache_write_tokens + output_tokens) DESC",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(AgentUsage {
-            agent: row.get(0)?,
-            sessions: row.get(1)?,
-            input: row.get(2)?,
-            cache_read: row.get(3)?,
-            cache_write: row.get(4)?,
-            output: row.get(5)?,
-        })
-    })?;
-    Ok(rows.filter_map(Result::ok).collect())
-}/// Distinct working directories, the way the left project tree groups sessions.
+/// Distinct working directories, the way the left project tree groups sessions.
 pub fn projects(conn: &Connection, limit: usize) -> Result<Vec<ProjectRow>> {
     let mut stmt = conn.prepare(
         "SELECT cwd, COUNT(*), COALESCE(SUM(message_count), 0), MAX(updated_at),
@@ -922,41 +887,6 @@ mod tests {
         ));
         fs::create_dir_all(&dir).unwrap();
         dir
-    }
-
-    #[test]
-    fn aggregates_token_totals_per_agent() {
-        let dir = temp_dir("tokens");
-        let conn = open(&dir.join("history.db")).unwrap();
-        conn.execute(
-            "INSERT INTO sessions(agent,session_id,file_path,title,resume_command,
-                message_count,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens)
-             VALUES('claude','a','/a','A','',2,10,100,5,20)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO sessions(agent,session_id,file_path,title,resume_command,
-                message_count,input_tokens,cache_read_tokens,cache_write_tokens,output_tokens)
-             VALUES('claude','b','/b','B','',3,1,2,3,4)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO sessions(agent,session_id,file_path,title,resume_command,message_count)
-             VALUES('opencode','c','/c','C','',1)",
-            [],
-        )
-        .unwrap();
-        let rows = token_totals(&conn).unwrap();
-        assert_eq!(rows.len(), 1, "only agents with counters are listed");
-        assert_eq!(rows[0].agent, "claude");
-        assert_eq!(rows[0].sessions, 2);
-        assert_eq!(rows[0].input, 11);
-        assert_eq!(rows[0].cache_read, 102);
-        assert_eq!(rows[0].cache_write, 8);
-        assert_eq!(rows[0].output, 24);
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

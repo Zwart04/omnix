@@ -21,10 +21,10 @@ Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.5_amd64.deb` | `sudo apt install ./omnix_0.6.5_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.6.5-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.5-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.6_amd64.deb` | `sudo apt install ./omnix_0.6.6_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.6.6-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.6-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (universal) | `Omnix-0.6.5-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| macOS 11+ (universal) | `Omnix-0.6.6-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 <https://github.com/Zwart04/omnix/releases>
 
@@ -83,13 +83,15 @@ Yang sudah jalan dan dites di repo ini:
   dan logo agent untuk path yang cocok, tidak menambah baris.
 - Terminal bisa di-split sampai empat pane dalam satu grup: `Ctrl+Shift+D`,
   menu `+`, palette `Split Terminal`, atau ikon split kecil yang mengambang di
-  pojok kanan atas tiap pane. Ikon itu redup saat idle, menjadi pill solid saat
-  hover/focus, dan bisa digeser lewat grip di sebelahnya lalu double-click
-  untuk kembali ke pojok. Dua pane tampil berdampingan, tiga pane jadi dua di
-  atas plus satu lebar di bawah, empat pane jadi grid 2x2. Tiap pane punya pty
-  sendiri; tombol close di tab strip menutup pty itu dan pane terakhir kembali
-  menjadi satu pane penuh. Ikon split dinonaktifkan saat grup sudah berisi
-  empat pane.
+  pojok kanan atas pane tunggal. Begitu pane menjadi split, tiap pane mendapat
+  bar tipis di atasnya berisi judul, uptime terminal, tombol split, hand off ke
+  agent, dan tombol silang untuk menutup pane itu. Pill mengambang disembunyikan
+  saat bar aktif; pada pane tunggal pill tetap bisa digeser lewat grip dan
+  double-click untuk kembali ke pojok. Dua pane tampil berdampingan, tiga pane
+  jadi dua di atas plus satu lebar di bawah, empat pane jadi grid 2x2. Tiap pane
+  punya pty sendiri; tombol close di tab strip atau silang di bar menutup pty
+  itu dan pane terakhir kembali menjadi satu pane penuh. Tombol split
+  dinonaktifkan saat grup sudah berisi empat pane.
 - Status bar menampilkan RAM proses Omnix dan RAM semua terminal/agent yang
   dijalankannya: `App X · AI Y`. Klik chip itu (atau palette
   `Usage and Memory`) untuk modal usage: total process tree Omnix, bagian
@@ -99,10 +101,13 @@ Yang sudah jalan dan dites di repo ini:
   `ps`, Windows lewat CIM. Snapshot hanya diambil saat jendela terlihat: tiap
   3,5 detik di Linux (baca `/proc` murah), 8 detik di macOS/Windows (hindari
   spawn proses polling terlalu sering). Modal yang sama tetap
-  menampilkan memori sistem dan kuota provider yang punya data lokal. Bagian
-  `AI Usage` menjumlahkan prompt, output, dan cache token per agent dari
-  transcript lokal yang sudah diindeks, jadi tetap terisi walau provider tidak
-  menyimpan kuota. Budget AI default-nya seperempat RAM sistem (`OMNIX_AI_RAM_MB`
+  menampilkan memori sistem dan limit per agent, bukan total token. Codex dibaca
+  dari snapshot `rate_limits` terakhir di rollout lokal; Antigravity dibaca dari
+  CLI `agy -p /usage` yang dijalankan di background dan di-cache sekitar 45
+  detik supaya modal tidak membeku. Tiap agent tampil sebagai satu baris:
+  nama dan plan, window yang paling dekat limitnya (misalnya weekly atau 5 jam),
+  hitungan reset, progress bar, dan persen terpakai. Provider tanpa data lokal
+  tidak muncul. Budget AI default-nya seperempat RAM sistem (`OMNIX_AI_RAM_MB`
   untuk menimpanya); saat terlampaui chip jadi amber dan muncul satu toast.
 - Handoff modal ala Orca (`Focused handoff` / `Full session transcript`): brief
   ditulis ke `<cwd>/.omnix/handoffs/`, lalu sesi agent target dibuka di cwd yang
