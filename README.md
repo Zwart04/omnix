@@ -21,10 +21,10 @@ Rilis membawa paket siap pasang (dibangun CI pada tag `v*`):
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.1_amd64.deb` | `sudo apt install ./omnix_0.6.1_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.6.1-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.1-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.2_amd64.deb` | `sudo apt install ./omnix_0.6.2_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.6.2-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.2-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (universal) | `Omnix-0.6.1-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| macOS 11+ (universal) | `Omnix-0.6.2-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 <https://github.com/Zwart04/omnix/releases>
 

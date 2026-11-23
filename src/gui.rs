@@ -1279,26 +1279,20 @@ pub fn run() -> Result<()> {
 
     /* build_as_child on X11 hosts the page in a separate GtkWindow, and some
     window managers never give that child keyboard focus: clicks work while
-    every keystroke is dropped. Hosting the page in the tao window's own
-    GtkBox with a gtk::Fixed keeps one focus chain. */
+    every keystroke is dropped. Building into the tao window's own GtkBox
+    keeps one focus chain and lets GTK stretch the page with the window;
+    a gtk::Fixed leaves it stuck at its first allocation. */
     #[cfg(target_os = "linux")]
     let ui = {
-        use gtk::prelude::*;
         use tao::platform::unix::WindowExtUnix;
-        use wry::{WebViewBuilderExtUnix, WebViewExtUnix};
+        use wry::WebViewBuilderExtUnix;
 
-        let fixed = gtk::Fixed::new();
         let vbox = window
             .default_vbox()
             .context("tao window has no default vbox")?;
-        vbox.pack_start(&fixed, true, true, 0);
-        fixed.show_all();
-        let view = ui_builder
-            .build_gtk(&fixed)
-            .context("create ui webview: is WEBKIT_DISABLE_COMPOSITING_MODE needed?")?;
-        view.webview().set_hexpand(true);
-        view.webview().set_vexpand(true);
-        view
+        ui_builder
+            .build_gtk(vbox)
+            .context("create ui webview: is WEBKIT_DISABLE_COMPOSITING_MODE needed?")?
     };
     #[cfg(not(target_os = "linux"))]
     let ui = ui_builder
