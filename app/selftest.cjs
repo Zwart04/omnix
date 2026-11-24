@@ -27,6 +27,11 @@ function fakeEl(tag) {
       set: new Set(),
       add(c) { this.set.add(c); },
       remove(c) { this.set.delete(c); },
+      toggle(c, force) {
+        const on = force === undefined ? !this.set.has(c) : !!force;
+        if (on) this.set.add(c); else this.set.delete(c);
+        return on;
+      },
       contains(c) { return this.set.has(c); }
     },
     appendChild(child) {
@@ -73,6 +78,7 @@ function fakeEl(tag) {
 const byId = new Map();
 [
   'app', 'app-version', 'sidebar', 'workspace-list', 'tab-list', 'panes', 'tabstrip',
+  'conflict-banner',
   'side-resize', 'hist-resize',
   'tabstrip-tabs', 'new-project', 'pane-empty', 'pane-empty-terminal', 'pane-empty-browser',
   'project-modal', 'project-close', 'project-cancel', 'project-add', 'project-path', 'project-error',
@@ -84,7 +90,8 @@ const byId = new Map();
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
   'history-filter', 'history-sort', 'history-collapse-all', 'history-time',
-  'project-tree', 'project-refresh', 'project-add-icon', 'side-search', 'side-toggle', 'side-settings', 'rail-agents',
+  'project-tree', 'project-refresh', 'project-add-icon', 'side-search', 'side-toggle', 'side-settings',
+  'side-support', 'rail-agents',
   'win-min', 'win-max', 'win-close',
   'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
   'workspace-refresh',
@@ -92,8 +99,28 @@ const byId = new Map();
   'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
+  'workers', 'workers-list', 'workers-refresh', 'gc-preview',
+  'agent-send-modal', 'agent-send-title', 'agent-send-target', 'agent-send-text',
+  'agent-send-note', 'agent-send-close', 'agent-send-cancel', 'agent-send-ok',
+  'gc-modal', 'gc-title', 'gc-close', 'gc-actions', 'gc-cancel', 'gc-run',
   'agent-settings', 'agent-settings-meta', 'agent-settings-refresh',
   'agent-settings-path', 'agent-default-perms', 'settings-back', 'settings-search',
+  'settings-agents', 'settings-plugins', 'settings-dev', 'settings-about',
+  'about-version', 'about-setup-state', 'about-support', 'about-repo', 'about-setup',
+  'setup-modal', 'setup-step-0', 'setup-step-1', 'setup-step-2', 'setup-step-3',
+  'setup-dot-0', 'setup-dot-1', 'setup-dot-2', 'setup-dot-3',
+  'setup-project', 'setup-project-error', 'setup-browse', 'setup-agents',
+  'setup-agents-note', 'setup-support', 'setup-step-note',
+  'setup-skip', 'setup-back', 'setup-next',
+  'plugin-install-source', 'plugin-install-btn', 'plugin-search', 'plugin-search-btn',
+  'plugin-doctor-btn', 'plugin-catalog-note', 'plugin-list', 'plugin-catalog',
+  'plugin-panel-modal', 'plugin-panel-title', 'plugin-panel-note', 'plugin-panel-frame',
+  'plugin-panel-source', 'plugin-panel-close', 'plugin-panel-ok',
+  'plugin-output-modal', 'plugin-output-title', 'plugin-output-pre',
+  'plugin-output-note', 'plugin-output-close', 'plugin-output-ok',
+  'dev-brief', 'dev-agent', 'dev-task-btn', 'dev-task-meta',
+  'dev-build-btn', 'dev-test-btn', 'dev-run-btn', 'dev-restore-btn',
+  'dev-output', 'dev-tasks', 'dev-builds',
   'cmd-modal', 'cmd-close', 'cmd-cancel', 'cmd-start', 'cmd-line', 'cmd-cwd', 'cmd-error',
   'palette', 'palette-input', 'palette-list'
 ].forEach((id) => byId.set(id, fakeEl(id)));
@@ -119,6 +146,13 @@ const paneByKind = {
 const panelButtons = ['search', 'handoff', 'docs', 'settings'].map((panel) => {
   const node = fakeEl('button');
   node.dataset.panel = panel;
+  return node;
+});
+
+const settingsNavButtons = ['agents', 'plugins', 'dev', 'about'].map((section) => {
+  const node = fakeEl('button');
+  node.dataset.settings = section;
+  if (section === 'agents') node.classList.add('is-active');
   return node;
 });
 
@@ -171,6 +205,7 @@ global.document = {
   },
   querySelectorAll(sel) {
     if (sel.indexOf('.panel-btn') === 0) return panelButtons;
+    if (sel.indexOf('.settings-nav-item') === 0) return settingsNavButtons;
     return [];
   },
   addEventListener(type, fn, capture) { docHandlers[type] = fn; docHandlers[type + ':capture'] = !!capture; }
@@ -224,7 +259,10 @@ require('./app.js');
 
   window.__omnix.reply(infoReq.id, true,
     '{"version":"0.1.0","root":"/repo","engine":{"lightpanda":true,"version":"9.9"},' +
-    '"agents":[{"name":"codex","bin":"codex"},{"name":"claude","bin":"claude"}]}');
+    '"agents":[{"name":"codex","bin":"codex"},{"name":"claude","bin":"claude"}],' +
+    '"pluginCommands":[["hello:hello","Hello"]],' +
+    '"pluginPanels":[{"plugin":"hello","name":"status","title":"Status"}],' +
+    '"setup":{"needed":false,"complete":true,"completedAt":1700000000}}');
   window.__omnix.reply(statusReq.id, true,
     '{"sessions":0,"messages":0,"dbBytes":0,"workspaces":[]}');
   await tick();
@@ -233,8 +271,8 @@ require('./app.js');
   assert.ok(bootProjectsReq, 'boot lists the saved projects');
   window.__omnix.reply(bootProjectsReq.id, true, JSON.stringify({
     projects: [
-      { path: '/home/zwart/git/omnix', name: 'omnix' },
-      { path: '/home/zwart/git/crm-sb', name: 'crm-sb' }
+      { path: '/home/you/code/omnix', name: 'omnix' },
+      { path: '/home/you/code/demo-app', name: 'demo-app' }
     ]
   }));
   await tick();
@@ -246,11 +284,11 @@ require('./app.js');
     root: '/repo',
     projects: [
       {
-        path: '/home/zwart/git/omnix', name: 'omnix', sessions: 12, messages: 3400,
+        path: '/home/you/code/omnix', name: 'omnix', sessions: 12, messages: 3400,
         updatedAt: Math.floor(Date.now() / 1000) - 7200, agents: ['claude', 'codex']
       },
       {
-        path: '/home/zwart/git/crm-sb', name: 'crm-sb', sessions: 108, messages: 44000,
+        path: '/home/you/code/demo-app', name: 'demo-app', sessions: 108, messages: 44000,
         updatedAt: Math.floor(Date.now() / 1000) - 120, agents: ['claude', 'codex', 'opencode']
       },
       {
@@ -265,7 +303,7 @@ require('./app.js');
   assert.strictEqual(bootRows.length, 2, 'only saved projects render, never every indexed folder');
   assert.strictEqual(byId.get('app').style['--side-w'], '310px',
     'the saved sidebar width applies at boot');
-  assert.strictEqual(all(bootRows[0], (n) => n.className === 'ws-name')[0].textContent, 'crm-sb',
+  assert.strictEqual(all(bootRows[0], (n) => n.className === 'ws-name')[0].textContent, 'demo-app',
     'projects sorted by indexed updatedAt desc');
   assert.strictEqual(all(bootRows[1], (n) => n.className === 'ws-name')[0].textContent, 'omnix',
     'older project second');
@@ -280,7 +318,7 @@ require('./app.js');
   assert.strictEqual(byId.get('workspace-group-body').hidden, false, 'workspace expands');
 
   // sidebar search narrows the project list without touching saved state
-  byId.get('side-search').value = 'crm';
+  byId.get('side-search').value = 'demo';
   byId.get('side-search').handlers.input(noop);
   assert.strictEqual(byClass('workspace-list', 'proj-row').length, 1, 'search filters projects');
   byId.get('side-search').handlers.keydown({ key: 'Escape' });
@@ -299,8 +337,8 @@ require('./app.js');
   window.__omnix.reply(wsReq.id, true, JSON.stringify({
     root: '/repo', sessions: 0, messages: 0, dbBytes: 0,
     workspaces: [
-      { path: '/home/zwart/git/omnix', branch: 'main', sleeping: false, sessions: [
-        { paneKey: 'x:1', agent: 'codex', sessionId: 'sess-1', cwd: '/home/zwart/git/omnix',
+      { path: '/home/you/code/omnix', branch: 'main', sleeping: false, sessions: [
+        { paneKey: 'x:1', agent: 'codex', sessionId: 'sess-1', cwd: '/home/you/code/omnix',
           resumeCommand: 'codex resume sess-1', saved_at: Math.floor(Date.now() / 1000) - 90 }
       ] },
       { path: '/tmp/not-a-project', branch: 'ghost', sleeping: true, sessions: [] }
@@ -318,7 +356,7 @@ require('./app.js');
   assert.strictEqual(byClass('workspace-list', 'sess-row').length, 1,
     'project expands into its tracked session');
   assert.strictEqual(
-    JSON.parse(window.localStorage.getItem('omnix.projExpanded'))['/home/zwart/git/omnix'],
+    JSON.parse(window.localStorage.getItem('omnix.projExpanded'))['/home/you/code/omnix'],
     true, 'expanded project state persists');
 
   // removing a project only touches the saved list
@@ -328,9 +366,9 @@ require('./app.js');
   await tick();
   const removeReq = posted[posted.length - 1];
   assert.strictEqual(removeReq.cmd, 'projectRemove', 'remove asks the host');
-  assert.deepStrictEqual(removeReq.args, { path: '/home/zwart/git/crm-sb' }, 'remove sends the path');
+  assert.deepStrictEqual(removeReq.args, { path: '/home/you/code/demo-app' }, 'remove sends the path');
   window.__omnix.reply(removeReq.id, true, JSON.stringify({
-    projects: [{ path: '/home/zwart/git/omnix', name: 'omnix' }]
+    projects: [{ path: '/home/you/code/omnix', name: 'omnix' }]
   }));
   await tick();
   assert.strictEqual(byClass('workspace-list', 'proj-row').length, 1, 'row disappears after remove');
@@ -338,8 +376,8 @@ require('./app.js');
   // opening the agents panel starts the index walk
   byId.get('rail-agents').handlers.click(noop());
   await tick();
-  const scanReq = posted[posted.length - 1];
-  assert.strictEqual(scanReq.cmd, 'historyScan', 'expanding Agents starts the scan');
+  const scanReq = posted.filter((r) => r.cmd === 'historyScan').pop();
+  assert.ok(scanReq, 'expanding Agents starts the scan');
   window.__omnix.reply(scanReq.id, true, JSON.stringify({
     files: 290,
     messages: 44846,
@@ -351,7 +389,7 @@ require('./app.js');
       { agent: 'claude', sessions: 108, messages: 22000 },
       { agent: 'opencode', sessions: 168, messages: 19306 }
     ],
-    roots: [{ agent: 'codex', path: '/home/zwart/.codex/sessions' }]
+    roots: [{ agent: 'codex', path: '/home/you/.codex/sessions' }]
   }));
   await tick();
 
@@ -624,8 +662,8 @@ require('./app.js');
   assert.strictEqual(paneHeads.length, 2, 'each split pane has a header');
   assert.strictEqual(byClass('panes', 'pane-head-time').length, 0,
     'the header skips the uptime clock');
-  assert.strictEqual(byClass('panes', 'pane-head-btn').length, 6,
-    'header carries split, handoff, and close');
+  assert.strictEqual(byClass('panes', 'pane-head-btn').length, 8,
+    'header carries role, split, handoff, and close');
   byClass('panes', 'pane-head-handoff')[0].handlers.click({ stopPropagation: noop });
   await tick();
   assert.strictEqual(byId.get('handoff-modal').hidden, false, 'header handoff opens the modal');
@@ -719,13 +757,171 @@ require('./app.js');
   byId.get('settings-search').value = '';
   byId.get('settings-search').handlers.input(noop);
 
+  // ---- settings / plugins ----
+  settingsNavButtons[1].handlers.click(noop);
+  await tick();
+  const pluginsReq = lastReq('plugins');
+  assert.ok(pluginsReq, 'plugins section asks for installed plugins');
+  assert.strictEqual(byId.get('settings-plugins').hidden, false, 'plugins pane visible');
+  assert.strictEqual(byId.get('settings-agents').hidden, true, 'agents pane hidden');
+  window.__omnix.reply(pluginsReq.id, true, JSON.stringify({
+    catalog: 'https://example.test/index.json',
+    path: '/home/you/.omnix/plugins',
+    plugins: [
+      {
+        name: 'hello', version: '1.0.0', enabled: true, installed: true,
+        path: '/p/hello', kinds: ['command', 'panel'], permissions: 'read .; network api',
+        requested: ['read', 'network'], granted: ['read'], sha256: 'a'.repeat(64),
+        source: 'local', description: 'Says hello', author: 'Test Author', license: 'MIT', api: 1
+      },
+      {
+        name: 'broken', installed: false, enabled: true, kind: [],
+        requested: [], granted: [], error: 'bad manifest'
+      }
+    ]
+  }));
+  await tick();
+  assert.strictEqual(byClass('plugin-list', 'plugin-row').length, 2,
+    'installed and broken plugin folders render');
+  assert.strictEqual(byClass('plugin-list', 'perm-chip').length, 2,
+    'requested permissions become chips');
+  assert.strictEqual(byClass('plugin-list', 'perm-chip')
+    .filter((n) => String(n.className).indexOf('is-granted') >= 0).length, 1,
+    'granted permission is marked');
+  const panelAction = byClass('plugin-list', 'btn')
+    .find((n) => /Buka panel/.test(n.textContent));
+  assert.ok(panelAction, 'panel contribution offers a button');
+  panelAction.handlers.click(noop);
+  await tick();
+  const panelReq = lastReq('pluginPanel');
+  assert.deepStrictEqual(panelReq.args, { name: 'hello', panel: 'status' },
+    'panel request names plugin and panel');
+  window.__omnix.reply(panelReq.id, true,
+    '{"plugin":"hello","name":"status","title":"Status","url":"/plugin-panel/hello/index.html"}');
+  await tick();
+  assert.strictEqual(byId.get('plugin-panel-modal').hidden, false, 'panel modal opens');
+  assert.strictEqual(byId.get('plugin-panel-frame').getAttribute('src'),
+    '/plugin-panel/hello/index.html', 'panel frame points at the plugin file');
+  byId.get('plugin-panel-ok').handlers.click(noop);
+  assert.strictEqual(byId.get('plugin-panel-modal').hidden, true, 'panel modal closes');
+
+  byId.get('plugin-install-source').value = '/tmp/hello-plugin';
+  byId.get('plugin-install-btn').handlers.click(noop);
+  await tick();
+  const installReq = lastReq('pluginAction');
+  assert.strictEqual(installReq.args.action, 'install', 'install action is sent');
+  assert.strictEqual(installReq.args.name, '/tmp/hello-plugin', 'install source is sent');
+  window.__omnix.reply(installReq.id, false, '{"code":"internal","message":"not found"}');
+  await tick();
+
+  byId.get('plugin-search').value = 'hello';
+  byId.get('plugin-search-btn').handlers.click(noop);
+  await tick();
+  const catalogReq = lastReq('pluginAction');
+  assert.strictEqual(catalogReq.args.action, 'search', 'catalog search action is sent');
+  assert.strictEqual(catalogReq.args.name, 'hello', 'catalog query is sent');
+  window.__omnix.reply(catalogReq.id, true, JSON.stringify({
+    catalog: 'https://example.test/index.json',
+    plugins: [{
+      name: 'hello', version: '1.0.0', author: 'Test Author', license: 'MIT',
+      description: 'Says hello', kinds: ['command'], permissions: 'read .',
+      sha256: 'b'.repeat(64), installed: null
+    }]
+  }));
+  await tick();
+  assert.strictEqual(byClass('plugin-catalog', 'catalog-row').length, 1,
+    'catalog search renders a result');
+  assert.match(byClass('plugin-catalog', 'plugin-desc')[0].textContent, /Says hello/,
+    'catalog result carries the description');
+
+  // ---- settings / dev ----
+  settingsNavButtons[2].handlers.click(noop);
+  await tick();
+  const devReq = lastReq('devStatus');
+  assert.ok(devReq, 'dev section asks for build status');
+  assert.strictEqual(byId.get('settings-dev').hidden, false, 'dev pane visible');
+  window.__omnix.reply(devReq.id, true, JSON.stringify({
+    builds: [{
+      id: 'dev-1', worktree: '/repo', branch: 'main', commit: 'abc123',
+      profile: 'release', binary: '/home/you/.omnix/builds/dev-1/omnix',
+      sha256: 'c'.repeat(64), size: 2097152, built_at: Math.floor(Date.now() / 1000) - 60
+    }],
+    installed: {},
+    previous: null,
+    devHome: '/home/you/.omnix/dev/home',
+    tasks: [{
+      name: 'dev-task-1', agent: 'codex', worktree: '/repo/.omnix/worktrees/dev-1',
+      branch: 'omnix/dev-1', status: 'working', outcome: 'journaled'
+    }]
+  }));
+  await tick();
+  assert.strictEqual(byClass('dev-builds', 'dev-row').length, 1, 'dev build renders');
+  assert.strictEqual(byClass('dev-tasks', 'dev-row').length, 1, 'dev task renders');
+  assert.strictEqual(byId.get('dev-restore-btn').disabled, true,
+    'restore waits for a previous binary');
+
+  byId.get('dev-brief').value = 'add a small status panel';
+  byId.get('dev-agent').value = 'codex';
+  byId.get('dev-task-btn').handlers.click(noop);
+  await tick();
+  const taskReq = lastReq('devTask');
+  assert.strictEqual(taskReq.args.brief, 'add a small status panel', 'brief is sent');
+  assert.strictEqual(taskReq.args.agent, 'codex', 'agent is sent');
+  window.__omnix.reply(taskReq.id, true, JSON.stringify({
+    record: {
+      name: 'dev-task-2', agent: 'codex', worktree: '/repo/.omnix/worktrees/dev-2',
+      branch: 'omnix/dev-2', status: 'journaled', outcome: 'journaled'
+    },
+    path: '/repo/.omnix/handoffs/dev-2.md',
+    brief: '# Omnix development task\n\nadd a small status panel'
+  }));
+  await tick();
+  const devSpawn = lastReq('ptySpawn');
+  assert.ok(devSpawn, 'dev task opens a terminal');
+  assert.strictEqual(devSpawn.args.agent, 'codex', 'dev task uses the chosen agent');
+  assert.strictEqual(devSpawn.args.cwd, '/repo/.omnix/worktrees/dev-2',
+    'dev task starts in its worktree');
+  window.__omnix.reply(devSpawn.id, true, '{"paneKey":"dev:dev-task-2","pid":91}');
+  await tick();
+  const deliveredReq = lastReq('devTaskDelivered');
+  assert.ok(deliveredReq, 'opening the pane marks the task delivered');
+  assert.strictEqual(deliveredReq.args.name, 'dev-task-2');
+  window.__omnix.reply(deliveredReq.id, true, '{"ok":true}');
+  await tick();
+  const devReload = lastReq('devStatus');
+  window.__omnix.reply(devReload.id, true,
+    '{"builds":[],"installed":{},"previous":null,"devHome":"/h","tasks":[]}');
+  await tick();
+
+  byId.get('dev-build-btn').handlers.click(noop);
+  await tick();
+  const buildReq = lastReq('devBuild');
+  assert.ok(buildReq, 'build button asks the host to build');
+  window.__omnix.reply(buildReq.id, true, JSON.stringify({
+    id: 'dev-2', worktree: '/repo', branch: 'main', commit: 'def456',
+    profile: 'release', binary: '/home/you/.omnix/builds/dev-2/omnix',
+    sha256: 'd'.repeat(64), size: 2097152, built_at: Math.floor(Date.now() / 1000)
+  }));
+  await tick();
+  const buildReload = lastReq('devStatus');
+  window.__omnix.reply(buildReload.id, true,
+    '{"builds":[],"installed":{},"previous":null,"devHome":"/h","tasks":[]}');
+  await tick();
+  window.__omnix.emit('paneClosed', { paneKey: 'dev:dev-task-2' });
+  await tick();
+  const devKill = lastReq('ptyKill');
+  if (devKill) {
+    window.__omnix.reply(devKill.id, true, '{"ok":true}');
+    await tick();
+  }
+
   // keyboard: arrows move the active row, escape closes, focus returns
   assert.strictEqual(docHandlers['keydown:capture'], true,
     'app shortcuts listen before xterm swallows the key');
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, false, 'Ctrl+K opens the palette');
   const rows = byId.get('palette-list').children;
-  assert.strictEqual(rows.length, 15, 'all commands listed with an empty query');
+  assert.strictEqual(rows.length, 22, 'all commands listed with an empty query');
   byId.get('palette-input').handlers.keydown({ key: 'ArrowDown', preventDefault: noop });
   assert.strictEqual(byId.get('palette-list').children[1].getAttribute('aria-selected'), 'true',
     'arrow down moves the selection');
@@ -759,12 +955,22 @@ require('./app.js');
     ai: { rss: 10485760, processes: 1 },
     other: { rss: 94371840, processes: 2 },
     budget: { limitBytes: 1048576, over: true },
-    panes: []
+    panes: [],
+    conflicts: [{
+      kind: 'folder', value: '/repo',
+      message: '2 agent berjalan di folder yang sama: /repo',
+      panes: [{ paneKey: 'tab:1', agent: 'codex' }, { paneKey: 'tab:2', agent: 'claude' }]
+    }]
   }));
   await tick();
   const budgetToasts = () => byId.get('toasts').children
     .filter((n) => /budget/.test(String(n.textContent)));
   assert.strictEqual(budgetToasts().length, 1, 'over-budget toast appears');
+  assert.strictEqual(byId.get('conflict-banner').hidden, false,
+    'shared-folder warning banner is visible');
+  const moveButton = all(byId.get('conflict-banner'),
+    (n) => n.tagName === 'button' && /Pindahkan ke worktree baru/.test(String(n.textContent)))[0];
+  assert.ok(moveButton, 'the banner offers a move-to-worktree action');
   docHandlers.visibilitychange();
   await tick();
   const memAgain = lastReq('memory');
@@ -869,15 +1075,15 @@ require('./app.js');
   await tick();
   const pickReq = posted[posted.length - 1];
   assert.strictEqual(pickReq.cmd, 'pickFolder', '+ Project asks the host for a folder');
-  window.__omnix.reply(pickReq.id, true, JSON.stringify({ path: '/home/zwart/git/newrepo' }));
+  window.__omnix.reply(pickReq.id, true, JSON.stringify({ path: '/home/you/code/newrepo' }));
   await tick();
   const addReq = posted[posted.length - 1];
   assert.strictEqual(addReq.cmd, 'projectAdd', 'picked folder is added');
-  assert.deepStrictEqual(addReq.args, { path: '/home/zwart/git/newrepo' }, 'add sends the folder');
+  assert.deepStrictEqual(addReq.args, { path: '/home/you/code/newrepo' }, 'add sends the folder');
   window.__omnix.reply(addReq.id, true, JSON.stringify({
     projects: [
-      { path: '/home/zwart/git/omnix', name: 'omnix' },
-      { path: '/home/zwart/git/newrepo', name: 'newrepo' }
+      { path: '/home/you/code/omnix', name: 'omnix' },
+      { path: '/home/you/code/newrepo', name: 'newrepo' }
     ]
   }));
   await tick();
@@ -885,9 +1091,9 @@ require('./app.js');
   assert.ok(addProjectsReq, 'add refreshes the list');
   window.__omnix.reply(addProjectsReq.id, true, JSON.stringify({
     projects: [
-      { path: '/home/zwart/git/omnix', name: 'omnix' },
-      { path: '/home/zwart/git/omnix/packages/tools', name: 'omnix' },
-      { path: '/home/zwart/git/newrepo', name: 'newrepo' }
+      { path: '/home/you/code/omnix', name: 'omnix' },
+      { path: '/home/you/code/omnix/packages/tools', name: 'omnix' },
+      { path: '/home/you/code/newrepo', name: 'newrepo' }
     ]
   }));
   await tick();
@@ -896,13 +1102,13 @@ require('./app.js');
   await tick();
   const spawnReq = lastReq('ptySpawn');
   assert.ok(spawnReq, 'add opens a terminal for the new project');
-  assert.strictEqual(spawnReq.args.cwd, '/home/zwart/git/newrepo', 'terminal starts in the folder');
+  assert.strictEqual(spawnReq.args.cwd, '/home/you/code/newrepo', 'terminal starts in the folder');
   window.__omnix.reply(spawnReq.id, true, '{"paneKey":"tab:new","pid":90}');
   await tick();
   const addHistReq = lastReq('historySessions');
   assert.ok(addHistReq, 'new project scopes history');
   assert.strictEqual(addHistReq.args.scope, 'project', 'new project switches scope');
-  assert.strictEqual(addHistReq.args.cwd, '/home/zwart/git/newrepo',
+  assert.strictEqual(addHistReq.args.cwd, '/home/you/code/newrepo',
     'history follows the project folder');
   window.__omnix.reply(addHistReq.id, true,
     '{"scope":"project","root":"/repo","total":0,"sessions":[]}');
@@ -912,10 +1118,10 @@ require('./app.js');
   // duplicate basenames name their parent, and nested projects own separate tabs
   const projRows = byClass('workspace-list', 'proj-row');
   const labels = projRows.map((n) => all(n, (x) => String(x.className) === 'ws-name')[0].textContent);
-  assert.ok(labels.indexOf('omnix \u00b7 git') >= 0, 'parent project label is disambiguated');
+  assert.ok(labels.indexOf('omnix \u00b7 code') >= 0, 'parent project label is disambiguated');
   assert.ok(labels.indexOf('omnix \u00b7 packages') >= 0, 'nested project label is disambiguated');
 
-  const toolsRow = projRows.find((n) => n.title === '/home/zwart/git/omnix/packages/tools');
+  const toolsRow = projRows.find((n) => n.title === '/home/you/code/omnix/packages/tools');
   assert.ok(toolsRow, 'nested project row is present');
   const beforeTools = posted.length;
   toolsRow.handlers.click(noop());
@@ -924,10 +1130,10 @@ require('./app.js');
   const toolsSpawn = toolsReqs.find((r) => r.cmd === 'ptySpawn');
   const toolsHist = toolsReqs.find((r) => r.cmd === 'historySessions');
   assert.ok(toolsSpawn, 'nested project opens its own terminal');
-  assert.strictEqual(toolsSpawn.args.cwd, '/home/zwart/git/omnix/packages/tools',
+  assert.strictEqual(toolsSpawn.args.cwd, '/home/you/code/omnix/packages/tools',
     'nested project cwd is used');
   assert.ok(toolsHist, 'nested project filters history');
-  assert.strictEqual(toolsHist.args.cwd, '/home/zwart/git/omnix/packages/tools',
+  assert.strictEqual(toolsHist.args.cwd, '/home/you/code/omnix/packages/tools',
     'history follows the nested project');
   window.__omnix.reply(toolsSpawn.id, true, '{"paneKey":"tab:tools","pid":90}');
   window.__omnix.reply(toolsHist.id, true,
@@ -935,7 +1141,7 @@ require('./app.js');
   await tick();
 
   // new terminals inherit the folder of the project the user is working in
-  const omnixRow = projRows.find((n) => n.title === '/home/zwart/git/omnix');
+  const omnixRow = projRows.find((n) => n.title === '/home/you/code/omnix');
   assert.ok(omnixRow, 'omnix project row is present');
   const beforeOmnix = posted.length;
   omnixRow.handlers.click(noop());
@@ -945,9 +1151,9 @@ require('./app.js');
   const omnixHist = omnixReqs.find((r) => r.cmd === 'historySessions');
   assert.ok(projectSpawn,
     'clicking the parent project must not reuse the nested tab');
-  assert.strictEqual(projectSpawn.args.cwd, '/home/zwart/git/omnix', 'project cwd is used');
+  assert.strictEqual(projectSpawn.args.cwd, '/home/you/code/omnix', 'project cwd is used');
   assert.ok(omnixHist, 'parent project filters history');
-  assert.strictEqual(omnixHist.args.cwd, '/home/zwart/git/omnix',
+  assert.strictEqual(omnixHist.args.cwd, '/home/you/code/omnix',
     'history follows the parent project');
   window.__omnix.reply(projectSpawn.id, true, '{"paneKey":"tab:9","pid":91}');
   window.__omnix.reply(omnixHist.id, true,
@@ -962,8 +1168,8 @@ require('./app.js');
       return row && row.title === path;
     });
   }
-  const parentWrap = wrapFor('/home/zwart/git/omnix');
-  const toolsWrap = wrapFor('/home/zwart/git/omnix/packages/tools');
+  const parentWrap = wrapFor('/home/you/code/omnix');
+  const toolsWrap = wrapFor('/home/you/code/omnix/packages/tools');
   assert.ok(parentWrap && toolsWrap, 'parent and nested project rows exist');
   const parentLabels = all(parentWrap, (n) => n.className === 'sess-row')
     .map((n) => all(n, (x) => String(x.className) === 'inv-title')[0].textContent);
@@ -976,14 +1182,14 @@ require('./app.js');
   let stripTitles = all(byId.get('tabstrip-tabs'), (n) => n.className === 'strip-title');
   assert.strictEqual(stripTitles.length, 1,
     'switching project leaves only that project tab in the strip');
-  assert.ok(String(stripTitles[0].title).indexOf('/home/zwart/git/omnix') >= 0,
+  assert.ok(String(stripTitles[0].title).indexOf('/home/you/code/omnix') >= 0,
     'tab tooltip carries the active project path');
   assert.ok(String(stripTitles[0].title).indexOf('/packages/tools') < 0,
     'nested project tab is hidden while the parent project is active');
   const activeRows = byClass('workspace-list', 'proj').filter((n) =>
     String(n.className).split(/\s+/).includes('is-active'));
   assert.strictEqual(activeRows.length, 1, 'exactly one project is marked active');
-  assert.ok(activeRows[0].children[0].title === '/home/zwart/git/omnix',
+  assert.ok(activeRows[0].children[0].title === '/home/you/code/omnix',
     'the active marker follows the clicked project');
 
   // the sidebar spinner turns only while the pane is printing
@@ -1029,7 +1235,7 @@ require('./app.js');
   await tick();
   const agentSpawn = posted[posted.length - 1];
   assert.strictEqual(agentSpawn.cmd, 'ptySpawn', 'agent starts from the + menu');
-  assert.strictEqual(agentSpawn.args.cwd, '/home/zwart/git/omnix',
+  assert.strictEqual(agentSpawn.args.cwd, '/home/you/code/omnix',
     'agent inherits the project folder instead of the home directory');
   window.__omnix.reply(agentSpawn.id, true, '{"paneKey":"tab:10","pid":92}');
   await tick();
@@ -1137,6 +1343,110 @@ require('./app.js');
   await tick();
   assert.strictEqual(byClass('usage-strip', 'usage-strip-empty').length, 1,
     'an empty snapshot leaves a dash');
+
+  // workers: the CLI's pane registry, queued handoffs, send, and invoked cleanup
+  const listReq = lastReq('handoffList');
+  assert.ok(listReq, 'opening the panel lists handoffs');
+  window.__omnix.reply(listReq.id, true, JSON.stringify({
+    handoffs: [
+      { name: 'tertunda', agent: 'codex', outcome: 'queued', closed: false,
+        queued_reason: '2 worker(s) active (max 2)' },
+      { name: 'selesai', agent: 'claude', outcome: 'delivered', closed: true }
+    ]
+  }));
+  await tick();
+  assert.strictEqual(byId.get('workers').hidden, false, 'queued handoff shows a worker row');
+  assert.strictEqual(byClass('workers-list', 'is-queued').length, 1, 'only open queued rows render');
+
+  window.__omnix.emit('paneOpen', {
+    paneKey: 'ho:tugas', title: 'tugas', handoff: 'tugas', agent: 'codex',
+    cwd: '/repo/.omnix/worktrees/tugas', status: 'working'
+  });
+  await tick();
+  const opened = lastReq('paneState');
+  assert.strictEqual(opened.args.paneKey, 'ho:tugas', 'attached pane publishes its state');
+  assert.strictEqual(opened.args.handoff, 'tugas', 'pane registry carries the handoff name');
+  const workerRows = byClass('workers-list', 'worker');
+  assert.ok(workerRows.length >= 2, 'live worker and queued handoff both listed');
+
+  const sendBtn = all(byId.get('workers-list'),
+    (n) => n.className === 'worker-btn' && n.textContent === 'send')[0];
+  assert.ok(sendBtn, 'a live agent worker offers send');
+  sendBtn.handlers.click(noop());
+  assert.strictEqual(byId.get('agent-send-modal').hidden, false, 'send modal opens');
+  byId.get('agent-send-text').value = 'lanjutkan';
+  byId.get('agent-send-ok').handlers.click(noop());
+  const sendReq = lastReq('agentSend');
+  assert.strictEqual(sendReq.args.target, 'ho:tugas', 'send targets the pane key');
+  assert.strictEqual(sendReq.args.text, 'lanjutkan', 'send carries the message');
+  window.__omnix.reply(sendReq.id, true, '{"ok":true,"paneKey":"ho:tugas","state":"working"}');
+  await tick();
+  assert.strictEqual(byId.get('agent-send-modal').hidden, true, 'send modal closes on success');
+
+  byId.get('gc-preview').handlers.click(noop());
+  const gcPreviewReq = lastReq('gc');
+  assert.strictEqual(gcPreviewReq.args.dryRun, true, 'cleanup opens with a dry run');
+  window.__omnix.reply(gcPreviewReq.id, true,
+    '{"dryRun":true,"actions":["close selesai (merged)"]}');
+  await tick();
+  assert.strictEqual(byId.get('gc-modal').hidden, false, 'cleanup preview opens');
+  assert.match(byId.get('gc-actions').textContent, /merged/, 'preview lists the action');
+  byId.get('gc-run').handlers.click(noop());
+  const gcRunReq = lastReq('gc');
+  assert.strictEqual(gcRunReq.args.dryRun, false, 'run applies the same cleanup');
+  window.__omnix.reply(gcRunReq.id, true, '{"dryRun":false,"actions":["closed selesai"]}');
+  await tick();
+  assert.strictEqual(byId.get('gc-modal').hidden, true, 'cleanup closes after running');
+
+  window.__omnix.emit('paneClosed', { paneKey: 'ho:tugas' });
+  await tick();
+  assert.strictEqual(byClass('workers-list', 'is-orchestrator').length, 0,
+    'closed pane leaves the registry');
+
+  // ---- settings / about ----
+  settingsNavButtons[3].handlers.click(noop);
+  await tick();
+  assert.strictEqual(byId.get('settings-about').hidden, false, 'about pane visible');
+  assert.strictEqual(byId.get('settings-dev').hidden, true, 'dev pane hidden');
+  assert.match(byId.get('about-version').textContent, /v0\.1\.0/, 'about shows the version');
+  byId.get('about-support').handlers.click(noop);
+  const supportReq = lastReq('supportOpen');
+  assert.strictEqual(supportReq.cmd, 'supportOpen', 'support opens the fixed Tako page');
+  window.__omnix.reply(supportReq.id, true, '{"ok":true,"url":"https://tako.id/Zwart04/gift"}');
+  await tick();
+
+  // ---- first-run setup ----
+  docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
+  byId.get('palette-input').value = 'Setup Omnix Again';
+  byId.get('palette-input').handlers.input(noop());
+  byId.get('palette-input').handlers.keydown({ key: 'Enter', preventDefault: noop });
+  await tick();
+  const resetSetupReq = lastReq('setupReset');
+  assert.ok(resetSetupReq, 'replaying setup resets the one-time flag');
+  window.__omnix.reply(resetSetupReq.id, true,
+    '{"ok":true,"setup":{"needed":true,"complete":false,' +
+    '"supportUrl":"https://tako.id/Zwart04/gift"}}');
+  await tick();
+  assert.strictEqual(byId.get('setup-modal').hidden, false, 'wizard opens on demand');
+  assert.strictEqual(byId.get('setup-step-0').hidden, false, 'wizard starts at welcome');
+  byId.get('setup-next').handlers.click(noop());
+  assert.strictEqual(byId.get('setup-step-1').hidden, false, 'project step follows');
+  byId.get('setup-next').handlers.click(noop());
+  assert.strictEqual(byId.get('setup-step-2').hidden, false, 'agent step follows');
+  const setupRows = all(byId.get('setup-agents'),
+    (n) => String(n.className).split(/\s+/).indexOf('setup-agent') >= 0);
+  assert.ok(setupRows.length >= 2, 'installed agents appear in setup');
+  byId.get('setup-next').handlers.click(noop());
+  assert.strictEqual(byId.get('setup-step-3').hidden, false, 'support step follows');
+  assert.match(byId.get('setup-step-note').textContent, /4 of 4/, 'step counter is honest');
+  byId.get('setup-next').handlers.click(noop());
+  await tick();
+  const setupDoneReq = lastReq('setupComplete');
+  assert.ok(setupDoneReq, 'finish records the setup state');
+  window.__omnix.reply(setupDoneReq.id, true,
+    '{"ok":true,"setup":{"needed":false,"complete":true,"completedAt":1700000100}}');
+  await tick();
+  assert.strictEqual(byId.get('setup-modal').hidden, true, 'wizard closes after finishing');
 
   // window controls talk to the host; the WebView draws no fake chrome
   const beforeWindow = posted.length;

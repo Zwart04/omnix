@@ -1,0 +1,24 @@
+name = "hello-command"
+version = "1.0.0"
+author = "Omnix contributors"
+license = "GPL-3.0-or-later"
+description = "A one-shot command that prints a greeting and the caller arguments."
+api = 1
+
+[runtime]
+entry = ["python3", "plugin.py"]
+timeout_ms = 10000
+ram_mb = 128
+
+[permissions]
+read = []
+write = []
+network = []
+agents = false
+history = false
+
+[[contributions]]
+kind = "command"
+name = "hello"
+title = "Hello from a plugin"
+description = "Prints a greeting. Used by docs/plugin-api.md."

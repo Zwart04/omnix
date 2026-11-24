@@ -1,0 +1,24 @@
+name = "status-panel"
+version = "1.0.0"
+author = "Omnix contributors"
+license = "GPL-3.0-or-later"
+description = "A sandboxed panel that asks the plugin for a small JSON status snapshot."
+api = 1
+
+[runtime]
+entry = ["python3", "plugin.py"]
+timeout_ms = 10000
+ram_mb = 128
+
+[permissions]
+read = []
+write = []
+network = []
+agents = false
+history = false
+
+[[contributions]]
+kind = "panel"
+name = "status"
+title = "Status panel"
+entry = "panel.html"

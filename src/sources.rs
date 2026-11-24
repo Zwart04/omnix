@@ -80,17 +80,43 @@ fn opencode_db() -> PathBuf {
         .join("opencode.db")
 }
 
-/// Roots that actually exist, for the GUI's "scanned N files" line.
-pub fn roots() -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-    for (agent, path) in [
-        ("codex", codex_root()),
-        ("claude", claude_root()),
-        ("opencode", opencode_db()),
-    ] {
-        if path.exists() {
-            out.push((agent.to_string(), path));
+/// Roots for every account: the base login plus each configured profile.
+fn roots_for(root: &Path) -> Vec<(String, PathBuf, bool)> {
+    let mut out = vec![
+        ("codex".to_string(), codex_root(), true),
+        ("claude".to_string(), claude_root(), false),
+    ];
+    for row in crate::agent::profile_rows(root) {
+        let Some(name) = row.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if row.get("enabled").and_then(Value::as_bool) == Some(false) {
+            continue;
         }
+        let base = row.get("base").and_then(Value::as_str).unwrap_or("");
+        let Some(dir) = crate::agent::profile_dir_at(&crate::control::home(), root, name) else {
+            continue;
+        };
+        match base {
+            "codex" => out.push((name.to_string(), dir.join("sessions"), true)),
+            "claude" => out.push((name.to_string(), dir.join("projects"), false)),
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Roots that actually exist, for the GUI's "scanned N files" line.
+pub fn roots(root: &Path) -> Vec<(String, PathBuf)> {
+    let mut out = Vec::new();
+    for (agent, path, _) in roots_for(root) {
+        if path.exists() && !out.iter().any(|(_, seen)| seen == &path) {
+            out.push((agent, path));
+        }
+    }
+    let db = opencode_db();
+    if db.exists() {
+        out.push(("opencode".to_string(), db));
     }
     out
 }
@@ -484,7 +510,7 @@ const USAGE_VERSION: &str = "1";
 
 /// Existing indexes predate token counters. Read each transcript once more and
 /// update only those columns, so the search index is not rebuilt.
-fn backfill_usage(conn: &Connection, files: &[PathBuf], codex: &Path) -> Result<()> {
+fn backfill_usage(conn: &Connection, files: &[PathBuf], codex_roots: &[PathBuf]) -> Result<()> {
     if history::meta(conn, "usage_version").as_deref() == Some(USAGE_VERSION) {
         return Ok(());
     }
@@ -494,7 +520,7 @@ fn backfill_usage(conn: &Connection, files: &[PathBuf], codex: &Path) -> Result<
          WHERE file_path=?6",
     )?;
     for path in files {
-        let parsed = if path.starts_with(codex) {
+        let parsed = if codex_roots.iter().any(|root| path.starts_with(root)) {
             parse_codex(path)
         } else {
             parse_claude(path)
@@ -514,16 +540,29 @@ fn backfill_usage(conn: &Connection, files: &[PathBuf], codex: &Path) -> Result<
 }
 
 /// Index every transcript found under the known agent roots.
-pub fn scan(conn: &mut Connection) -> Result<ScanReport> {
+pub fn scan(conn: &mut Connection, settings_root: &Path) -> Result<ScanReport> {
     let _guard = SCAN_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut report = ScanReport::default();
 
-    let codex = codex_root();
-    let claude = claude_root();
-    let mut files = Vec::new();
-    walk_jsonl(&codex, &mut files);
-    walk_jsonl(&claude, &mut files);
-    files.sort();
+    let roots = roots_for(settings_root);
+    let codex_roots: Vec<PathBuf> = roots
+        .iter()
+        .filter(|(_, _, is_codex)| *is_codex)
+        .map(|(_, path, _)| path.clone())
+        .collect();
+    let mut sources: Vec<(PathBuf, String, bool)> = Vec::new();
+    for (label, dir, is_codex) in &roots {
+        let mut found = Vec::new();
+        walk_jsonl(dir, &mut found);
+        for path in found {
+            if sources.iter().any(|(seen, _, _)| seen == &path) {
+                continue;
+            }
+            sources.push((path, label.clone(), *is_codex));
+        }
+    }
+    sources.sort_by(|a, b| a.0.cmp(&b.0));
+    let files: Vec<PathBuf> = sources.iter().map(|(path, _, _)| path.clone()).collect();
     let keep: HashSet<String> = files
         .iter()
         .map(|path| path.to_string_lossy().into_owned())
@@ -533,29 +572,29 @@ pub fn scan(conn: &mut Connection) -> Result<ScanReport> {
     if verbose {
         eprintln!("scan: {} jsonl files", files.len());
     }
-    for path in &files {
+    for (path, label, is_codex) in &sources {
         let key = path.to_string_lossy().to_string();
-        if is_fresh(conn, &key, history::file_mtime(&path)) {
+        if is_fresh(conn, &key, history::file_mtime(path)) {
             report.unchanged += 1;
             continue;
         }
-        let is_codex = path.starts_with(&codex);
-        let parsed = if is_codex {
-            parse_codex(&path)
+        let parsed = if *is_codex {
+            parse_codex(path)
         } else {
-            parse_claude(&path)
+            parse_claude(path)
         };
-        let Some(parsed) = parsed else {
+        let Some(mut parsed) = parsed else {
             report.skipped += 1;
             continue;
         };
+        parsed.agent = label.clone();
         store(conn, &key, parsed, &mut report)?;
         if verbose && report.files % 25 == 0 {
             eprintln!("scan: {} files, {} msgs", report.files, report.messages);
         }
     }
 
-    backfill_usage(conn, &files, &codex)?;
+    backfill_usage(conn, &files, &codex_roots)?;
 
     let db = opencode_db();
     if db.exists() {
@@ -567,14 +606,14 @@ pub fn scan(conn: &mut Connection) -> Result<ScanReport> {
 
     // Only prune agents whose roots exist here; a missing ~/.codex must not
     // wipe the sessions of someone who never installed Codex.
-    let mut agents = Vec::new();
-    if codex.is_dir() {
-        agents.push("codex");
+    let mut agents: Vec<String> = Vec::new();
+    for (label, dir, _) in &roots {
+        if dir.is_dir() && !agents.contains(label) {
+            agents.push(label.clone());
+        }
     }
-    if claude.is_dir() {
-        agents.push("claude");
-    }
-    report.pruned = history::prune_missing(conn, &agents, &keep)?;
+    let agent_refs: Vec<&str> = agents.iter().map(String::as_str).collect();
+    report.pruned = history::prune_missing(conn, &agent_refs, &keep)?;
     history::maintain(conn)?;
 
     Ok(report)

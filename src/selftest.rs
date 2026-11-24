@@ -155,6 +155,16 @@ pub const JS: &str = r#"
     record('browserFetch', body.toLowerCase().indexOf('example') >= 0,
       fetched.ok ? 'chars=' + body.length : fetched.payload);
 
+    const navUrl = 'https://example.com/omnix-nav';
+    window.__omnix.emit('browserNav', JSON.stringify({ url: navUrl, open: true }));
+    await new Promise((r) => setTimeout(r, 1500));
+    const navStatus = ((document.getElementById('status-last') || {}).textContent || '');
+    const navPane = document.querySelector('.pane[data-kind="browser"]');
+    record('browserNav', navStatus.indexOf(navUrl) >= 0,
+      'status=' + navStatus + ' pane=' + (navPane ? (navPane.hidden ? 'hidden' : 'visible') : 'missing'));
+    const navClosed = await ask('browserClose', {});
+    record('browserNavClose', navClosed.ok === true, JSON.stringify(navClosed.payload));
+
     const opened = await ask('browserOpen', {
       url: 'https://example.com',
       rect: { x: 0, y: 0, width: 320, height: 200 },

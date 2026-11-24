@@ -196,6 +196,87 @@ Terminal juga bisa: `omnix update --check` dan `omnix update`. Tidak ada
 signature selain TLS GitHub; paket tidak diverifikasi dengan checksum
 terpisah.
 
+## Pertama kali dibuka dan dukungan
+
+Workspace baru membuka wizard empat langkah. Wizard ini bukan gerbang: semua
+langkah boleh dilewati, dan Omnix tetap bisa dipakai sebagai terminal biasa.
+
+1. **Welcome** — tiga hal yang membedakan Omnix: satu jendela, plugin/browser
+   on demand, dan local-first tanpa akun.
+2. **Open a project** — folder kerja opsional. Tombol **Browse** memakai dialog
+   folder bawaan OS; path manual juga bisa diketik. Project yang dipilih
+   langsung ditambahkan ke sidebar dan dibuka setelah wizard selesai.
+3. **Choose your agents** — daftar CLI agent yang terdeteksi. Agent yang tidak
+   terpasang tampil nonaktif; pilihan disimpan lewat `agentEnable` dan bisa
+   diubah lagi di Settings → Agents.
+4. **You are set** — ringkasan pintasan (`Ctrl K`, `Ctrl Shift D`, `Ctrl \``),
+   kartu **Support Omnix**, dan lisensi GPL-3.0-or-later.
+
+State wizard ada di `.omnix/setup.json` (`completed_at`, `version`). File itu
+hanya ditulis saat wizard diselesaikan atau dilewati. Wizard muncul kalau file
+tersebut belum ada **dan** `projects.json` masih kosong, jadi pengguna lama yang
+sudah punya project tidak terganggu. Untuk membukanya lagi: **Settings → About &
+Support → Run setup again**, atau palette **Setup Omnix Again**.
+
+Pane **About & Support** juga menampilkan versi, lisensi, status setup, tombol
+**GitHub**, dan tombol **Support on Tako**. Tautan dukungan selalu
+`https://tako.id/Zwart04/gift`; RPC `supportOpen` membuka URL konstan itu lewat
+`xdg-open` (Linux), `open` (macOS), atau `start` (Windows), bukan launcher
+bebas. Tidak ada paywall dan tidak ada fitur yang dikunci.
+
+## Akun agent (profil)
+
+Satu CLI bisa punya beberapa akun. Tulis nama agent diikuti profil:
+`codex:akun2`, `claude:akun2`, `antigravity:akun2`. Nama profil hanya huruf
+kecil, angka, dan tanda hubung, 1–48 karakter. Tanpa titik dua, perilakunya
+sama seperti sebelumnya.
+
+Contoh dua akun Codex berjalan bersamaan, masing-masing dengan login sendiri:
+
+```bash
+# .omnix/agents.json boleh kosong; profil dibuat dari Settings
+omnix handoff tugas-a --repo ~/proyek --prompt "Baca brief ini" \
+  --agent codex:akun2 --run
+omnix handoff tugas-b --repo ~/proyek --prompt "Baca brief ini" \
+  --agent codex:akun3 --run
+```
+
+Codex menerima `CODEX_HOME` berbeda, Claude menerima `CLAUDE_CONFIG_DIR`
+berbeda. Folder default:
+
+```
+~/.omnix/profiles/codex/akun2
+~/.omnix/profiles/claude/akun2
+```
+
+Folder itu bisa diganti per profil lewat field `Login folder` di Settings atau
+`configDir` di `.omnix/agents.json`. Profil mewarisi argumen dan environment
+agent dasarnya; argumen/environment profil ditambahkan setelahnya.
+
+Login dari GUI: Settings → Agents → `Add account profile`, lalu tombol
+`Login profile`. Omnix membuka terminal dengan environment profil dan
+menjalankan alur login resmi CLI:
+
+- Codex: `codex login`
+- Claude: `claude`, lalu Omnix mengetik `/login` setelah TUI siap
+- Antigravity: `agy`, lalu layar login bawaannya
+
+Omnix tidak membaca, menyalin, atau menyimpan token. Tab profil diberi badge
+huruf berwarna; badge yang sama muncul di panel Agents dan pilihan handoff.
+`omnix usage --json` menampilkan kuota per profil, dan `omnix history scan`
+mengindeks transkrip tiap folder profil dengan nama `agent` berisi
+`codex:akun2`.
+
+Claude membagikan aturan lewat symlink: `~/.claude/skills` dan
+`~/.claude/CLAUDE.md` ditautkan ke folder profil. Memori project
+(`projects/`) terpisah secara default; centang `Share project memory` untuk
+menautkannya ke akun utama.
+
+**Batasan Antigravity.** `agy` belum punya flag/env resmi untuk memindah folder
+config, jadi profil `antigravity:nama` hanya mengubah argumen/environment dan
+tetap memakai login utama. Omnix tidak memalsukan `HOME`; Settings menampilkan
+peringatan ini. Jangan menganggap profil Antigravity terisolasi.
+
 ## Isi jendela
 
 Menurut kontrak `docs/gui.md`, jendela Omnix adalah satu WebView UI ditambah N
@@ -260,8 +341,10 @@ Perintah yang dipakai UI: `ptySpawn`, `ptyWrite`, `ptyResize`, `ptyKill`.
 Event yang diterima UI: `ptyData` dan `ptyExit` (berisi kode keluar).
 Menutup tab mengirim `ptyKill`; proses tidak dibiarkan hidup tanpa tab.
 
-Saat ini pengiriman brief handoff belum masuk ke PTY. Karena itu outcome handoff
-jujur dilaporkan `unconfirmed` atau `not-delivered`, bukan `handed-to-terminal`.
+Brief handoff dikirim ke PTY pane agent baru sebagai bracketed paste plus Enter
+sekitar 3,5 detik setelah pane hidup. Kalau pane tidak bisa dibuka, outcome
+tetap `not-delivered`; kalau pane terbuka tetapi GUI tidak mengonfirmasi
+pengiriman, outcome jujur `unconfirmed`.
 
 ## Ganti engine browser
 
@@ -362,8 +445,21 @@ omnix handoff fix-login \
 
 Tanpa `--run`, brief ditulis dan receipt berstatus `not-delivered`; perintah
 `cd` dan launch dicetak. Dengan `--run`, agent penerima di-spawn tanpa shell
-string, lalu status menjadi `unconfirmed` karena Omnix belum bisa membuktikan
-prompt benar-benar masuk ke TUI agent.
+string, brief dikirim sebagai bracketed paste, lalu status menjadi `unconfirmed`
+sampai pane melaporkan hasil.
+
+Receipt bisa diurus dari repo mana pun karena indeks global disimpan di
+`~/.omnix/handoffs.json`:
+
+```bash
+omnix handoff list --open
+omnix handoff report fix-login --status done --text "PR #42 siap"
+omnix handoff report fix-login --status blocked --file catatan.md
+omnix handoff close fix-login
+```
+
+`report` menerima `done`, `blocked`, atau `failed`. `gc` menutup handoff yang
+branch-nya sudah merged dan mengarsipkan brief lama.
 
 Artefak ada di:
 
@@ -373,53 +469,219 @@ Artefak ada di:
 .omnix/worktrees/<nama>/
 ```
 
+Handoff juga mengambil lease untuk worktree, branch, dan setiap pola
+`--paths`. Lease itu disimpan di record dan dilepas saat `handoff close`.
+Kalau pembuatan worktree gagal di tengah jalan, semua lease yang sudah diambil
+dilepas kembali; tidak ada resource yang tertinggal terkunci.
+
+## Kerja bersama
+
+Omnix bisa menjalankan beberapa agent sekaligus, tetapi folder, path, port,
+login, dan worktree bisa bertabrakan. Tiga mekanisme menjaganya:
+
+1. **Lock/lease.** Setiap resource punya satu file JSON di
+   `.omnix/locks/` dengan owner, PID, waktu dibuat, dan TTL.
+
+   ```bash
+   omnix lock acquire "port:3000" --owner claude:riset --ttl 3600 --meta task=web
+   omnix lock list
+   omnix lock release "port:3000" --owner claude:riset
+   omnix lock list --prune
+   ```
+
+   Lease hanya aktif selama TTL belum habis dan PID pemilik masih hidup. Tidak
+   ada monitor latar; daftar dan acquire membersihkan lease mati. Acquire ulang
+   oleh owner yang sama memperbarui TTL. `handoff` dan `preview start` memakai
+   mekanisme ini otomatis.
+
+2. **Sesi browser per terminal.** Setiap PTY mendapat `OMNIX_OWNER` dan
+   `OMNIX_BROWSER_SESSION`. `omnix browser mcp` mendaftarkan sesi selama
+   panggilan hidup. `omnix browser stop` hanya menutup sesi terminal pemanggil;
+   `omnix browser stop --all` menghentikan daemon Lightpanda bersama. Lihat
+   pemilik dengan `omnix browser sessions`.
+
+3. **Peringatan GUI.** Kalau dua agent hidup di folder yang sama, atau dua
+   worker memakai akun/profil yang sama, banner **Kerja bersama** muncul di atas
+   pane. Untuk konflik folder, tombol **Pindahkan ke worktree baru** membuat
+   worktree dari repo, membuka ulang agent di sana dengan `sessionId` yang sama,
+   lalu menutup pane lama. Peringatan bersifat saran; tidak memblokir kerja.
+
+Preview juga memilih port berikutnya yang bebas kalau port di
+`.claude/launch.json` sedang dipakai atau di-lease, menulis ulang argumen
+`--port`/`-p` yang menunjuk port lama, mengisi `PORT` bila config belum
+menyetelnya, dan mencatat lease `port:<n>` sampai preview berhenti.
+
+### Contoh: dua Codex dan satu Claude
+
+Tiga worker, tiga worktree, tiga login:
+
+```bash
+omnix handoff api --repo . --prompt-file tasks/api.md \
+  --agent codex:akun2 --paths "src/api/**" --run
+omnix handoff ui --repo . --prompt-file tasks/ui.md \
+  --agent codex:akun3 --paths "src/ui/**" --run
+omnix handoff review --repo . --prompt-file tasks/review.md \
+  --agent claude:riset --paths "docs/**" --run
+```
+
+Yang dicek sebelum mulai:
+
+- `omnix lock list` menunjukkan pemilik worktree, branch, path, dan port.
+- `omnix handoff list --open` menunjukkan status tiap worker.
+- `omnix browser sessions` menunjukkan sesi browser per terminal.
+- `omnix preview start web` memilih port bebas dan mencatat lease-nya.
+
+Jangan membuka dua worker di folder yang sama. Kalau itu terjadi, banner
+**Kerja bersama** muncul; pindahkan salah satu lewat **Pindahkan ke worktree
+baru** atau tutup pane-nya. Saat selesai, jalankan
+`omnix handoff report <nama> --status done --text "..."` lalu
+`omnix handoff close <nama>`; lease worktree, branch, dan path dilepas.
+`omnix browser stop` hanya menutup sesi terminal pemanggil, jadi worker lain
+tetap punya halamannya.
+
+## Plugin
+
+Plugin adalah program native yang hanya dijalankan saat dipanggil. Tidak ada
+daemon plugin dan plugin yang tidak dipakai tidak memakai RAM/CPU.
+
+```bash
+omnix plugin search
+omnix plugin install hello-command
+omnix plugin enable hello-command
+omnix hello-command:hello
+omnix plugin permissions hello-command
+omnix plugin doctor
+```
+
+Instalasi memverifikasi SHA-256, menampilkan izin, dan **tidak** menjalankan
+plugin. Izin bisa dicabut tanpa menghapus plugin. Plugin tidak pernah menerima
+token agent atau cookie browser. Omnix tidak mengklaim sandbox kernel: pasang
+hanya plugin yang sumbernya dipercaya. Panduan pengguna ada di
+`docs/plugin.md`; API, manifest, JSON-RPC, panel, dan format katalog ada di
+`docs/plugin-api.md`. Contoh ada di `examples/plugins/`.
+
+## Kembangkan Omnix
+
+Settings → **Kembangkan Omnix** membuat worktree dari repo Omnix, menulis
+brief bersama `CONTRIBUTING.md` dan `docs/architecture.md`, lalu membuka agent
+(`claude`, `codex`, atau `antigravity`) di worktree itu.
+
+```bash
+omnix dev task --prompt-file brief.md --agent claude
+omnix dev build
+omnix dev test
+omnix dev run
+omnix dev status
+```
+
+Build disalin ke `~/.omnix/builds/<id>/`. `dev run` memakai
+`OMNIX_HOME=~/.omnix/dev/home`, jadi state pemilik tidak tersentuh. Binary yang
+sedang dipakai hanya diganti setelah pemilik menekan **Pasang build ini**
+(atau `omnix dev install --yes`); binary lama disimpan di
+`~/.omnix/builds/previous/` dan bisa dipulihkan lewat **Kembalikan**
+(`omnix dev restore --yes`). Agent tidak menandai tag, mempublikasikan rilis,
+atau memasang binary sendiri. Detail: `docs/dev.md`.
+
+## Kendali dari terminal
+
+Selama jendela Omnix terbuka, CLI bisa membaca dan mengirim ke pane yang
+dikelola Omnix. GUI menulis registry pane ke `~/.omnix/run/panes.json` dan
+membuka socket loopback dengan token 0600; CLI tidak bisa menyentuh pane milik
+terminal lain. Tidak ada daemon latar: semua fitur ini hidup hanya saat
+dipanggil.
+
+```bash
+omnix agent status
+omnix agent wait ho:fix-login --until turn-done,needs-approval --timeout 300
+omnix agent send ho:fix-login --text "lanjutkan test"
+omnix agent send ho:fix-login --file brief.md
+```
+
+`agent send` menolak pane yang sedang `needs-approval` kecuali diberi
+`--force`. Pesan yang memuat pola di `OMNIX_HOLD` (dipisah koma) atau
+`~/.omnix/hold.txt` (satu pola per baris) juga ditolak tanpa `--force`. Fitur
+ini mati secara default.
+
+Event worker ditulis append-only ke `~/.omnix/events.jsonl`:
+
+```bash
+omnix events --limit 30
+omnix events --kind agent-started --json
+```
+
+Notifikasi desktop opsional: set `OMNIX_NOTIFY_DESKTOP=1` untuk `notify-send`
+saat worker selesai atau minta persetujuan. Webhook opsional lewat
+`OMNIX_NOTIFY_WEBHOOK=https://...`; hanya URL http/https yang diterima dan
+payload dikirim di thread sekali pakai, tanpa polling.
+
+Pembersihan satu kali:
+
+```bash
+omnix gc --dry-run
+omnix gc
+```
+
+`gc` menutup handoff yang branch-nya sudah merged, mengarsipkan receipt lama,
+memangkas sesi yang transkripnya hilang, dan menghentikan Lightpanda hanya
+kalau tidak ada jendela Omnix yang memegang control socket.
+
 ## Pintasan keyboard
 
-Tabel ini adalah target UI dari kontrak jendela, **belum terverifikasi** karena
-shell GUI belum berjalan di build ini:
+Pintasan yang benar-benar terpasang di `app/app.js`:
 
 | Pintasan | Aksi |
 | --- | --- |
-| `Ctrl+Shift+T` | tab terminal baru |
-| `Ctrl+Shift+B` | tab browser baru |
-| `Ctrl+Shift+D` | split pane terminal |
-| `Ctrl+Shift+W` | tutup tab aktif |
-| `Ctrl+Tab` | tab berikutnya |
-| `Ctrl+L` | fokus ke bar alamat |
-| `Ctrl+Shift+F` | fokus ke pencarian riwayat |
-| `Ctrl+Shift+H` | buka dialog handoff |
-| `Ctrl+Shift+S` | tandai workspace tidur |
+| `Ctrl/Cmd+K` | buka/tutup command palette |
+| `Ctrl/Cmd+Shift+P` | buka command palette |
+| `Ctrl/Cmd+Shift+D` | split pane terminal aktif |
+| `Escape` | tutup palette, modal, atau menu yang terbuka |
 
-Di macOS, ganti `Ctrl` dengan `Cmd`.
+Aksi lain (tab baru, browser, handoff, settings) tersedia lewat tombol `+`,
+menu `Command`, dan rail. Di macOS, `Ctrl` diganti `Cmd`.
 
 ## Lokasi state
 
-CLI memakai `OMNIX_HOME` sebagai root state; kalau tidak diset, root-nya adalah
-direktori kerja saat perintah dijalankan. Di dalam root itu Omnix membuat
-`.omnix/`:
+State aplikasi berada di `.omnix/` pada folder kerja saat GUI dijalankan, atau
+folder tempat perintah CLI dijalankan. `OMNIX_HOME` memindahkan state itu ke
+folder lain:
 
 ```
 .omnix/
   history.sqlite          index FTS5
+  setup.json              status wizard pertama kali
+  agents.json             argumen, environment, profil per agent
+  agent-defaults.json     permissions default
+  projects.json           folder sidebar
   workspaces.json         sesi per pane dan status tidur
-  handoffs/<id>.json      receipt handoff
+  handoffs/<id>.json      receipt handoff + lease ids
   handoffs/<id>.md        brief untuk agent penerima
-  worktrees/<nama>/       git worktree hasil handoff
+  worktrees/<nama>/       git worktree hasil handoff/move
+  locks/*.json            lease worktree, branch, path, port
+  previews/<nama>.json    pid, port, log, lease port preview
+  browser/sessions/       lease Lightpanda per terminal
+  agent-guide.md          aturan harness untuk agent
+  browser.json            alamat Lightpanda bersama
   transcripts/            input indexing opsional
 ```
 
-Shell GUI ditujukan memakai `~/.config/omnix` sebagai default, atau
-`OMNIX_HOME` kalau variabel itu diset. Sampai kode jendela ada, yang berlaku
-adalah aturan CLI di atas: `~/.config/omnix` belum otomatis dipakai. Untuk
-memaksa state global dari CLI:
+State global pengguna berada di `~/.omnix` (atau `OMNIX_HOME` kalau diset),
+karena dipakai dari repo mana pun:
 
-```bash
-export OMNIX_HOME="$HOME/.config/omnix"
-omnix history status
+```
+~/.omnix/
+  profiles/<agent>/<profil>/   login/config tiap akun
+  plugins/<nama>/              plugin terpasang + state.json
+  builds/<id>/                 build dev; previous/ untuk rollback
+  dev/home/                    OMNIX_HOME terpisah untuk dev run
+  handoffs.json                indeks semua handoff
+  events.jsonl                 event worker append-only
+  hold.txt                     pola pesan yang ditahan (opsional)
+  run/panes.json               registry pane milik GUI
+  run/control.json             port + token socket loopback
 ```
 
-Semua isi `.omnix/` adalah data lokal. Jangan commit ke repo; `.gitignore`
-seharusnya memuatnya.
+`OMNIX_RUN_DIR` memindahkan folder `run/` bila perlu. Semua isi `.omnix/`
+adalah data lokal. Jangan commit ke repo; `.gitignore` seharusnya memuatnya.
 
 ## Troubleshooting
 
@@ -485,19 +747,27 @@ lalu setiap perintah IPC dijalankan dari JavaScript dan hasilnya dicetak.
 OMNIX_HOME=/tmp/omnix-selftest OMNIX_SELFTEST=1 omnix app
 ```
 
-Langkah yang dicakup: `appInfo`, `status`, `historyIndex`, `historySearch`,
-penolakan skema selain http/https, `ptySpawn`/`ptyWrite`/`ptyData`/`ptyKill`,
-`browserFetch` lewat Lightpanda, `handoff`, `agentTrack`, `sleep`, `resume`.
+Langkah yang dicakup: `appInfo`, `layers`, `status`, indeks/scan/sesi/project
+history dan pencarian FTS5, penolakan skema selain http/https,
+`ptySpawn`/`memory`/`ptyWrite`/`ptyData`/`ptyKill`, `browserFetch` lewat
+Lightpanda, `browserNav`/`browserNavClose`, lalu `browserOpen`/`browserClose`.
 Output berakhir dengan `selftest: PASS` (exit 0) atau `selftest: FAIL` (exit 1),
-dengan timeout 90 detik. Direktori `OMNIX_HOME` harus berisi repo git dan
-`.omnix/transcripts/**/*.jsonl` agar langkah history punya bahan.
+dengan timeout 240 detik. Pemeriksaan menulis sendiri satu transkrip contoh ke
+`OMNIX_HOME/.omnix/transcripts/`, jadi tidak perlu menyiapkan data history.
+
+Untuk perubahan UI yang lebih cepat, stub WebView dipakai oleh
+`node app/selftest.cjs`; perintah itu memeriksa RPC, render sidebar, picker,
+split pane, palette, tab, plugin, dev, dan peringatan kerja bersama tanpa
+membuka jendela.
 
 ## Batasan yang masih terbuka
 
 - Jendela GUI baru diuji di Linux/X11 (lewat XWayland). Wayland native belum.
+- Profil agent sudah diuji end-to-end lewat CLI dengan dua akun Codex palsu;
+  klik `Add account profile`, `Login profile`, badge, dan dialog Settings belum
+  diuji otomatis di jendela sungguhan.
+- Profil Antigravity belum terisolasi karena `agy` tidak punya knob config resmi.
 - Panel Docs hanya menampilkan tutorial statis, belum dokumentasi kontekstual.
-- Pengiriman prompt ke TUI agent lewat PTY belum ada; outcome handoff tetap
-  jujur `unconfirmed` atau `not-delivered`.
 - Client CDP penuh untuk `click/fill/snapshot` belum ada; kontrak harness ada di
   `harness/`.
 - Hanya jalur build dan paket Linux yang diuji di mesin ini. Windows dan macOS

@@ -1,0 +1,61 @@
+name: Feature request
+description: Propose a focused improvement to Omnix
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Omnix is intentionally small. Explain the problem first, then the
+        smallest change that solves it. Large rewrites need a strong reason.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or missing today? Who hits it?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should Omnix do? Include the command or UI if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds, other tools, or a smaller option.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Terminal / panes
+        - Worktrees / handoff
+        - Agent sessions / profiles
+        - Browser
+        - Plugins
+        - Self-development (dev)
+        - History / search
+        - Performance
+        - Docs
+    validations:
+      required: true
+  - type: textarea
+    id: cost
+    attributes:
+      label: Expected cost
+      description: New dependency, always-on process, idle RAM/CPU, or state format change?
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: This keeps existing commands working or explains the break.
+          required: true
+        - label: This does not add an always-on daemon or bundled Chromium.
+          required: true
+        - label: I searched existing issues and discussions.
+          required: true

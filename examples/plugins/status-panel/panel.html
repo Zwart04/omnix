@@ -1,0 +1,49 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Status panel</title>
+<style>
+  :root { color-scheme: dark light; }
+  body {
+    margin: 0;
+    padding: 18px;
+    font: 14px/1.5 system-ui, sans-serif;
+    color: #e7e7ea;
+    background: #1b1b1e;
+  }
+  h1 { font-size: 16px; margin: 0 0 6px; }
+  p { margin: 0 0 12px; color: #a8a8ae; }
+  pre {
+    margin: 0;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, .12);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, .25);
+    color: #d7d7dc;
+    font: 12px/1.55 ui-monospace, monospace;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  @media (prefers-color-scheme: light) {
+    body { color: #1d1d1f; background: #f7f7f9; }
+    p { color: #6e6e73; }
+    pre { border-color: rgba(0, 0, 0, .12); background: #fff; color: #333; }
+  }
+</style>
+<h1>Status panel</h1>
+<p>This frame is sandboxed. It has no network and no Omnix IPC access.</p>
+<pre id="out">Waiting for the plugin...</pre>
+<script>
+  var out = document.getElementById('out');
+  parent.postMessage({ omnixPanel: true, ready: true }, '*');
+  window.addEventListener('message', function (event) {
+    var data = event.data;
+    if (!data || !data.omnixPanelReply) return;
+    if (data.error) {
+      out.textContent = 'Error: ' + JSON.stringify(data.error, null, 2);
+      return;
+    }
+    out.textContent = JSON.stringify(data.result, null, 2);
+  });
+  parent.postMessage({ omnixPanel: true, method: 'status', params: { from: 'panel' } }, '*');
+</script>

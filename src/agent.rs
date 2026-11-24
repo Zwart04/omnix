@@ -35,6 +35,15 @@ pub struct AgentConfig {
     pub env: String,
     #[serde(default = "yes")]
     pub enabled: bool,
+    /// Shown in menus and tabs; empty means the profile name.
+    #[serde(default)]
+    pub label: String,
+    /// Login/config folder override. Empty means `~/.omnix/profiles/<agent>/<profile>`.
+    #[serde(default)]
+    pub config_dir: String,
+    /// Claude only: share the base account's `projects/` memory with a symlink.
+    #[serde(default)]
+    pub share_projects: bool,
 }
 
 fn yes() -> bool {
@@ -47,6 +56,9 @@ impl Default for AgentConfig {
             args: String::new(),
             env: String::new(),
             enabled: true,
+            label: String::new(),
+            config_dir: String::new(),
+            share_projects: false,
         }
     }
 }
@@ -116,7 +128,7 @@ pub fn save_defaults(root: &Path, defaults: &AgentDefaults) -> Result<()> {
 /// Full-access launch flag each CLI understands. An unknown CLI gets no flag
 /// rather than a guessed one, so enabling the default never breaks a launch.
 pub fn full_access_flag(agent: &str) -> Option<&'static str> {
-    Some(match agent {
+    Some(match base_agent(agent) {
         "claude" => "--dangerously-skip-permissions",
         "codex" => "--dangerously-bypass-approvals-and-sandbox",
         "gemini" | "qwen-code" => "--yolo",
@@ -141,7 +153,227 @@ pub fn save_settings(root: &Path, map: &BTreeMap<String, AgentConfig>) -> Result
     Ok(())
 }
 
+/// `codex:akun2` names one profile of the `codex` CLI. The base name must be a
+/// known agent; the profile is a short lowercase id used for the config folder.
+pub fn split_agent(agent: &str) -> Option<(&str, Option<&str>)> {
+    let (base, profile) = match agent.split_once(':') {
+        Some((base, profile)) => (base, Some(profile)),
+        None => (agent, None),
+    };
+    if !AGENTS.contains(&base) {
+        let plugin_agent = profile.is_none() && crate::plugin::is_agent(base);
+        if !plugin_agent {
+            return None;
+        }
+    }
+    if let Some(profile) = profile {
+        if !valid_profile(profile) {
+            return None;
+        }
+    }
+    Some((base, profile))
+}
+
+pub fn valid_profile(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 48
+        && !name.starts_with('-')
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+pub fn base_agent(agent: &str) -> &str {
+    split_agent(agent).map(|(base, _)| base).unwrap_or(agent)
+}
+
+pub fn profile_of(agent: &str) -> Option<&str> {
+    split_agent(agent).and_then(|(_, profile)| profile)
+}
+
+/// The official env var each CLI uses to move its login/config folder. An
+/// agent missing here has no verified isolation knob (Antigravity today), so a
+/// profile only changes args/env and stays on the shared login.
+pub fn profile_env_var(agent: &str) -> Option<&'static str> {
+    match base_agent(agent) {
+        "claude" => Some("CLAUDE_CONFIG_DIR"),
+        "codex" => Some("CODEX_HOME"),
+        _ => None,
+    }
+}
+
+fn expand_dir(value: &str, home: &Path) -> Option<PathBuf> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let path = if value == "~" {
+        home.to_path_buf()
+    } else if let Some(rest) = value.strip_prefix("~/") {
+        home.join(rest)
+    } else {
+        PathBuf::from(value)
+    };
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        Some(home.join(path))
+    }
+}
+
+/// Login/config folder for one profile. The default lives under the user's
+/// Omnix home, never inside the repository, so two repos share one login.
+pub fn profile_dir_at(home: &Path, root: &Path, agent: &str) -> Option<PathBuf> {
+    let (base, profile) = split_agent(agent)?;
+    let profile = profile?;
+    if profile_env_var(base).is_none() {
+        return None;
+    }
+    let cfg = load_settings(root).remove(agent).unwrap_or_default();
+    Some(expand_dir(&cfg.config_dir, home).unwrap_or_else(|| {
+        home.join(".omnix")
+            .join("profiles")
+            .join(base)
+            .join(profile)
+    }))
+}
+
+fn link_shared(target: &Path, link: &Path) -> Result<()> {
+    if !target.exists() {
+        return Ok(());
+    }
+    if link.symlink_metadata().is_ok() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(target, link)?;
+    #[cfg(not(unix))]
+    {
+        let _ = (target, link);
+        bail!("profile symlinks are only supported on Unix");
+    }
+    Ok(())
+}
+
+/// Create the profile folder and the Claude rule symlinks, then return the env
+/// that points the CLI at it. Tokens are never read or copied.
+pub fn prepare_profile_at(
+    home: &Path,
+    root: &Path,
+    agent: &str,
+) -> Result<Vec<(String, String)>> {
+    let Some((base, Some(_profile))) = split_agent(agent) else {
+        return Ok(Vec::new());
+    };
+    let Some(var) = profile_env_var(base) else {
+        return Ok(Vec::new());
+    };
+    let dir = profile_dir_at(home, root, agent).expect("profile var implies a dir");
+    std::fs::create_dir_all(&dir)?;
+    if base == "claude" {
+        let shared = home.join(".claude");
+        link_shared(&shared.join("skills"), &dir.join("skills"))?;
+        link_shared(&shared.join("CLAUDE.md"), &dir.join("CLAUDE.md"))?;
+        let cfg = load_settings(root).remove(agent).unwrap_or_default();
+        let projects = dir.join("projects");
+        if cfg.share_projects {
+            link_shared(&shared.join("projects"), &projects)?;
+        } else {
+            std::fs::create_dir_all(&projects)?;
+        }
+    }
+    Ok(vec![(var.to_string(), dir.to_string_lossy().into_owned())])
+}
+
+pub fn prepare_profile(root: &Path, agent: &str) -> Result<Vec<(String, String)>> {
+    prepare_profile_at(&crate::control::home(), root, agent)
+}
+
+/// JSON rows for the menu and the Settings list. Only real profile keys are
+/// returned; base agents keep their existing row shape.
+pub fn profile_rows(root: &Path) -> Vec<serde_json::Value> {
+    let home = crate::control::home();
+    let merged = load_settings(root);
+    merged
+        .iter()
+        .filter_map(|(name, cfg)| {
+            let (base, profile) = split_agent(name)?;
+            let profile = profile?;
+            let dir = profile_dir_at(&home, root, name)
+                .map(|path| path.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let label = if cfg.label.trim().is_empty() {
+                profile.to_string()
+            } else {
+                cfg.label.trim().chars().take(80).collect()
+            };
+            Some(serde_json::json!({
+                "name": name,
+                "base": base,
+                "profile": profile,
+                "label": label,
+                "bin": launch_cmd(name),
+                "available": available(base),
+                "enabled": config_for(root, name).enabled,
+                "args": cfg.args,
+                "env": cfg.env,
+                "configDir": dir,
+                "shareProjects": cfg.share_projects,
+                "supportsConfig": profile_env_var(base).is_some(),
+            }))
+        })
+        .collect()
+}
+
+/// Saved profile settings merged over the base agent's settings. A profile
+/// with empty args/env inherits both, so the owner only writes the difference.
+pub fn config_for(root: &Path, agent: &str) -> AgentConfig {
+    let saved = load_settings(root);
+    let (base, profile) = split_agent(agent).unwrap_or((agent, None));
+    let mut cfg = saved.get(base).cloned().unwrap_or_default();
+    let Some(_profile) = profile else {
+        return cfg;
+    };
+    let Some(own) = saved.get(agent) else {
+        return cfg;
+    };
+    cfg.enabled = cfg.enabled && own.enabled;
+    cfg.label = own.label.clone();
+    cfg.config_dir = own.config_dir.clone();
+    cfg.share_projects = own.share_projects;
+    if !own.args.trim().is_empty() {
+        cfg.args = if cfg.args.trim().is_empty() {
+            own.args.clone()
+        } else {
+            format!("{} {}", cfg.args.trim_end(), own.args.trim())
+        };
+    }
+    if !own.env.trim().is_empty() {
+        cfg.env = if cfg.env.trim().is_empty() {
+            own.env.clone()
+        } else {
+            format!("{} {}", cfg.env.trim_end(), own.env.trim())
+        };
+    }
+    cfg
+}
+
+/// Per-agent login argv. Claude opens its TUI and gets `/login` typed for it;
+/// Codex has a real subcommand; Antigravity shows its own sign-in screen.
+pub fn login_parts(agent: &str) -> Result<(Vec<String>, bool)> {
+    let Some((base, _)) = split_agent(agent) else {
+        bail!("unknown agent '{agent}' (known: {})", AGENTS.join(", "));
+    };
+    Ok(match base {
+        "codex" => (vec!["login".to_string()], false),
+        "claude" => (Vec::new(), true),
+        "antigravity" => (Vec::new(), false),
+        _ => bail!("sign-in is only wired for codex, claude, and antigravity"),
+    })
+}
+
 pub fn launch_cmd(agent: &str) -> Option<&'static str> {
+    let (agent, _) = split_agent(agent)?;
     Some(match agent {
         "claude" => "claude",
         "codex" => "codex",
@@ -158,8 +390,25 @@ pub fn launch_cmd(agent: &str) -> Option<&'static str> {
         "antigravity" => "agy",
         "rovo" => "rovo",
         "command-code" => "command-code",
-        _ => return None,
+        _ => return plugin_launch_cmd(agent),
     })
+}
+
+/// Plugin agent binaries live in a manifest, not a static table. Leak one copy
+/// per name and cache it: `launch_cmd` is called on every pane open, but the
+/// process itself still starts only when the owner launches that agent.
+fn plugin_launch_cmd(name: &str) -> Option<&'static str> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, &'static str>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut map = cache.lock().ok()?;
+    if let Some(bin) = map.get(name) {
+        return Some(*bin);
+    }
+    let bin: &'static str = Box::leak(crate::plugin::agent_bin(name)?.into_boxed_str());
+    map.insert(name.to_string(), bin);
+    Some(bin)
 }
 
 fn executable(path: &std::path::Path) -> bool {
@@ -231,6 +480,16 @@ fn candidate_names(bin: &str) -> Vec<String> {
 /// session usually lacks. Returns the absolute path used for spawning.
 pub fn resolve(agent: &str) -> Option<PathBuf> {
     let bin = launch_cmd(agent)?;
+    if let Some(profile) = crate::plugin::agent_profile(agent) {
+        let path = PathBuf::from(&profile.bin);
+        if path.is_absolute() {
+            return executable(&path).then_some(path);
+        }
+        if profile.bin.contains('/') || profile.bin.contains('\\') {
+            let path = profile.dir.join(&profile.bin);
+            return executable(&path).then_some(path);
+        }
+    }
     let names = candidate_names(bin);
     let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect())
@@ -261,7 +520,10 @@ pub fn resume_args(agent: &str, session_id: &str) -> Result<Vec<String>> {
         bail!("invalid session id");
     }
     let id = session_id.to_string();
-    Ok(match agent {
+    if let Some(args) = crate::plugin::resume_args(agent, &id) {
+        return Ok(args);
+    }
+    Ok(match base_agent(agent) {
         "codex" => vec!["resume".into(), id],
         "rovo" => vec!["--restore".into(), id],
         "opencode" | "opencode2" | "pi" | "kimi" => vec!["--session".into(), id],
@@ -279,10 +541,114 @@ pub fn resume_command(agent: &str, session_id: &str) -> Result<String> {
     Ok(format!("{base} {}", args.join(" ")))
 }
 
+/// Per-handoff model knobs. Values are validated as single argv tokens before
+/// they ever reach a spawn, so a model name cannot become a second flag.
+#[derive(Debug, Default, Clone)]
+pub struct LaunchOptions {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub mode: Option<String>,
+}
+
+fn valid_model(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 80
+        && !value.starts_with('-')
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '@' | '+' | '-'))
+}
+
+/// Validate and build the extra argv for the three CLIs the orchestrator
+/// drives. Unknown agents simply get no extra flags.
+pub fn extra_args(agent: &str, options: &LaunchOptions) -> Result<Vec<String>> {
+    if launch_cmd(agent).is_none() {
+        bail!("unknown agent '{agent}' (known: {})", AGENTS.join(", "));
+    }
+    if let Some(model) = &options.model {
+        if !valid_model(model) {
+            bail!("--model must be 1-80 chars of letters, digits, . _ : / @ +");
+        }
+    }
+    if let Some(effort) = &options.effort {
+        if !matches!(
+            effort.as_str(),
+            "minimal" | "low" | "medium" | "high" | "xhigh" | "none"
+        ) {
+            bail!("--effort must be minimal, low, medium, high, xhigh, or none");
+        }
+    }
+    if let Some(mode) = &options.mode {
+        if !matches!(mode.as_str(), "plan" | "edit" | "full") {
+            bail!("--mode must be plan, edit, or full");
+        }
+    }
+    let mut out = Vec::new();
+    match base_agent(agent) {
+        "codex" => {
+            if let Some(model) = &options.model {
+                out.push("-m".into());
+                out.push(model.clone());
+            }
+            if let Some(effort) = &options.effort {
+                out.push("-c".into());
+                out.push(format!("model_reasoning_effort={effort}"));
+            }
+        }
+        "antigravity" => {
+            if let Some(model) = &options.model {
+                out.push("--model".into());
+                out.push(model.clone());
+            }
+            if let Some(effort) = &options.effort {
+                out.push("--effort".into());
+                out.push(effort.clone());
+            }
+            if let Some(mode) = &options.mode {
+                out.push("--mode".into());
+                out.push(mode.clone());
+            }
+        }
+        "claude" => {
+            if let Some(model) = &options.model {
+                out.push("--model".into());
+                out.push(model.clone());
+            }
+        }
+        _ => {}
+    }
+    Ok(out)
+}
+
+/// What `omnix doctor` prints. A desktop launch can miss a binary that is
+/// installed for the login shell, so show the resolved path, not just a bool.
+pub fn version(agent: &str) -> Option<String> {
+    let path = resolve(agent)?;
+    for flag in ["--version", "-V"] {
+        let out = Command::new(&path).arg(flag).output().ok()?;
+        if !out.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let line = text.lines().next().unwrap_or("").trim();
+        if !line.is_empty() {
+            return Some(line.chars().take(120).collect());
+        }
+    }
+    Some("installed".into())
+}
+
+
 /// Spawn without touching a shell, so session ids cannot inject commands.
 pub fn spawn(agent: &str, session_id: Option<&str>, cwd: &str) -> Result<Child> {
     let base = launch_cmd(agent).ok_or_else(|| anyhow::anyhow!("unknown agent '{agent}'"))?;
     let mut cmd = Command::new(base);
+    for (key, value) in config_for(&crate::root(), agent).env_list() {
+        cmd.env(key, value);
+    }
+    for (key, value) in prepare_profile(&crate::root(), agent)? {
+        cmd.env(key, value);
+    }
     if let Some(id) = session_id {
         cmd.args(resume_args(agent, id)?);
     }
@@ -316,6 +682,87 @@ mod tests {
     }
 
     #[test]
+    fn parses_profile_suffix_and_rejects_bad_ids() {
+        assert_eq!(
+            split_agent("codex:akun2"),
+            Some(("codex", Some("akun2")))
+        );
+        assert_eq!(split_agent("codex"), Some(("codex", None)));
+        assert!(split_agent("codex:").is_none());
+        assert!(split_agent("codex:Akun").is_none());
+        assert!(split_agent("codex:a/b").is_none());
+        assert!(split_agent("codex:-bad").is_none());
+        assert!(split_agent("nope:akun2").is_none());
+        assert_eq!(launch_cmd("codex:akun2"), Some("codex"));
+        assert_eq!(
+            resume_args("codex:akun2", "s1").unwrap(),
+            vec!["resume", "s1"]
+        );
+    }
+
+    #[test]
+    fn profiles_inherit_base_args_env_and_share_defaults() {
+        let root = std::env::temp_dir().join(format!("omnix-profile-cfg-{}", std::process::id()));
+        let dir = root.join(".omnix");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("agents.json"),
+            r#"{"codex":{"args":"--fast","env":"A=1"},"codex:akun2":{"args":"-m gpt-5","env":"B=2"}}"#,
+        )
+        .unwrap();
+        let cfg = config_for(&root, "codex:akun2");
+        assert_eq!(cfg.arg_list(), vec!["--fast", "-m", "gpt-5"]);
+        assert!(cfg.env_list().contains(&("A".into(), "1".into())));
+        assert!(cfg.env_list().contains(&("B".into(), "2".into())));
+        assert!(cfg.enabled);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn claude_profile_gets_env_and_rule_symlinks() {
+        let base = std::env::temp_dir().join(format!("omnix-profile-link-{}", std::process::id()));
+        let home = base.join("home");
+        let root = base.join("repo");
+        std::fs::create_dir_all(home.join(".claude").join("skills")).unwrap();
+        std::fs::create_dir_all(root.join(".omnix")).unwrap();
+        std::fs::write(home.join(".claude").join("CLAUDE.md"), "rules\n").unwrap();
+        std::fs::write(
+            root.join(".omnix").join("agents.json"),
+            r#"{"claude:akun2":{"label":"Akun 2"}}"#,
+        )
+        .unwrap();
+        let env = prepare_profile_at(&home, &root, "claude:akun2").unwrap();
+        let dir = profile_dir_at(&home, &root, "claude:akun2").unwrap();
+        assert_eq!(
+            env,
+            vec![(
+                "CLAUDE_CONFIG_DIR".to_string(),
+                dir.to_string_lossy().into_owned()
+            )]
+        );
+        assert!(dir.join("projects").is_dir());
+        #[cfg(unix)]
+        {
+            let skills = std::fs::read_link(dir.join("skills")).unwrap();
+            assert_eq!(skills, home.join(".claude").join("skills"));
+            let rules = std::fs::read_link(dir.join("CLAUDE.md")).unwrap();
+            assert_eq!(rules, home.join(".claude").join("CLAUDE.md"));
+        }
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn profile_requires_a_supported_isolation_var() {
+        let base = std::env::temp_dir().join(format!("omnix-profile-agy-{}", std::process::id()));
+        std::fs::create_dir_all(base.join(".omnix")).unwrap();
+        assert!(prepare_profile_at(&base, &base, "antigravity:akun2")
+            .unwrap()
+            .is_empty());
+        assert!(profile_dir_at(&base, &base, "antigravity:akun2").is_none());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
     fn extra_dirs_cover_per_user_installs() {
         let dirs = extra_dirs();
         assert!(!dirs.is_empty(), "home-based install dirs are searched");
@@ -331,6 +778,7 @@ mod tests {
             args: "--dangerously-skip-permissions --fast".into(),
             env: "FOO=1 NOPE BAR=two=3 9X=y".into(),
             enabled: true,
+            ..Default::default()
         };
         assert_eq!(cfg.arg_list().len(), 2);
         assert_eq!(
@@ -347,5 +795,40 @@ mod tests {
         assert!(resume_args("codex", "-rf /").is_err());
         assert!(resume_args("codex", "a\nb").is_err());
         assert!(resume_args("codex", "").is_err());
+    }
+
+    #[test]
+    fn extra_args_follow_each_cli_table() {
+        let opts = LaunchOptions {
+            model: Some("gpt-5".into()),
+            effort: Some("high".into()),
+            mode: Some("edit".into()),
+        };
+        assert_eq!(
+            extra_args("codex", &opts).unwrap(),
+            vec!["-m", "gpt-5", "-c", "model_reasoning_effort=high"]
+        );
+        assert_eq!(
+            extra_args("antigravity", &opts).unwrap(),
+            vec!["--model", "gpt-5", "--effort", "high", "--mode", "edit"]
+        );
+        assert_eq!(
+            extra_args("claude", &opts).unwrap(),
+            vec!["--model", "gpt-5"]
+        );
+    }
+
+    #[test]
+    fn extra_args_reject_flag_shaped_values() {
+        let bad = LaunchOptions {
+            model: Some("--sandbox".into()),
+            ..Default::default()
+        };
+        assert!(extra_args("codex", &bad).is_err());
+        let bad = LaunchOptions {
+            effort: Some("turbo".into()),
+            ..Default::default()
+        };
+        assert!(extra_args("codex", &bad).is_err());
     }
 }

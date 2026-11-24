@@ -143,6 +143,25 @@ Lightpanda: error `unsupported_by_engine` atau placeholder. Jangan pakai untuk r
 {"method":"closeTab","params":{"tabId":"t1"}}
 ```
 
+## Sesi browser dan `stop`
+
+Satu daemon Lightpanda boleh dipakai beberapa agent, tetapi setiap terminal
+punya lease sendiri. Omnix mengekspor `OMNIX_OWNER` dan
+`OMNIX_BROWSER_SESSION` ke setiap PTY; `omnix browser mcp` mendaftarkan PID
+proxy-nya di `<repo>/.omnix/browser/sessions/` selama panggilan itu hidup.
+
+- `omnix browser sessions [--json]` menampilkan pemilik, PID, dan waktu
+  kedaluwarsa setiap sesi aktif.
+- `omnix browser stop` hanya menutup sesi milik terminal pemanggil (atau
+  `--session ID`). Daemon bersama tetap hidup.
+- `omnix browser stop --all` adalah satu-satunya cara menghentikan daemon
+  bersama; hanya lakukan setelah semua worker selesai.
+- Lease yang PIDs-nya mati atau TTL-nya habis dibersihkan saat daftar dibaca.
+  Tidak ada monitor latar belakang.
+
+Satu agent tidak boleh memakai `--all` untuk membebaskan halaman agent lain.
+Halaman, cookie, dan profil login tetap milik sesi yang membuatnya.
+
 ## Error code
 
 | Code | Arti |

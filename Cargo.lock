@@ -1480,13 +1480,17 @@ version = "0.6.9"
 dependencies = [
  "anyhow",
  "gtk",
+ "libc",
  "portable-pty",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
+ "soup3",
  "tao",
+ "toml",
  "ureq",
+ "webkit2gtk",
  "wry",
 ]
 

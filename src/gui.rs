@@ -1,11 +1,12 @@
 use crate::{browser, history, procs, projects, pty, sources, update, usage, workspace};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
+use std::time::Duration;
 use tao::dpi::LogicalSize;
 use tao::event::{Event, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder, EventLoopProxy};
@@ -32,6 +33,8 @@ pub enum UserEvent {
 
 enum Msg {
     Ui(String),
+    Control(Value, Sender<Value>),
+    PromptDue(String),
     Probe(String),
     StartTest,
     Finish(bool),
@@ -47,8 +50,109 @@ struct PaneProc {
     cwd: String,
 }
 
+/// The pane registry the CLI sees. The GUI owns it; every write goes through
+/// `persist_panes` so a crashed read still finds a complete JSON file.
+#[derive(Clone, Default)]
+struct PaneMeta {
+    label: String,
+    title: String,
+    cwd: String,
+    agent: String,
+    handoff: String,
+    parent: String,
+    session_id: String,
+    status: String,
+    exit_code: Option<i64>,
+    orchestrator: bool,
+    updated_at: u64,
+}
+
+impl PaneMeta {
+    fn json(&self, key: &str) -> Value {
+        let status = if self.status.is_empty() {
+            "idle"
+        } else {
+            &self.status
+        };
+        json!({
+            "paneKey": key,
+            "label": self.label,
+            "title": self.title,
+            "cwd": self.cwd,
+            "agent": self.agent,
+            "handoff": self.handoff,
+            "parent": self.parent,
+            "sessionId": self.session_id,
+            "status": status,
+            "state": crate::control::machine_state(status, self.exit_code),
+            "exitCode": self.exit_code,
+            "orchestrator": self.orchestrator,
+            "updatedAt": self.updated_at,
+            "updatedAtLocal": crate::control::local_time(self.updated_at),
+        })
+    }
+}
+
+/// Two agents in one folder edit the same files; two workers on one account
+/// burn the same quota. Both are advisory: the banner explains the risk and
+/// offers a one-click move, but nothing is blocked.
+fn pane_conflicts(app: &App) -> Value {
+    let mut folders: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    let mut accounts: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for (key, meta) in &app.panes {
+        if !app.ptys.contains_key(key) {
+            continue;
+        }
+        if meta.agent.trim().is_empty() || meta.status == "exited" {
+            continue;
+        }
+        let row = json!({
+            "paneKey": key,
+            "agent": meta.agent,
+            "title": meta.title,
+            "cwd": meta.cwd,
+            "sessionId": meta.session_id,
+        });
+        if !meta.cwd.trim().is_empty() {
+            folders
+                .entry(meta.cwd.clone())
+                .or_default()
+                .push(row.clone());
+        }
+        let account = match crate::agent::split_agent(&meta.agent) {
+            Some((base, Some(profile))) => format!("{base}:{profile}"),
+            Some((base, None)) => base.to_string(),
+            None => meta.agent.clone(),
+        };
+        accounts.entry(account).or_default().push(row);
+    }
+    let mut out = Vec::new();
+    for (cwd, panes) in folders {
+        if panes.len() > 1 {
+            out.push(json!({
+                "kind": "folder",
+                "value": cwd,
+                "message": format!("{} agent berjalan di folder yang sama: {cwd}", panes.len()),
+                "panes": panes,
+            }));
+        }
+    }
+    for (account, panes) in accounts {
+        if panes.len() > 1 {
+            out.push(json!({
+                "kind": "profile",
+                "value": account,
+                "message": format!("{} worker memakai akun/profil yang sama: {account}", panes.len()),
+                "panes": panes,
+            }));
+        }
+    }
+    Value::Array(out)
+}
+
 struct App {
     content: Option<WebView>,
+    browser_ctx: Option<wry::WebContext>,
     ui: WebView,
     window: Window,
     root: PathBuf,
@@ -57,6 +161,9 @@ struct App {
     content_visible: bool,
     ptys: HashMap<String, pty::Pty>,
     pane_procs: HashMap<String, PaneProc>,
+    panes: BTreeMap<String, PaneMeta>,
+    pending_prompts: HashMap<String, String>,
+    ctrl: Option<crate::control::Server>,
     quit: bool,
 }
 
@@ -90,8 +197,49 @@ fn asset(path: &str) -> Option<(&'static [u8], &'static str)> {
     })
 }
 
+fn percent_decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%' {
+            let hex = text.get(index + 1..index + 3)?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            index += 3;
+        } else {
+            out.push(bytes[index]);
+            index += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+fn serve_plugin_panel(path: &str) -> Option<wry::http::Response<std::borrow::Cow<'static, [u8]>>> {
+    let rest = path.strip_prefix("/plugin-panel/")?;
+    let (plugin, rel) = rest.split_once('/')?;
+    let plugin = percent_decode(plugin)?;
+    let rel = percent_decode(rel)?;
+    let (file, kind) = crate::plugin::panel_file(&plugin, &rel).ok()?;
+    let body = std::fs::read(file).ok()?;
+    Some(
+        wry::http::Response::builder()
+            .header("Content-Type", kind)
+            .header("Cache-Control", "no-store")
+            .header(
+                "Content-Security-Policy",
+                "default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'",
+            )
+            .header("X-Content-Type-Options", "nosniff")
+            .body(std::borrow::Cow::Owned(body))
+            .ok()?,
+    )
+}
+
 fn serve(req: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
     let path = req.uri().path().to_string();
+    if let Some(response) = serve_plugin_panel(&path) {
+        return response;
+    }
     match asset(&path) {
         Some((body, kind)) => wry::http::Response::builder()
             .header("Content-Type", kind)
@@ -136,6 +284,17 @@ fn reply(ui: &WebView, id: u64, result: Result<Value>) {
     }
 }
 
+fn reply_later<F>(id: u64, tx: Sender<Msg>, proxy: EventLoopProxy<UserEvent>, job: F)
+where
+    F: FnOnce() -> Result<Value> + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let result = job();
+        let _ = tx.send(Msg::Reply(id, result));
+        let _ = proxy.send_event(UserEvent::Wake);
+    });
+}
+
 fn base64(data: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
@@ -163,13 +322,6 @@ fn base64(data: &[u8]) -> String {
 fn url_allowed(url: &str) -> bool {
     let lower = url.trim().to_ascii_lowercase();
     (lower.starts_with("http://") || lower.starts_with("https://")) && !url.contains(' ')
-}
-
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn history_db(root: &PathBuf) -> PathBuf {
@@ -287,6 +439,93 @@ fn native_pick_folder(_app: &App, _start: Option<PathBuf>) -> Result<Option<Stri
     Ok(None)
 }
 
+fn persist_panes(app: &App) {
+    let rows: Vec<Value> = app
+        .panes
+        .iter()
+        .map(|(key, meta)| meta.json(key))
+        .collect();
+    let _ = crate::control::write_panes(&crate::control::runtime_dir(), &rows);
+}
+
+fn find_pane_key(app: &App, target: &str) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() {
+        return None;
+    }
+    app.panes
+        .iter()
+        .find(|(key, _)| key.as_str() == target)
+        .or_else(|| {
+            app.panes
+                .iter()
+                .find(|(_, meta)| meta.handoff == target)
+        })
+        .or_else(|| {
+            app.panes.iter().find(|(_, meta)| {
+                meta.label == target || meta.title == target
+            })
+        })
+        .map(|(key, _)| key.clone())
+}
+
+fn log_state(app: &App, key: &str, meta: &PaneMeta, old: &str, new: &str) {
+    if old == new {
+        return;
+    }
+    let kind = match new {
+        "done" => "agent-turn-done",
+        "approval" => "agent-needs-approval",
+        "failed" => "agent-exited",
+        "working" => "agent-working",
+        _ => return,
+    };
+    let pane = app.ptys.contains_key(key);
+    crate::control::event(
+        kind,
+        json!({
+            "pane": key,
+            "handoff": meta.handoff,
+            "agent": meta.agent,
+            "title": meta.title,
+            "previous": old,
+            "live": pane,
+        }),
+    );
+    if new == "done" || new == "approval" {
+        let who = if meta.handoff.is_empty() { &meta.title } else { &meta.handoff };
+        crate::control::notify(
+            if new == "done" { "Worker finished" } else { "Worker needs approval" },
+            who,
+        );
+    }
+}
+
+fn ai_memory(app: &App) -> Value {
+    let table = procs::snapshot();
+    let mut rss = 0u64;
+    let mut count = 0usize;
+    for pane in app.pane_procs.values() {
+        let (pane_rss, pane_count) = table.sum_tree(pane.pid);
+        if pane_count > 0 {
+            rss = rss.saturating_add(pane_rss);
+            count += pane_count;
+        }
+    }
+    let limit = std::env::var("OMNIX_AI_RAM_MB")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|mb| *mb > 0)
+        .map(|mb| mb.saturating_mul(1024 * 1024))
+        .or_else(usage::default_budget);
+    json!({
+        "rss": rss,
+        "processes": count,
+        "limitBytes": limit,
+        "over": limit.map(|limit| rss > limit).unwrap_or(false),
+    })
+}
+
 fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
     let parsed: Value = match serde_json::from_str(raw) {
         Ok(value) => value,
@@ -307,6 +546,17 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
         "appInfo" => Ok({
             let saved = crate::agent::load_settings(&app.root);
             let engine_version = browser::version();
+            let mut agents = crate::agent::AGENTS
+                .iter()
+                .map(|a| json!({
+                    "name": a,
+                    "bin": crate::agent::launch_cmd(a),
+                    "available": crate::agent::available(a),
+                    "enabled": saved.get(*a).map(|c| c.enabled).unwrap_or(true),
+                }))
+                .collect::<Vec<_>>();
+            agents.extend(crate::agent::profile_rows(&app.root));
+            agents.extend(crate::plugin::agent_rows());
             json!({
                 "version": env!("CARGO_PKG_VERSION"),
                 "root": app.root.to_string_lossy(),
@@ -316,17 +566,25 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 },
                 "platform": std::env::consts::OS,
                 "traceKeys": app.root.join(".trace-keys").exists(),
-                "agents": crate::agent::AGENTS
-                    .iter()
-                    .map(|a| json!({
-                        "name": a,
-                        "bin": crate::agent::launch_cmd(a),
-                        "available": crate::agent::available(a),
-                        "enabled": saved.get(*a).map(|c| c.enabled).unwrap_or(true),
-                    }))
-                    .collect::<Vec<_>>(),
+                "agents": agents,
+                "pluginCommands": crate::plugin::command_names(),
+                "pluginPanels": crate::plugin::panel_list(),
+                "devBuilds": crate::dev::builds().len(),
+                "setup": crate::setup::payload(&app.root),
             })
         }),
+        "setupComplete" => (|| {
+            crate::setup::complete(&app.root)?;
+            Ok(json!({ "ok": true, "setup": crate::setup::payload(&app.root) }))
+        })(),
+        "setupReset" => (|| {
+            crate::setup::reset(&app.root)?;
+            Ok(json!({ "ok": true, "setup": crate::setup::payload(&app.root) }))
+        })(),
+        "supportOpen" => (|| {
+            crate::setup::open_support()?;
+            Ok(json!({ "ok": true, "url": crate::setup::SUPPORT_URL }))
+        })(),
         "windowMinimize" => {
             app.window.set_minimized(true);
             Ok(json!({ "ok": true }))
@@ -407,13 +665,17 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 .filter(|path| path.is_dir());
             Ok(json!({ "path": native_pick_folder(app, start)? }))
         })(),
-        "usage" => Ok(crate::usage::snapshot(home_dir().as_path())),
+        "usage" => Ok(crate::usage::snapshot_live_for(
+            &app.root,
+            &crate::control::home(),
+        )),
         "agentSettings" => (|| {
             let saved = crate::agent::load_settings(&app.root);
             let defaults = crate::agent::load_defaults(&app.root);
             Ok(json!({
                 "path": crate::agent::settings_path(&app.root).to_string_lossy(),
                 "defaults": { "fullAccess": defaults.full_access },
+                "profiles": crate::agent::profile_rows(&app.root),
                 "agents": crate::agent::AGENTS
                     .iter()
                     .map(|name| {
@@ -428,12 +690,13 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                             "fullAccessFlag": crate::agent::full_access_flag(name),
                         })
                     })
+                    .chain(crate::plugin::agent_rows())
                     .collect::<Vec<_>>(),
             }))
         })(),
         "agentSettingsSave" => (|| {
             let name = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
-            if !crate::agent::AGENTS.contains(&name.as_str()) {
+            if crate::agent::split_agent(&name).is_none() {
                 return Err(anyhow!("unknown agent '{name}'"));
             }
             let extra_args = as_str(&args, "args").unwrap_or_default();
@@ -441,21 +704,52 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             if extra_args.len() > 400 || env.len() > 400 {
                 return Err(anyhow!("agent settings are too long"));
             }
+            let is_profile = crate::agent::profile_of(&name).is_some();
+            let label = as_str(&args, "label").unwrap_or_default();
+            let config_dir = as_str(&args, "configDir").unwrap_or_default();
+            if label.len() > 80 || config_dir.len() > 500 {
+                return Err(anyhow!("profile settings are too long"));
+            }
+            if label.chars().any(char::is_control) || config_dir.chars().any(char::is_control) {
+                return Err(anyhow!("profile settings contain control characters"));
+            }
             let mut saved = crate::agent::load_settings(&app.root);
             let mut cfg = saved.remove(&name).unwrap_or_default();
             cfg.args = extra_args;
             cfg.env = env;
-            if cfg.args.trim().is_empty() && cfg.env.trim().is_empty() && cfg.enabled {
-                // nothing custom left: fall back to the implicit defaults
-            } else {
+            if is_profile {
+                cfg.label = label.trim().to_string();
+                cfg.config_dir = config_dir.trim().to_string();
+                if let Some(share) = args.get("shareProjects").and_then(Value::as_bool) {
+                    cfg.share_projects = share;
+                }
+            }
+            let custom = is_profile
+                || !cfg.args.trim().is_empty()
+                || !cfg.env.trim().is_empty()
+                || !cfg.label.trim().is_empty()
+                || !cfg.config_dir.trim().is_empty()
+                || cfg.share_projects
+                || !cfg.enabled;
+            if custom {
                 saved.insert(name.clone(), cfg);
             }
             crate::agent::save_settings(&app.root, &saved)?;
             Ok(json!({ "ok": true }))
         })(),
+        "agentProfileDelete" => (|| {
+            let name = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
+            if crate::agent::profile_of(&name).is_none() {
+                return Err(anyhow!("'{name}' is not a profile"));
+            }
+            let mut saved = crate::agent::load_settings(&app.root);
+            saved.remove(&name);
+            crate::agent::save_settings(&app.root, &saved)?;
+            Ok(json!({ "ok": true }))
+        })(),
         "agentEnable" => (|| {
             let name = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
-            if !crate::agent::AGENTS.contains(&name.as_str()) {
+            if crate::agent::split_agent(&name).is_none() {
                 return Err(anyhow!("unknown agent '{name}'"));
             }
             let enabled = args
@@ -465,7 +759,11 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let mut saved = crate::agent::load_settings(&app.root);
             let mut cfg = saved.remove(&name).unwrap_or_default();
             cfg.enabled = enabled;
-            if cfg.args.trim().is_empty() && cfg.env.trim().is_empty() && enabled {
+            if crate::agent::profile_of(&name).is_none()
+                && cfg.args.trim().is_empty()
+                && cfg.env.trim().is_empty()
+                && enabled
+            {
                 // enabled is the default; keep the store empty
             } else {
                 saved.insert(name.clone(), cfg);
@@ -473,6 +771,156 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             crate::agent::save_settings(&app.root, &saved)?;
             Ok(json!({ "ok": true, "enabled": enabled }))
         })(),
+        "plugins" => Ok(json!({
+            "plugins": crate::plugin::list(),
+            "agents": crate::plugin::agent_rows(),
+            "catalog": std::env::var("OMNIX_PLUGIN_CATALOG").unwrap_or_else(|_| "public GitHub index".into()),
+            "path": crate::plugin::plugins_dir().to_string_lossy(),
+        })),
+        "pluginAction" => {
+            let action = as_str(&args, "action").unwrap_or_default();
+            let name = as_str(&args, "name").unwrap_or_default();
+            let names = args
+                .get("names")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>())
+                .unwrap_or_default();
+            if matches!(action.as_str(), "install" | "update" | "search" | "doctor") {
+                let tx = tx.clone();
+                let proxy = proxy.clone();
+                reply_later(id, tx, proxy, move || match action.as_str() {
+                    "install" => crate::plugin::install(&name),
+                    "update" => crate::plugin::update(&names),
+                    "search" => crate::plugin::search(&name),
+                    _ => Ok(crate::plugin::doctor()),
+                });
+                return;
+            }
+            (|| match action.as_str() {
+                "remove" => crate::plugin::remove(&name),
+                "enable" => crate::plugin::set_enabled(&name, true),
+                "disable" => crate::plugin::set_enabled(&name, false),
+                "revoke" => crate::plugin::revoke(&name, &names),
+                "grant" => crate::plugin::grant(&name, &names),
+                "list" => Ok(json!({ "plugins": crate::plugin::list() })),
+                _ => Err(anyhow!("unknown plugin action '{action}'")),
+            })()
+        }
+        "pluginRun" => {
+            let name = match as_str(&args, "name") {
+                Some(name) => name,
+                None => {
+                    reply(&app.ui, id, Err(anyhow!("plugin name is required")));
+                    return;
+                }
+            };
+            let command = as_str(&args, "command").unwrap_or_default();
+            let forwarded = args
+                .get("args")
+                .and_then(Value::as_array)
+                .map(|rows| rows.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>())
+                .unwrap_or_default();
+            let tx = tx.clone();
+            let proxy = proxy.clone();
+            reply_later(id, tx, proxy, move || {
+                crate::plugin::invoke(
+                    &name,
+                    "command",
+                    json!({"plugin": name, "command": command, "args": forwarded}),
+                )
+            });
+            return;
+        }
+        "pluginPanel" => (|| {
+            let name = as_str(&args, "name").ok_or_else(|| anyhow!("plugin name is required"))?;
+            crate::plugin::panel_info(&name, as_str(&args, "panel").as_deref())
+        })(),
+        "pluginPanelCall" => {
+            let name = match as_str(&args, "name") {
+                Some(name) => name,
+                None => {
+                    reply(&app.ui, id, Err(anyhow!("plugin name is required")));
+                    return;
+                }
+            };
+            let method = as_str(&args, "method").unwrap_or_else(|| "panel".into());
+            let params = args.get("params").cloned().unwrap_or_else(|| json!({}));
+            let tx = tx.clone();
+            let proxy = proxy.clone();
+            reply_later(id, tx, proxy, move || crate::plugin::invoke(&name, &method, params));
+            return;
+        }
+        "devStatus" => Ok(crate::dev::status()),
+        "devTaskInfo" => (|| {
+            let name = as_str(&args, "name").ok_or_else(|| anyhow!("task name is required"))?;
+            let record = crate::handoff::list_all()
+                .into_iter()
+                .find(|record| record.name == name)
+                .ok_or_else(|| anyhow!("task '{name}' not found"))?;
+            let brief = std::fs::read_to_string(&record.brief).unwrap_or_default();
+            Ok(json!({ "record": record, "brief": brief }))
+        })(),
+        "devTaskDelivered" => (|| {
+            let name = as_str(&args, "name").ok_or_else(|| anyhow!("task name is required"))?;
+            let pane = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
+            let mut record = crate::handoff::list_all()
+                .into_iter()
+                .find(|record| record.name == name)
+                .ok_or_else(|| anyhow!("task '{name}' not found"))?;
+            crate::handoff::mark_delivered(&mut record, &pane)?;
+            Ok(json!({ "ok": true, "name": name, "paneKey": pane }))
+        })(),
+        "devTask" => (|| {
+            let brief = as_str(&args, "brief").ok_or_else(|| anyhow!("brief is required"))?;
+            if brief.len() > 512 * 1024 {
+                return Err(anyhow!("brief is too large"));
+            }
+            let agent = as_str(&args, "agent").unwrap_or_else(|| "codex".into());
+            let name = as_str(&args, "name");
+            let dir = crate::dev::dev_home().join("briefs");
+            std::fs::create_dir_all(&dir)?;
+            let path = dir.join(format!("{}.md", crate::control::epoch()));
+            std::fs::write(&path, brief)?;
+            let (record, receipt) = crate::dev::task(crate::dev::TaskOptions {
+                prompt_file: path,
+                agent,
+                name,
+                repo: None,
+                run: false,
+            })?;
+            let brief = std::fs::read_to_string(&record.brief).unwrap_or_default();
+            Ok(json!({
+                "record": record,
+                "path": receipt.to_string_lossy(),
+                "brief": brief,
+            }))
+        })(),
+        "devBuild" => {
+            let tx = tx.clone();
+            let proxy = proxy.clone();
+            let workspace = as_str(&args, "workspace").map(PathBuf::from);
+            reply_later(id, tx, proxy, move || {
+                let build = crate::dev::build(workspace, true)?;
+                Ok(serde_json::to_value(build)?)
+            });
+            return;
+        }
+        "devTest" => {
+            let tx = tx.clone();
+            let proxy = proxy.clone();
+            let workspace = as_str(&args, "workspace").map(PathBuf::from);
+            reply_later(id, tx, proxy, move || crate::dev::test(workspace, true));
+            return;
+        }
+        "devRun" => (|| {
+            let build = as_str(&args, "build");
+            crate::dev::run(build.as_deref())
+        })(),
+        "devInstall" => (|| {
+            let build = as_str(&args, "build");
+            crate::dev::install(build.as_deref(), false)
+        })(),
+        "devRestore" => (|| crate::dev::restore(false))(),
         "agentDefaultsSave" => (|| {
             let full_access = args
                 .get("fullAccess")
@@ -513,6 +961,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "messages": messages,
                 "dbBytes": bytes,
                 "workspaces": workspaces,
+                "conflicts": pane_conflicts(app),
             }))
         })(),
         "historyIndex" => (|| {
@@ -555,7 +1004,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     if probe_on {
                         eprintln!("scan: opened, walking sources");
                     }
-                    let report = sources::scan(&mut conn)?;
+                    let report = sources::scan(&mut conn, &root)?;
                     if probe_on {
                         eprintln!("scan: walked {} files", report.files);
                     }
@@ -571,7 +1020,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                             .iter()
                             .map(|c| json!({"agent": c.agent, "sessions": c.sessions, "messages": c.messages}))
                             .collect::<Vec<_>>(),
-                        "roots": sources::roots()
+                        "roots": sources::roots(&root)
                             .iter()
                             .map(|(agent, path)| json!({"agent": agent, "path": path.to_string_lossy()}))
                             .collect::<Vec<_>>(),
@@ -717,15 +1166,36 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 .or_else(|| shell.clone())
                 .unwrap_or_else(|| "terminal".into());
             let label: String = label.chars().filter(|c| !c.is_control()).take(48).collect();
-            let spawned = match (agent, session, command) {
-                (_, _, Some(line)) => {
-                    if line.len() > 240 {
-                        return Err(anyhow!("command is too long"));
+            let options = crate::agent::LaunchOptions {
+                model: as_str(&args, "model"),
+                effort: as_str(&args, "effort"),
+                mode: as_str(&args, "mode"),
+            };
+            let extra = match &agent {
+                Some(agent) => crate::agent::extra_args(agent, &options)?,
+                None => Vec::new(),
+            };
+            let login = args.get("login").and_then(Value::as_bool).unwrap_or(false);
+            let (spawned, initial_prompt) = if login {
+                let agent = agent
+                    .as_deref()
+                    .ok_or_else(|| anyhow!("agent is required for a login tab"))?;
+                let (spawned, prompt) = pty::spawn_login(&app.root, agent, &cwd)?;
+                (spawned, prompt)
+            } else {
+                let spawned = match (agent.clone(), session.clone(), command) {
+                    (_, _, Some(line)) => {
+                        if line.len() > 240 {
+                            return Err(anyhow!("command is too long"));
+                        }
+                        pty::spawn_command(&line, &cwd)?
                     }
-                    pty::spawn_command(&line, &cwd)?
-                }
-                (Some(a), s, None) => pty::spawn_agent(&app.root, &a, s.as_deref(), &cwd)?,
-                _ => pty::spawn(shell.as_deref(), &cwd, None)?,
+                    (Some(a), s, None) => {
+                        pty::spawn_agent_with(&app.root, &a, s.as_deref(), &cwd, &extra)?
+                    }
+                    _ => pty::spawn(shell.as_deref(), &cwd, None)?,
+                };
+                (spawned, None)
             };
             let pid = spawned.pid;
             let mut reader = spawned.reader;
@@ -759,10 +1229,49 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 key.clone(),
                 PaneProc {
                     pid,
-                    label,
+                    label: label.clone(),
                     cwd: cwd.to_string_lossy().into_owned(),
                 },
             );
+            // Auto track: a resumed session is already named, so sleep/resume
+            // can find it later without another CLI call.
+            if let (Some(agent), Some(session)) = (agent.as_deref(), session.as_deref()) {
+                let _ = workspace::track(&app.root, &cwd, agent, session, &cwd, &key);
+            }
+            let handoff = as_str(&args, "handoff").unwrap_or_default();
+            let title = as_str(&args, "title").unwrap_or_else(|| label.clone());
+            let meta = PaneMeta {
+                label: label.clone(),
+                title: title.chars().filter(|c| !c.is_control()).take(80).collect(),
+                cwd: cwd.to_string_lossy().into_owned(),
+                agent: as_str(&args, "agent").unwrap_or_default(),
+                handoff: handoff.clone(),
+                parent: as_str(&args, "parent").unwrap_or_default(),
+                session_id: as_str(&args, "sessionId").unwrap_or_default(),
+                status: "working".into(),
+                exit_code: None,
+                orchestrator: as_bool(&args, "orchestrator"),
+                updated_at: crate::control::epoch(),
+            };
+            if !handoff.is_empty() {
+                crate::control::event(
+                    "agent-started",
+                    json!({ "pane": key.clone(), "handoff": handoff, "agent": meta.agent.clone() }),
+                );
+            }
+            app.panes.insert(key.clone(), meta);
+            if let Some(text) = initial_prompt {
+                app.pending_prompts.insert(key.clone(), text);
+                let timer_key = key.clone();
+                let timer_tx = tx.clone();
+                let timer_proxy = proxy.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(2500));
+                    let _ = timer_tx.send(Msg::PromptDue(timer_key));
+                    let _ = timer_proxy.send_event(UserEvent::Wake);
+                });
+            }
+            persist_panes(app);
             Ok(json!({ "paneKey": key, "pid": pid }))
         })(),
         "ptyWrite" => (|| {
@@ -807,8 +1316,114 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 let _ = session.child.kill();
             }
             app.pane_procs.remove(&key);
+            app.panes.remove(&key);
+            persist_panes(app);
             Ok(json!({ "ok": true }))
         })(),
+        "paneState" => (|| {
+            let key = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
+            let (old, new) = {
+                let meta = app.panes.entry(key.clone()).or_default();
+                let old = meta.status.clone();
+                if let Some(value) = as_str(&args, "status") {
+                    meta.status = value;
+                }
+                if let Some(value) = as_str(&args, "handoff") {
+                    meta.handoff = value;
+                }
+                if let Some(value) = as_str(&args, "parent") {
+                    meta.parent = value;
+                }
+                if let Some(value) = as_str(&args, "title") {
+                    meta.title = value.chars().filter(|c| !c.is_control()).take(80).collect();
+                }
+                if let Some(value) = as_str(&args, "agent") {
+                    meta.agent = value;
+                }
+                if let Some(value) = as_str(&args, "sessionId") {
+                    meta.session_id = value;
+                }
+                if let Some(value) = as_str(&args, "cwd") {
+                    meta.cwd = value;
+                }
+                if let Some(value) = args.get("orchestrator").and_then(Value::as_bool) {
+                    meta.orchestrator = value;
+                }
+                if let Some(value) = args.get("exitCode").and_then(Value::as_i64) {
+                    meta.exit_code = Some(value);
+                }
+                meta.updated_at = crate::control::epoch();
+                (old, meta.status.clone())
+            };
+            if let Some(meta) = app.panes.get(&key) {
+                log_state(app, &key, meta, &old, &new);
+            }
+            let exit = app.panes.get(&key).and_then(|meta| meta.exit_code);
+            persist_panes(app);
+            Ok(json!({ "ok": true, "paneKey": key, "state": crate::control::machine_state(&new, exit) }))
+        })(),
+        "paneMoveWorktree" => (|| {
+            let key = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
+            let meta = app
+                .panes
+                .get(&key)
+                .cloned()
+                .ok_or_else(|| anyhow!("unknown pane '{key}'"))?;
+            if meta.agent.trim().is_empty() {
+                return Err(anyhow!("only agent panes can move to a worktree"));
+            }
+            if !app.ptys.contains_key(&key) {
+                return Err(anyhow!("pane '{key}' is not running"));
+            }
+            let cwd = PathBuf::from(&meta.cwd);
+            let repo = crate::handoff::main_repo(&cwd)?;
+            let moved = crate::handoff::worktree_for_pane(&repo, &key, &meta.label)?;
+            Ok(json!({
+                "paneKey": key,
+                "repo": repo.to_string_lossy(),
+                "name": moved.name,
+                "branch": moved.branch,
+                "worktree": moved.worktree.to_string_lossy(),
+                "agent": meta.agent,
+                "sessionId": meta.session_id,
+                "label": meta.label,
+                "title": meta.title,
+                "handoff": meta.handoff,
+                "parent": meta.parent,
+                "orchestrator": meta.orchestrator,
+            }))
+        })(),
+        "agentSend" => (|| {
+            let reply = control_request(
+                app,
+                &json!({
+                    "cmd": "send",
+                    "target": as_str(&args, "target").unwrap_or_default(),
+                    "text": as_str(&args, "text").unwrap_or_default(),
+                    "force": as_bool(&args, "force"),
+                }),
+                tx,
+                proxy,
+            );
+            if reply.get("ok").and_then(Value::as_bool) == Some(false) {
+                let message = reply
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or("send failed");
+                return Err(anyhow!("{message}"));
+            }
+            Ok(reply)
+        })(),
+        "handoffList" => Ok(json!({ "handoffs": crate::handoff::list_all() })),
+        "handoffClose" => (|| {
+            let name = as_str(&args, "name").ok_or_else(|| anyhow!("name is required"))?;
+            let record = crate::handoff::close(&name)?;
+            Ok(json!({ "name": record.name, "worktree": record.worktree }))
+        })(),
+        "gc" => {
+            let dry = args.get("dryRun").and_then(Value::as_bool).unwrap_or(true);
+            crate::gc::run(&app.root, dry)
+        }
         "memory" => (|| {
             let table = procs::snapshot();
             let pid = std::process::id();
@@ -859,6 +1474,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     "over": limit.map(|limit| ai_rss > limit).unwrap_or(false),
                 },
                 "panes": panes,
+                "conflicts": pane_conflicts(app),
             }))
         })(),
         "browserOpen" => (|| {
@@ -878,7 +1494,12 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     view.load_url(&url)?;
                 }
                 None => {
-                    let view = WebViewBuilder::new()
+                    let data_dir = browser::native_data_dir();
+                    let _ = std::fs::create_dir_all(&data_dir);
+                    let context = app
+                        .browser_ctx
+                        .get_or_insert_with(|| wry::WebContext::new(Some(data_dir)));
+                    let view = WebViewBuilder::new_with_web_context(context)
                         .with_bounds(rect(x, y, w, h))
                         .with_url(&url)
                         .with_devtools(false)
@@ -905,8 +1526,8 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             Ok(json!({ "ok": true }))
         })(),
         "browserStop" => (|| {
-            browser::stop()?;
-            Ok(json!({ "ok": true }))
+            let value = browser::stop(None, false)?;
+            Ok(value)
         })(),
         "browserFetch" => (|| {
             let url = as_str(&args, "url").ok_or_else(|| anyhow!("url is required"))?;
@@ -1155,7 +1776,228 @@ fn shutdown(app: &mut App) {
     for (_, mut session) in app.ptys.drain() {
         let _ = session.child.kill();
     }
+    app.panes.clear();
+    persist_panes(app);
     app.content = None;
+    app.browser_ctx = None;
+    let _ = crate::preview::stop_all(&app.root, false);
+}
+
+fn control_reply(result: Result<Value>) -> Value {
+    match result {
+        Ok(mut value) => {
+            if let Value::Object(map) = &mut value {
+                map.entry("ok".to_string()).or_insert(json!(true));
+            }
+            value
+        }
+        Err(err) => json!({ "ok": false, "error": format!("{err:#}") }),
+    }
+}
+
+fn control_request(
+    app: &mut App,
+    req: &Value,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+) -> Value {
+    let cmd = req.get("cmd").and_then(Value::as_str).unwrap_or("");
+    let result: Result<Value> = (|| match cmd {
+        "ping" => Ok(json!({
+            "version": env!("CARGO_PKG_VERSION"),
+            "root": app.root.to_string_lossy(),
+            "pid": std::process::id(),
+            "panes": app.panes.len(),
+        })),
+        "panes" | "state" => Ok(json!({
+            "panes": app.panes.iter().map(|(key, meta)| meta.json(key)).collect::<Vec<_>>(),
+            "memory": ai_memory(app),
+        })),
+        "handoffList" => Ok(json!({ "handoffs": crate::handoff::list_all() })),
+        "openUrl" => {
+            let url = req.get("url").and_then(Value::as_str).unwrap_or("");
+            if !url_allowed(url) {
+                return Err(anyhow!("only http and https URLs are allowed"));
+            }
+            emit(&app.ui, "browserNav", &json!({ "url": url, "open": true }));
+            Ok(json!({ "url": url }))
+        }
+        "send" => {
+            let target = req.get("target").and_then(Value::as_str).unwrap_or("");
+            let text = req.get("text").and_then(Value::as_str).unwrap_or("");
+            let force = req.get("force").and_then(Value::as_bool).unwrap_or(false);
+            if text.is_empty() || text.len() > 1024 * 1024 {
+                return Err(anyhow!("message is empty or too large"));
+            }
+            if !force {
+                if let Some(pattern) = crate::control::held(text) {
+                    return Err(anyhow!(
+                        "message contains a held command ('{pattern}'); pass --force"
+                    ));
+                }
+            }
+            let key = find_pane_key(app, target)
+                .ok_or_else(|| anyhow!("no Omnix pane matches '{target}'"))?;
+            let state = app
+                .panes
+                .get(&key)
+                .map(|meta| meta.status.clone())
+                .unwrap_or_default();
+            if state == "approval" && !force {
+                return Err(anyhow!(
+                    "pane is waiting for approval; answer it in the app or pass --force"
+                ));
+            }
+            let session = app
+                .ptys
+                .get_mut(&key)
+                .ok_or_else(|| anyhow!("pane '{key}' has no live process"))?;
+            use std::io::Write;
+            let paste = if text.contains('\n') {
+                format!("\x1b[200~{}\x1b[201~\r", text.trim_end())
+            } else {
+                format!("{text}\r")
+            };
+            session.writer.write_all(paste.as_bytes())?;
+            session.writer.flush()?;
+            let handoff = app
+                .panes
+                .get(&key)
+                .map(|meta| meta.handoff.clone())
+                .unwrap_or_default();
+            crate::control::event(
+                "agent-message-sent",
+                json!({ "pane": key.clone(), "handoff": handoff, "bytes": text.len() }),
+            );
+            Ok(json!({ "paneKey": key, "state": crate::control::machine_state(&state, None) }))
+        }
+        "spawnHandoff" => {
+            let record = req.get("record").cloned().unwrap_or(Value::Null);
+            let name = record
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("handoff record has no name"))?;
+            let agent = record
+                .get("agent")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("handoff record has no agent"))?;
+            let worktree = record
+                .get("worktree")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("handoff record has no worktree"))?;
+            let cwd = PathBuf::from(worktree);
+            if !cwd.is_dir() {
+                return Err(anyhow!("worktree is missing: {}", cwd.display()));
+            }
+            let key = format!("ho:{name}");
+            if app.ptys.contains_key(&key) {
+                return Err(anyhow!("handoff pane already open: {key}"));
+            }
+            let options = crate::agent::LaunchOptions {
+                model: record.get("model").and_then(Value::as_str).map(str::to_string),
+                effort: record.get("effort").and_then(Value::as_str).map(str::to_string),
+                mode: record.get("mode").and_then(Value::as_str).map(str::to_string),
+            };
+            let extra = crate::agent::extra_args(agent, &options)?;
+            let spawned = pty::spawn_agent_with(&app.root, agent, None, &cwd, &extra)?;
+            let pid = spawned.pid;
+            let mut reader = spawned.reader;
+            let tx_data = tx.clone();
+            let proxy_data = proxy.clone();
+            let key_thread = key.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 8192];
+                loop {
+                    match reader.read(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => {
+                            if tx_data
+                                .send(Msg::PtyData {
+                                    key: key_thread.clone(),
+                                    data: buf[..n].to_vec(),
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                            let _ = proxy_data.send_event(UserEvent::Wake);
+                        }
+                    }
+                }
+                let _ = tx_data.send(Msg::PtyExit { key: key_thread });
+                let _ = proxy_data.send_event(UserEvent::Wake);
+            });
+            app.ptys.insert(key.clone(), spawned.pty);
+            app.pane_procs.insert(
+                key.clone(),
+                PaneProc {
+                    pid,
+                    label: name.to_string(),
+                    cwd: worktree.to_string(),
+                },
+            );
+            let parent = record
+                .get("parent")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let meta = PaneMeta {
+                label: name.to_string(),
+                title: name.to_string(),
+                cwd: worktree.to_string(),
+                agent: agent.to_string(),
+                handoff: name.to_string(),
+                parent,
+                session_id: String::new(),
+                status: "working".into(),
+                exit_code: None,
+                orchestrator: false,
+                updated_at: crate::control::epoch(),
+            };
+            app.panes.insert(key.clone(), meta.clone());
+            if let Some(brief) = record.get("brief").and_then(Value::as_str) {
+                if let Ok(text) = std::fs::read_to_string(brief) {
+                    if text.len() <= 256 * 1024 {
+                        app.pending_prompts.insert(key.clone(), text);
+                    }
+                }
+            }
+            let timer_key = key.clone();
+            let timer_tx = tx.clone();
+            let timer_proxy = proxy.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(3500));
+                let _ = timer_tx.send(Msg::PromptDue(timer_key));
+                let _ = timer_proxy.send_event(UserEvent::Wake);
+            });
+            emit(&app.ui, "paneOpen", &meta.json(&key));
+            crate::control::event(
+                "agent-started",
+                json!({ "pane": key.clone(), "handoff": name, "agent": agent, "root": "control" }),
+            );
+            persist_panes(app);
+            Ok(json!({ "paneKey": key, "pid": pid }))
+        }
+        "closePane" => {
+            let target = req.get("target").and_then(Value::as_str).unwrap_or("");
+            let key = find_pane_key(app, target)
+                .ok_or_else(|| anyhow!("no Omnix pane matches '{target}'"))?;
+            if let Some(mut session) = app.ptys.remove(&key) {
+                let _ = session.child.kill();
+            }
+            app.pane_procs.remove(&key);
+            app.panes.remove(&key);
+            persist_panes(app);
+            emit(&app.ui, "paneClosed", &json!({ "paneKey": key.clone() }));
+            Ok(json!({ "paneKey": key }))
+        }
+        "gc" => {
+            let dry = req.get("dryRun").and_then(Value::as_bool).unwrap_or(true);
+            Ok(crate::gc::run(&app.root, dry)?)
+        }
+        _ => Err(anyhow!("unknown control command '{cmd}'")),
+    })();
+    control_reply(result)
 }
 
 fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
@@ -1164,6 +2006,35 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
     while let Ok(msg) = rx.try_recv() {
         match msg {
             Msg::Ui(raw) => handle(app, &raw, tx, proxy),
+            Msg::Control(request, reply_tx) => {
+                let response = control_request(app, &request, tx, proxy);
+                let _ = reply_tx.send(response);
+            }
+            Msg::PromptDue(key) => {
+                if let Some(text) = app.pending_prompts.remove(&key) {
+                    if let Some(session) = app.ptys.get_mut(&key) {
+                        use std::io::Write;
+                        let paste = format!("\x1b[200~{}\x1b[201~\r", text.trim_end());
+                        if session.writer.write_all(paste.as_bytes()).is_ok() {
+                            let _ = session.writer.flush();
+                            let name = app
+                                .panes
+                                .get(&key)
+                                .map(|meta| meta.handoff.clone())
+                                .unwrap_or_default();
+                            crate::control::event(
+                                "handoff-prompt-sent",
+                                json!({ "pane": key, "handoff": name }),
+                            );
+                            emit(
+                                &app.ui,
+                                "toast",
+                                &json!({"level": "ok", "message": "Handoff prompt sent"}),
+                            );
+                        }
+                    }
+                }
+            }
             Msg::PtyData { key, data } => {
                 chunks.entry(key).or_default().extend_from_slice(&data);
             }
@@ -1198,6 +2069,26 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
             let _ = session.child.kill();
         }
         app.pane_procs.remove(&key);
+        app.pending_prompts.remove(&key);
+        if let Some(meta) = app.panes.get_mut(&key) {
+            meta.status = if code == 0 { "done" } else { "failed" }.into();
+            meta.exit_code = Some(code);
+            meta.updated_at = crate::control::epoch();
+            let snapshot = meta.clone();
+            let pane = app.ptys.contains_key(&key);
+            crate::control::event(
+                "agent-exited",
+                json!({
+                    "pane": key.clone(),
+                    "handoff": snapshot.handoff,
+                    "agent": snapshot.agent,
+                    "title": snapshot.title,
+                    "code": code,
+                    "live": pane,
+                }),
+            );
+        }
+        persist_panes(app);
         emit(&app.ui, "ptyExit", &json!({ "paneKey": key, "code": code }));
     }
 }
@@ -1324,10 +2215,40 @@ pub fn run() -> Result<()> {
         size: (w, h),
         content_rect: (0.0, 0.0, w, h),
         content_visible: false,
+        browser_ctx: None,
         ptys: HashMap::new(),
         pane_procs: HashMap::new(),
+        panes: BTreeMap::new(),
+        pending_prompts: HashMap::new(),
+        ctrl: None,
         quit: false,
     };
+
+    let control_tx = tx.clone();
+    let control_proxy = std::sync::Arc::new(std::sync::Mutex::new(proxy.clone()));
+    match crate::control::start(
+        &crate::control::runtime_dir(),
+        &app.root,
+        move |request| {
+            let (reply_tx, reply_rx) = channel::<Value>();
+            if control_tx
+                .send(Msg::Control(request, reply_tx))
+                .is_err()
+            {
+                return json!({ "ok": false, "error": "window is closing" });
+            }
+            if let Ok(proxy) = control_proxy.lock() {
+                let _ = proxy.send_event(UserEvent::Wake);
+            }
+            reply_rx
+                .recv_timeout(Duration::from_secs(60))
+                .unwrap_or_else(|_| json!({ "ok": false, "error": "control timed out" }))
+        },
+    ) {
+        Ok(server) => app.ctrl = Some(server),
+        Err(err) => eprintln!("omnix: control socket disabled: {err}"),
+    }
+    persist_panes(&app);
 
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;

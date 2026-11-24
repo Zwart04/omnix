@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/Zwart04/omnix/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue.
+  - name: Setup and usage guide
+    url: https://github.com/Zwart04/omnix/blob/main/docs/app.md
+    about: Installation, window layout, browser, profiles, and troubleshooting.
+  - name: Plugin API
+    url: https://github.com/Zwart04/omnix/blob/main/docs/plugin-api.md
+    about: Manifest, permissions, JSON-RPC, panels, and the catalog format.

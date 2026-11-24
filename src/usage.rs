@@ -49,7 +49,12 @@ pub fn parse_codex_line(line: &str) -> Option<(Vec<Window>, Option<String>)> {
 }
 
 /// Newest rollout file under `~/.codex/sessions`, where Codex journals usage.
+#[allow(dead_code)] // used by the rollout test
 pub fn newest_codex_rollout(home: &Path) -> Option<PathBuf> {
+    newest_codex_rollout_at(&home.join(".codex").join("sessions"))
+}
+
+fn newest_codex_rollout_at(dir: &Path) -> Option<PathBuf> {
     fn walk(dir: &Path, best: &mut Option<(std::time::SystemTime, PathBuf)>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -72,15 +77,19 @@ pub fn newest_codex_rollout(home: &Path) -> Option<PathBuf> {
         }
     }
     let mut best = None;
-    walk(&home.join(".codex").join("sessions"), &mut best);
+    walk(dir, &mut best);
     best.map(|(_, path)| path)
 }
 
 /// Codex appends a full rate-limit snapshot on each token-count event, so the
 /// last one in the newest rollout is the current state.
 pub fn codex_quota(home: &Path) -> Option<Value> {
+    codex_quota_at(&home.join(".codex"))
+}
+
+pub fn codex_quota_at(config: &Path) -> Option<Value> {
     use std::io::{Read, Seek, SeekFrom};
-    let path = newest_codex_rollout(home)?;
+    let path = newest_codex_rollout_at(&config.join("sessions"))?;
     /* Rollouts grow to megabytes; the newest rate-limit snapshot is always in
        the tail, so read the last 256 KiB instead of the whole transcript. */
     let mut file = std::fs::File::open(&path).ok()?;
@@ -359,15 +368,94 @@ pub fn ram() -> Option<Value> {
     None
 }
 
-pub fn snapshot(home: &Path) -> Value {
+/// Claude Code has no documented quota file. If the user's install writes one
+/// (`~/.claude/usage.json`), read the percentages; otherwise say nothing.
+pub fn claude_quota(home: &Path) -> Option<Value> {
+    claude_quota_at(&home.join(".claude"))
+}
+
+pub fn claude_quota_at(config: &Path) -> Option<Value> {
+    let bytes = std::fs::read(config.join("usage.json")).ok()?;
+    let value: Value = serde_json::from_slice(&bytes).ok()?;
+    let mut windows = Vec::new();
+    for (key, entry) in value.as_object()? {
+        if !entry.is_object() {
+            continue;
+        }
+        let used = entry
+            .get("usedPercent")
+            .or_else(|| entry.get("used_percent"))
+            .or_else(|| entry.get("utilization"))
+            .or_else(|| entry.get("percentage"))
+            .and_then(Value::as_f64);
+        let Some(used) = used else { continue };
+        let reset = entry
+            .get("resetsInSeconds")
+            .or_else(|| entry.get("resets_in_seconds"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        windows.push(json!({
+            "kind": key,
+            "usedPercent": used,
+            "resetsInSeconds": reset,
+            "windowMinutes": entry.get("windowMinutes").and_then(Value::as_i64).unwrap_or(0),
+        }));
+    }
+    if windows.is_empty() {
+        return None;
+    }
+    Some(json!({ "agent": "claude", "plan": null, "windows": windows }))
+}
+
+/// Boot-safe snapshot: local files only. `agy` is never spawned here because a
+/// logged-out CLI can raise its own login window; handoff gating must not do
+/// that. `snapshot_live_for` is the explicit, user-invoked variant.
+pub fn snapshot_for(root: &Path, home: &Path) -> Value {
     let mut agents = Vec::new();
     if let Some(codex) = codex_quota(home) {
         agents.push(codex);
     }
-    if let Some(antigravity) = antigravity_quota(home) {
-        agents.push(antigravity);
+    if let Some(claude) = claude_quota(home) {
+        agents.push(claude);
+    }
+    for row in crate::agent::profile_rows(root) {
+        let Some(name) = row.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        if row.get("enabled").and_then(Value::as_bool) == Some(false) {
+            continue;
+        }
+        let base = row.get("base").and_then(Value::as_str).unwrap_or("");
+        let Some(dir) = crate::agent::profile_dir_at(home, root, name) else {
+            continue;
+        };
+        let quota = match base {
+            "codex" => codex_quota_at(&dir),
+            "claude" => claude_quota_at(&dir),
+            _ => None,
+        };
+        if let Some(mut value) = quota {
+            if let Value::Object(map) = &mut value {
+                map.insert("agent".into(), json!(name));
+            }
+            agents.push(value);
+        }
     }
     json!({ "ram": ram(), "agents": agents })
+}
+
+/// Used only by `omnix usage` and the Usage modal. The first read returns what
+/// is cached; the worker fills it in for the next explicit read.
+pub fn snapshot_live_for(root: &Path, home: &Path) -> Value {
+    let mut value = snapshot_for(root, home);
+    if let Some(antigravity) = antigravity_quota(home) {
+        if let Value::Object(map) = &mut value {
+            if let Some(agents) = map.get_mut("agents").and_then(Value::as_array_mut) {
+                agents.push(antigravity);
+            }
+        }
+    }
+    value
 }
 
 /// Ceiling for terminal and agent memory when `OMNIX_AI_RAM_MB` is unset:
@@ -438,6 +526,58 @@ mod tests {
         .unwrap();
         let quota = codex_quota(&root).expect("quota");
         assert_eq!(quota["windows"][0]["usedPercent"], 7.5);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn snapshot_reports_each_profile_under_its_own_name() {
+        let base = std::env::temp_dir().join(format!("omnix-usage-prof-{}", std::process::id()));
+        let root = base.join("repo");
+        let home = base.join("home");
+        std::fs::create_dir_all(root.join(".omnix")).unwrap();
+        std::fs::write(
+            root.join(".omnix/agents.json"),
+            r#"{"codex:akun2":{},"claude:akun2":{}}"#,
+        )
+        .unwrap();
+        let codex = home.join(".omnix/profiles/codex/akun2/sessions/2026/11/24");
+        std::fs::create_dir_all(&codex).unwrap();
+        std::fs::write(
+            codex.join("rollout-a.jsonl"),
+            r#"{"payload":{"rate_limits":{"primary":{"used_percent":12.0,"resets_in_seconds":30}}}}"#,
+        )
+        .unwrap();
+        let claude = home.join(".omnix/profiles/claude/akun2");
+        std::fs::create_dir_all(&claude).unwrap();
+        std::fs::write(
+            claude.join("usage.json"),
+            r#"{"five_hour":{"usedPercent":34.0,"resetsInSeconds":60}}"#,
+        )
+        .unwrap();
+        let snapshot = snapshot_for(&root, &home);
+        let rows = snapshot["agents"].as_array().unwrap();
+        let names: Vec<&str> = rows
+            .iter()
+            .filter_map(|row| row["agent"].as_str())
+            .collect();
+        assert!(names.contains(&"codex:akun2"), "rows were {names:?}");
+        assert!(names.contains(&"claude:akun2"), "rows were {names:?}");
+        assert!(!names.contains(&"codex"), "base login must not be faked");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn reads_claude_usage_when_the_install_writes_it() {
+        let root = std::env::temp_dir().join(format!("omnix-claude-{}", std::process::id()));
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        std::fs::write(
+            root.join(".claude/usage.json"),
+            r#"{"five_hour":{"usedPercent":42.5,"resetsInSeconds":60}}"#,
+        )
+        .unwrap();
+        let quota = claude_quota(&root).expect("quota");
+        assert_eq!(quota["agent"], "claude");
+        assert_eq!(quota["windows"][0]["usedPercent"], 42.5);
         std::fs::remove_dir_all(&root).ok();
     }
 }

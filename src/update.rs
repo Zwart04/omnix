@@ -269,7 +269,7 @@ fn replace_exe(bytes: &[u8]) -> Result<PathBuf> {
 /// Afterwards `/proc/self/exe` reports `"<path> (deleted)"`, so the caller must
 /// relaunch this path instead of asking for `current_exe()` again.
 #[cfg(target_os = "linux")]
-fn replace_at(exe: &Path, bytes: &[u8]) -> Result<PathBuf> {
+pub(crate) fn replace_at(exe: &Path, bytes: &[u8]) -> Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     let staged = exe.with_extension("new");
     fs::write(&staged, bytes).with_context(|| format!("write {}", staged.display()))?;

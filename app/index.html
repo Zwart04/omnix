@@ -102,6 +102,13 @@
             <circle cx="12" cy="12" r="3" />
           </svg>
         </button>
+        <button class="icon-btn" type="button" id="side-support" title="Support Omnix"
+                aria-label="Support Omnix on Tako">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 1 0-7.1 7.1L12 21l8.8-8.3a5 5 0 0 0 0-7.1z" />
+          </svg>
+        </button>
       </div>
       <div id="tabstrip-tabs" class="strip-tabs"></div>
       <button class="strip-new" type="button" id="tab-new" title="New Tab" aria-label="New Tab"
@@ -136,6 +143,7 @@
     </div>
 
     <main id="main">
+      <div id="conflict-banner" class="conflict-banner" role="status" aria-live="polite" hidden></div>
       <div id="panes">
         <div id="pane-empty" class="pane-empty">
           <span class="pane-empty-mark" aria-hidden="true">
@@ -217,6 +225,15 @@
                 <button class="settings-nav-item is-active" type="button" data-settings="agents">
                   <span>Agents</span><span class="tag">CLI</span>
                 </button>
+                <button class="settings-nav-item" type="button" data-settings="plugins">
+                  <span>Plugins</span><span class="tag">API 1</span>
+                </button>
+                <button class="settings-nav-item" type="button" data-settings="dev">
+                  <span>Kembangkan Omnix</span><span class="tag">DEV</span>
+                </button>
+                <button class="settings-nav-item" type="button" data-settings="about">
+                  <span>About &amp; Support</span><span class="tag">GPL</span>
+                </button>
               </div>
 
               <div class="settings-nav-foot mono" id="agent-settings-path"></div>
@@ -224,9 +241,9 @@
 
             <div class="settings-content">
               <header class="settings-content-head">
-                <div class="settings-crumb">Settings <span aria-hidden="true">/</span> Agents</div>
+                <div class="settings-crumb" id="settings-crumb">Settings <span aria-hidden="true">/</span> Agents</div>
                 <div class="settings-title-row">
-                  <h2>Agents</h2>
+                  <h2 id="settings-title">Agents</h2>
                   <button class="btn sm" type="button" id="agent-settings-refresh">Refresh</button>
                 </div>
                 <p class="hint" id="agent-settings-meta">
@@ -235,18 +252,119 @@
               </header>
 
               <div class="settings-scroll">
-                <div class="settings-perms">
-                  <div class="settings-perms-text">
-                    <span class="settings-perms-title">New Agent Permissions</span>
-                    <span class="hint">Applied when a new agent session starts without an explicit override.</span>
+                <div id="settings-agents">
+                  <div class="settings-perms">
+                    <div class="settings-perms-text">
+                      <span class="settings-perms-title">New Agent Permissions</span>
+                      <span class="hint">Applied when a new agent session starts without an explicit override.</span>
+                    </div>
+                    <select id="agent-default-perms" class="input settings-perms-select"
+                            aria-label="New agents permissions">
+                      <option value="ask">Ask each time</option>
+                      <option value="full">Full access</option>
+                    </select>
                   </div>
-                  <select id="agent-default-perms" class="input settings-perms-select"
-                          aria-label="New agents permissions">
-                    <option value="ask">Ask each time</option>
-                    <option value="full">Full access</option>
-                  </select>
+                  <div id="agent-settings" class="settings-body"></div>
                 </div>
-                <div id="agent-settings" class="settings-body"></div>
+
+                <div id="settings-plugins" class="settings-body" hidden>
+                  <div class="plugin-tools">
+                    <input id="plugin-install-source" class="input mono" type="text"
+                           placeholder="catalog name, plugin folder, or .tar.gz"
+                           spellcheck="false" autocomplete="off" />
+                    <button class="btn sm" type="button" id="plugin-install-btn">Pasang</button>
+                  </div>
+                  <p class="hint" id="plugin-catalog-note">
+                    Plugins start only when called. Nothing runs after an install until you run it.
+                  </p>
+                  <div class="plugin-tools">
+                    <input id="plugin-search" class="input" type="text"
+                           placeholder="Search the public catalog" spellcheck="false" autocomplete="off" />
+                    <button class="btn sm" type="button" id="plugin-search-btn">Cari</button>
+                    <button class="btn sm" type="button" id="plugin-doctor-btn">Doctor</button>
+                  </div>
+                  <div id="plugin-list" class="plugin-list"></div>
+                  <div id="plugin-catalog" class="plugin-list"></div>
+                </div>
+
+                <div id="settings-dev" class="settings-body" hidden>
+                  <div class="dev-brief">
+                    <label class="set-field-label" for="dev-brief">Brief untuk agent</label>
+                    <textarea id="dev-brief" class="input dev-textarea" rows="6"
+                              placeholder="Jelaskan perubahan kecil yang ingin dibuat di Omnix. Agent bekerja di worktree sendiri."></textarea>
+                    <div class="dev-brief-row">
+                      <label class="set-field-label" for="dev-agent">Agent</label>
+                      <select id="dev-agent" class="input"></select>
+                      <button class="btn primary" type="button" id="dev-task-btn">Buat tugas</button>
+                    </div>
+                    <p class="hint" id="dev-task-meta">
+                      Tugas membuat worktree dan brief; binary yang sedang berjalan tidak diganti.
+                    </p>
+                  </div>
+                  <div class="dev-status-row">
+                    <button class="btn sm" type="button" id="dev-build-btn">Build release</button>
+                    <button class="btn sm" type="button" id="dev-test-btn">Test</button>
+                    <button class="btn sm" type="button" id="dev-run-btn">Jalankan build</button>
+                    <button class="btn sm" type="button" id="dev-restore-btn">Kembalikan binary</button>
+                  </div>
+                  <pre id="dev-output" class="dev-output" hidden></pre>
+                  <div id="dev-tasks" class="plugin-list"></div>
+                  <div id="dev-builds" class="plugin-list"></div>
+                </div>
+
+                <div id="settings-about" class="settings-body" hidden>
+                  <div class="about-card">
+                    <div class="about-brand">
+                      <img src="/logo.png" alt="" width="32" height="32" />
+                      <div>
+                        <h3>Omnix</h3>
+                        <p class="hint">A light Rust workbench for terminals, worktrees,
+                          agent sessions, and a swappable browser.</p>
+                      </div>
+                    </div>
+                    <div class="about-grid">
+                      <div class="about-fact">
+                        <span class="about-label">Version</span>
+                        <span class="mono" id="about-version">-</span>
+                      </div>
+                      <div class="about-fact">
+                        <span class="about-label">License</span>
+                        <span>GNU GPL v3.0 or later</span>
+                      </div>
+                      <div class="about-fact">
+                        <span class="about-label">Browser</span>
+                        <span>Native WebView or Lightpanda</span>
+                      </div>
+                      <div class="about-fact">
+                        <span class="about-label">Setup</span>
+                        <span id="about-setup-state">-</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="support-card">
+                    <div class="support-text">
+                      <strong>Support Omnix</strong>
+                      <p class="hint">Omnix is free and open source. If it saves you time,
+                        you can buy the developer a coffee on Tako.</p>
+                    </div>
+                    <div class="support-actions">
+                      <button class="btn primary" type="button" id="about-support">Support on Tako</button>
+                      <button class="btn" type="button" id="about-repo">GitHub</button>
+                    </div>
+                  </div>
+
+                  <div class="about-actions">
+                    <button class="btn" type="button" id="about-setup">Run setup again</button>
+                    <span class="hint">Reopens the welcome wizard. Your projects and
+                      settings stay exactly as they are.</span>
+                  </div>
+
+                  <p class="hint about-fine">
+                    Omnix is licensed under GPL-3.0-or-later. Plugins start only when
+                    you call them, and they never receive agent tokens or cookies.
+                  </p>
+                </div>
               </div>
             </div>
           </div>
@@ -297,6 +415,33 @@
             </button>
           </div>
         </header>
+
+        <section id="workers" class="workers" hidden aria-label="Workers">
+          <div class="workers-head">
+            <span class="workers-title">Workers</span>
+            <span class="workers-actions">
+              <button class="icon-btn" type="button" id="workers-refresh"
+                      title="Refresh workers" aria-label="Refresh workers">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                  <path d="M21 3v6h-6" />
+                </svg>
+              </button>
+              <button class="icon-btn" type="button" id="gc-preview"
+                      title="Bersihkan worktree dan brief lama" aria-label="Bersihkan">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M4 7h16" /><path d="M10 11v6" /><path d="M14 11v6" />
+                  <path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12" />
+                  <path d="M9 7V4h6v3" />
+                </svg>
+              </button>
+            </span>
+          </div>
+          <div id="workers-list" class="workers-list" role="list"
+               aria-label="Open workers and the orchestrator"></div>
+        </section>
 
         <div class="hist-seg" id="history-scope" role="group" aria-label="History scope">
           <button class="seg-item" type="button" data-scope="workspace" aria-pressed="false">Workspace</button>
@@ -373,6 +518,44 @@
 
   <div id="toasts" aria-live="polite"></div>
 
+  <div id="agent-send-modal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="agent-send-title">
+      <header class="modal-head">
+        <h2 id="agent-send-title">Send to <span id="agent-send-target">worker</span></h2>
+        <button class="icon-btn" type="button" id="agent-send-close" aria-label="Close">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8" /></svg>
+        </button>
+      </header>
+      <label class="field-label" for="agent-send-text">Message</label>
+      <textarea id="agent-send-text" class="input" rows="6"
+                placeholder="Type a follow-up for this worker"></textarea>
+      <footer class="modal-foot">
+        <span class="modal-note" id="agent-send-note"></span>
+        <button class="btn" type="button" id="agent-send-cancel">Cancel</button>
+        <button class="btn primary" type="button" id="agent-send-ok">Send</button>
+      </footer>
+    </div>
+  </div>
+
+  <div id="gc-modal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="gc-title">
+      <header class="modal-head">
+        <h2 id="gc-title">Bersihkan</h2>
+        <button class="icon-btn" type="button" id="gc-close" aria-label="Close">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8" /></svg>
+        </button>
+      </header>
+      <p class="modal-note">Pratinjau ini tidak mengubah apa pun.</p>
+      <pre id="gc-actions" class="gc-actions"></pre>
+      <footer class="modal-foot">
+        <button class="btn" type="button" id="gc-cancel">Cancel</button>
+        <button class="btn primary" type="button" id="gc-run">Jalankan</button>
+      </footer>
+    </div>
+  </div>
+
   <div id="handoff-modal" class="modal" hidden>
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="handoff-title">
       <header class="modal-head">
@@ -436,7 +619,7 @@
         The folder shows up in the sidebar. Clicking it opens a terminal rooted there.
       </p>
       <label class="field-label" for="project-path">Folder path</label>
-      <input class="input mono" id="project-path" type="text" placeholder="/home/zwart/code/app"
+      <input class="input mono" id="project-path" type="text" placeholder="/home/you/code/app"
              spellcheck="false" autocomplete="off" />
       <div class="modal-foot">
         <span class="modal-note" id="project-error"></span>
@@ -507,6 +690,137 @@
           <button class="btn" type="button" id="usage-refresh">Refresh</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="plugin-panel-modal" class="modal" hidden>
+    <div class="modal-box modal-panel" role="dialog" aria-modal="true"
+         aria-labelledby="plugin-panel-title">
+      <header class="modal-head">
+        <h2 id="plugin-panel-title">Plugin panel</h2>
+        <button class="icon-btn" type="button" id="plugin-panel-close" aria-label="Close">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="m5 5 8 8M13 5l-8 8" />
+          </svg>
+        </button>
+      </header>
+      <p class="modal-sub" id="plugin-panel-note">
+        The panel runs in a sandboxed frame. It cannot reach Omnix IPC or the network.
+      </p>
+      <iframe id="plugin-panel-frame" class="plugin-panel-frame" title="Plugin panel"
+              sandbox="allow-scripts"></iframe>
+      <footer class="modal-foot">
+        <span class="modal-note mono" id="plugin-panel-source"></span>
+        <div class="modal-actions">
+          <button class="btn" type="button" id="plugin-panel-ok">Tutup</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <div id="plugin-output-modal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="plugin-output-title">
+      <header class="modal-head">
+        <h2 id="plugin-output-title">Plugin output</h2>
+        <button class="icon-btn" type="button" id="plugin-output-close" aria-label="Close">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="m5 5 8 8M13 5l-8 8" />
+          </svg>
+        </button>
+      </header>
+      <pre id="plugin-output-pre" class="plugin-output-pre"></pre>
+      <footer class="modal-foot">
+        <span class="modal-note" id="plugin-output-note"></span>
+        <div class="modal-actions">
+          <button class="btn" type="button" id="plugin-output-ok">Tutup</button>
+        </div>
+      </footer>
+    </div>
+  </div>
+
+  <div id="setup-modal" class="modal setup-modal" hidden>
+    <div class="modal-box setup-box" role="dialog" aria-modal="true"
+         aria-labelledby="setup-title">
+      <h2 class="sr-only" id="setup-title">Set up Omnix</h2>
+      <header class="setup-head">
+        <span class="setup-mark">
+          <img src="/logo.png" alt="" width="28" height="28" />
+        </span>
+        <span class="setup-dots" aria-hidden="true">
+          <span class="setup-dot is-active" id="setup-dot-0"></span>
+          <span class="setup-dot" id="setup-dot-1"></span>
+          <span class="setup-dot" id="setup-dot-2"></span>
+          <span class="setup-dot" id="setup-dot-3"></span>
+        </span>
+      </header>
+
+      <section class="setup-step" id="setup-step-0">
+        <h3>Welcome to Omnix</h3>
+        <p class="modal-sub">One small workbench for the way agents actually work:
+          a terminal, a worktree, a browser, and the sessions you already have.</p>
+        <ul class="setup-points">
+          <li><strong>One window.</strong> Terminals, projects, split panes, and agent
+            history live together instead of in ten tabs.</li>
+          <li><strong>On demand.</strong> Plugins and the agent browser start when you
+            call them, then stop. No background daemon.</li>
+          <li><strong>Yours.</strong> Local-first, GPL-3.0, and no account required.</li>
+        </ul>
+      </section>
+
+      <section class="setup-step" id="setup-step-1" hidden>
+        <h3>Open a project</h3>
+        <p class="modal-sub">Pick the folder you want to work in. Omnix remembers it
+          in the sidebar and can start your first terminal there.</p>
+        <label class="set-field-label" for="setup-project">Project folder</label>
+        <div class="setup-row">
+          <input id="setup-project" class="input mono" type="text"
+                 placeholder="/home/you/code/app" spellcheck="false" autocomplete="off" />
+          <button class="btn" type="button" id="setup-browse">Browse</button>
+        </div>
+        <p class="hint">Optional. You can skip this and add projects later from
+          the sidebar.</p>
+        <p class="setup-error" id="setup-project-error"></p>
+      </section>
+
+      <section class="setup-step" id="setup-step-2" hidden>
+        <h3>Choose your agents</h3>
+        <p class="modal-sub">Omnix launches the CLI agents already installed on this
+          machine. Leave an agent off if you do not use it.</p>
+        <div id="setup-agents" class="setup-agents"></div>
+        <p class="hint" id="setup-agents-note"></p>
+      </section>
+
+      <section class="setup-step" id="setup-step-3" hidden>
+        <h3>You are set</h3>
+        <p class="modal-sub">Open a terminal with <kbd>Ctrl</kbd> <kbd>`</kbd>, split
+          the pane with <kbd>Ctrl</kbd> <kbd>Shift</kbd> <kbd>D</kbd>, or press
+          <kbd>Ctrl</kbd> <kbd>K</kbd> for every command.</p>
+        <div class="setup-tips">
+          <div><kbd>Ctrl K</kbd><span>Command palette</span></div>
+          <div><kbd>Ctrl Shift D</kbd><span>Split terminal</span></div>
+          <div><kbd>Ctrl `</kbd><span>New terminal</span></div>
+        </div>
+        <div class="support-card setup-support">
+          <div class="support-text">
+            <strong>Support Omnix</strong>
+            <p class="hint">Free and open source, built in the open. If it helps,
+              you can buy the developer a coffee on Tako.</p>
+          </div>
+          <button class="btn" type="button" id="setup-support">Support on Tako</button>
+        </div>
+        <p class="hint">Omnix is licensed under GPL-3.0-or-later.</p>
+      </section>
+
+      <footer class="modal-foot setup-foot">
+        <span class="modal-note mono" id="setup-step-note">Step 1 of 4</span>
+        <div class="modal-actions">
+          <button class="btn" type="button" id="setup-skip">Skip setup</button>
+          <button class="btn" type="button" id="setup-back" hidden>Back</button>
+          <button class="btn primary" type="button" id="setup-next">Continue</button>
+        </div>
+      </footer>
     </div>
   </div>
 

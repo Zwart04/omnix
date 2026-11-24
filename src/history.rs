@@ -246,6 +246,95 @@ fn content_hash(lines: &[TranscriptLine]) -> String {
     format!("{:x}", hash.finalize())
 }
 
+/// Secrets never reach the index. The scanner is deliberately token-shaped:
+/// bearer keys, GitHub/OpenAI tokens, JWTs, and `KEY=value` pairs whose name
+/// says it holds a credential. No regex dependency, no backtracking.
+pub fn redact(text: &str) -> String {
+    fn take_while(text: &str, f: impl Fn(char) -> bool) -> usize {
+        text.char_indices()
+            .find(|(_, c)| !f(*c))
+            .map(|(i, _)| i)
+            .unwrap_or(text.len())
+    }
+    fn secret_at(rest: &str) -> Option<usize> {
+        let lower = rest.to_ascii_lowercase();
+        for prefix in ["sk-", "sk-proj-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"] {
+            if lower.starts_with(prefix) {
+                let len = take_while(rest, |c| {
+                    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')
+                });
+                if len >= prefix.len() + 12 {
+                    return Some(len);
+                }
+            }
+        }
+        if rest.starts_with("AKIA") {
+            let len = take_while(rest, |c| c.is_ascii_alphanumeric());
+            if len >= 20 {
+                return Some(len);
+            }
+        }
+        if rest.starts_with("eyJ") {
+            let len = take_while(rest, |c| {
+                c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')
+            });
+            if len >= 30 && rest[..len].matches('.').count() >= 2 {
+                return Some(len);
+            }
+        }
+        // LABEL=value / "label": "value" for credential-shaped labels.
+        let word_len = take_while(rest, |c| c.is_ascii_alphanumeric() || c == '_');
+        if word_len >= 4 {
+            let word = rest[..word_len].to_ascii_lowercase();
+            let credential = word.contains("secret")
+                || word.contains("password")
+                || word.contains("passwd")
+                || word.contains("api_key")
+                || word.contains("apikey")
+                || word == "token"
+                || word.ends_with("_token")
+                || word.ends_with("_key")
+                || word == "authorization";
+            if credential {
+                let after = &rest[word_len..];
+                let trimmed = after.trim_start_matches([' ', '\t']);
+                if let Some(pair) = trimmed
+                    .strip_prefix('=')
+                    .or_else(|| trimmed.strip_prefix(':'))
+                {
+                    let spaced = pair.trim_start_matches([' ', '\t', '"', '\'']);
+                    let value_len = take_while(spaced, |c| {
+                        !c.is_whitespace() && !matches!(c, '"' | '\'' | ',' | ')' | ']' | '}')
+                    });
+                    if value_len >= 8 {
+                        let consumed = rest.len() - spaced.len() + value_len;
+                        return Some(consumed);
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    let mut out = String::with_capacity(text.len());
+    let mut index = 0;
+    while index < text.len() {
+        let rest = &text[index..];
+        match secret_at(rest) {
+            Some(len) if len > 0 => {
+                out.push_str("[redacted]");
+                index += len;
+            }
+            _ => {
+                let ch = rest.chars().next().unwrap_or('\0');
+                out.push(ch);
+                index += ch.len_utf8();
+            }
+        }
+    }
+    out
+}
+
 pub fn index_dir(
     conn: &mut Connection,
     dir: &Path,
@@ -575,7 +664,10 @@ pub fn upsert(conn: &mut Connection, entry: &Entry) -> Result<usize> {
     let mut stored = 0usize;
     for line in entry.lines {
         let truncated = line.text.chars().count() > MAX_MESSAGE_CHARS;
-        let text: String = line.text.chars().take(MAX_MESSAGE_CHARS).collect();
+        let text: String = redact(&line.text)
+            .chars()
+            .take(MAX_MESSAGE_CHARS)
+            .collect();
         insert_msg.execute(params![
             session_row,
             line.role,
@@ -1090,5 +1182,42 @@ mod tests {
         index_dir(&mut conn, &tx_dir, Some("claude"), "/repo").unwrap();
         let hits = search(&conn, "blank restore", None, true, false, 10).unwrap();
         assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn secrets_are_redacted_before_the_index() {
+        let dir = temp_dir("redact");
+        let tx_dir = dir.join("transcripts").join("codex");
+        fs::create_dir_all(&tx_dir).unwrap();
+        let mut f = fs::File::create(tx_dir.join("s1.jsonl")).unwrap();
+        writeln!(
+            f,
+            r#"{{"role":"user","text":"key sk-abcdefghijklmnop and SUPABASE_SERVICE_ROLE_KEY=verysecretvalue"}}"#
+        )
+        .unwrap();
+        drop(f);
+        let db = dir.join("history.db");
+        let mut conn = open(&db).unwrap();
+        index_dir(&mut conn, &dir.join("transcripts"), None, "/tmp").unwrap();
+        assert!(
+            search(&conn, "abcdefghijklmnop", None, false, false, 5)
+                .unwrap()
+                .is_empty(),
+            "raw key must not be searchable"
+        );
+        assert!(
+            search(&conn, "verysecretvalue", None, false, false, 5)
+                .unwrap()
+                .is_empty(),
+            "env secret must not be searchable"
+        );
+        assert!(!search(&conn, "redacted", None, false, false, 5)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            redact("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcdefghij"),
+            "Authorization: Bearer [redacted]"
+        );
+        fs::remove_dir_all(&dir).ok();
     }
 }

@@ -6,6 +6,8 @@
   var SCAN_TIMEOUT_MS = 180000;
   var HISTORY_LIMIT = 500;
   var SEARCH_DEBOUNCE_MS = 200;
+  var SUPPORT_URL = 'https://tako.id/Zwart04/gift';
+  var REPO_URL = 'https://github.com/Zwart04/omnix';
 
   /* Terminal palettes copied from each OS's shipped default profile so the
      workbench and the shell feel like the same terminal. */
@@ -369,6 +371,11 @@
     projectRemove: 'Project removed',
     pickFolder: 'Folder selected',
     handoffAgent: 'Handoff started',
+    handoffList: 'Handoffs loaded',
+    handoffClose: 'Handoff closed',
+    agentSend: 'Message sent',
+    paneState: 'Pane state',
+    gc: 'Cleanup',
     memory: 'Memory loaded',
     usage: 'Usage loaded'
   };
@@ -394,6 +401,11 @@
     projectRemove: 'Project',
     pickFolder: 'Folder picker',
     handoffAgent: 'Handoff',
+    handoffList: 'Handoffs',
+    handoffClose: 'Handoff',
+    agentSend: 'Message',
+    paneState: 'Pane state',
+    gc: 'Cleanup',
     memory: 'Memory',
     usage: 'Usage'
   };
@@ -488,6 +500,8 @@
         }
         var title = el('span', 'strip-title', tab.title);
         title.title = tab.cwd ? tab.title + ' · ' + tab.cwd : tab.title;
+        var badge = profileBadge(tab.agent, 'strip-profile');
+        if (badge) main.appendChild(badge);
         main.appendChild(title);
         main.addEventListener('click', guard(function () { activate(tab); }));
         main.addEventListener('pointerdown', guard(function () {
@@ -586,7 +600,7 @@
     } else if (tab.kind === 'docs') {
       ensureDocs();
     } else if (tab.kind === 'settings') {
-      loadAgentSettings();
+      loadSettingsSection();
     }
   }
 
@@ -666,6 +680,7 @@
         tab.spawned = false;
         call('ptyKill', { paneKey: tab.paneKey }, { quiet: true });
       }
+      renderWorkers();
     }
     if (tab.kind === 'terminal' && tab.el && tab.el.parentNode) {
       tab.el.parentNode.removeChild(tab.el);
@@ -784,7 +799,7 @@
       for (var i = 0; i < detected.length; i++) {
         (function (agent) {
           box.appendChild(menuRow(
-            agentLabel(agent.name),
+            agentDisplay(agent),
             '',
             agent.name,
             function () {
@@ -793,7 +808,7 @@
                 paneKey: 'agent:' + agent.name + ':' + Date.now(),
                 agent: agent.name,
                 cwd: launchCwd(),
-                title: agentLabel(agent.name)
+                title: agentDisplay(agent)
               });
             }
           ));
@@ -816,12 +831,20 @@
     if (opts.agent) args.agent = opts.agent;
     if (opts.sessionId) args.sessionId = opts.sessionId;
     if (opts.command) args.command = opts.command;
+    if (opts.handoff) args.handoff = opts.handoff;
+    if (opts.parent) args.parent = opts.parent;
+    if (opts.orchestrator) args.orchestrator = true;
+    if (opts.model) args.model = opts.model;
+    if (opts.effort) args.effort = opts.effort;
+    if (opts.mode) args.mode = opts.mode;
+    if (opts.login) args.login = true;
     return args;
   }
 
   var SPLIT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>';
   var CLOSE_ICON = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8"/></svg>';
   var HANDOFF_ICON = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 9h8"/><path d="m7.5 5.5 3.5 3.5-3.5 3.5"/><path d="M13.5 3v12"/></svg>';
+  var ROLE_ICON = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="5" r="2.4"/><path d="M4 15c.6-3 2.3-4.4 5-4.4s4.4 1.4 5 4.4"/></svg>';
 
   /* A small floating split control that stays out of the terminal text and can
      be dragged anywhere inside its pane. It is translucent while idle and
@@ -908,6 +931,16 @@
     title.title = tab.title;
     head.appendChild(title);
     var actions = el('div', 'pane-head-actions');
+    var role = paneHeadBtn('pane-head-role', 'Mark as orchestrator', ROLE_ICON, function () {
+      tab.orchestrator = !tab.orchestrator;
+      role.setAttribute('aria-pressed', tab.orchestrator ? 'true' : 'false');
+      role.classList.toggle('is-on', !!tab.orchestrator);
+      role.title = tab.orchestrator ? 'Orchestrator pane (click to unmark)' : 'Mark as orchestrator';
+      publishPane(tab);
+      renderWorkers();
+    });
+    role.setAttribute('aria-pressed', tab.orchestrator ? 'true' : 'false');
+    role.classList.toggle('is-on', !!tab.orchestrator);
     var split = paneHeadBtn('pane-head-split', 'Split terminal', SPLIT_ICON, function () {
       activate(tab);
       return splitActive();
@@ -922,12 +955,14 @@
     var close = paneHeadBtn('pane-head-close', 'Close terminal', CLOSE_ICON, function () {
       closeTab(tab);
     });
+    actions.appendChild(role);
     actions.appendChild(split);
     actions.appendChild(handoff);
     actions.appendChild(close);
     head.appendChild(actions);
     tab.el.insertBefore(head, tab.host);
     tab.headSplit = split;
+    tab.headRole = role;
   }
 
   /* New terminals inherit the folder the user is already working in: the
@@ -1018,6 +1053,10 @@
       handoffBrief: opts.handoffBrief || null,
       handoffPrompt: opts.handoffPrompt || null,
       handoffPending: false,
+      handoff: opts.handoff || null,
+      parent: opts.parent || null,
+      orchestrator: !!opts.orchestrator,
+      exitedCode: null,
       group: anchor ? anchor.group : null,
       splitCtl: null
     };
@@ -1135,6 +1174,17 @@
 
     scheduleFit(tab);
 
+    /* A control-spawned handoff already owns its pty; attach without a second
+       spawn and let the host deliver the brief. */
+    if (opts.attach) {
+      tab.spawned = true;
+      pushResize(tab);
+      publishPane(tab);
+      renderWorkers();
+      focusTerm(tab);
+      return tab;
+    }
+
     call('ptySpawn', spawnArgs(opts, paneKey, title)).then(function (res) {
       if (!res || tab.closed) {
         if (tab.closed) call('ptyKill', { paneKey: paneKey }, { quiet: true });
@@ -1155,6 +1205,8 @@
       }
       if (tab.handoffPrompt) queueHandoffPrompt(tab);
       if (res.pid != null) setLast('Terminal started (PID ' + res.pid + ')');
+      publishPane(tab);
+      renderWorkers();
     });
 
     return tab;
@@ -1380,15 +1432,359 @@
     }
   }
 
+  /* ---------- first-run setup and support ---------- */
+
+  var setupInfo = null;
+  var setupStep = 0;
+  var setupAgents = [];
+  var setupSaving = false;
+  var setupSeen = false;
+
+  function setupRenderAgents() {
+    var box = $('setup-agents');
+    if (!box) return;
+    box.textContent = '';
+    setupAgents = [];
+    var ready = 0;
+    for (var i = 0; i < agentsInfo.length; i++) {
+      var agent = agentsInfo[i];
+      if (agent.profile || agent.plugin) continue;
+      var row = el('label', agent.available === false
+        ? 'setup-agent is-disabled'
+        : 'setup-agent');
+      var input = el('input');
+      input.type = 'checkbox';
+      input.id = 'setup-agent-' + agent.name;
+      input.checked = agent.enabled !== false;
+      input.disabled = agent.available === false;
+      var text = el('span', 'setup-agent-text');
+      text.appendChild(el('span', 'setup-agent-name', agentLabel(agent.name)));
+      text.appendChild(el('span', 'setup-agent-bin mono',
+        agent.available === false ? 'not installed' : (agent.bin || agent.name)));
+      row.appendChild(input);
+      row.appendChild(text);
+      box.appendChild(row);
+      setupAgents.push({
+        name: agent.name,
+        enabled: agent.enabled !== false,
+        box: input
+      });
+      if (agent.available !== false) ready += 1;
+    }
+    var note = $('setup-agents-note');
+    if (note) {
+      note.textContent = ready
+        ? ready + (ready === 1 ? ' agent is' : ' agents are') +
+          ' ready on this machine. You can change this later in Settings.'
+        : 'No agent CLI was found yet. Omnix still works as a terminal and browser; install a CLI later.';
+    }
+  }
+
+  function setupRender() {
+    for (var i = 0; i < 4; i++) {
+      var step = $('setup-step-' + i);
+      if (step) step.hidden = i !== setupStep;
+      var dot = $('setup-dot-' + i);
+      if (dot) {
+        dot.classList.toggle('is-active', i === setupStep);
+        dot.classList.toggle('is-done', i < setupStep);
+      }
+    }
+    var back = $('setup-back');
+    if (back) back.hidden = setupStep === 0;
+    var skip = $('setup-skip');
+    if (skip) skip.hidden = setupStep === 3;
+    var next = $('setup-next');
+    if (next) next.textContent = setupStep === 3 ? 'Start Omnix' : 'Continue';
+    var note = $('setup-step-note');
+    if (note) note.textContent = 'Step ' + (setupStep + 1) + ' of 4';
+  }
+
+  function setupOpen(state, force) {
+    if (!force && setupSeen) return;
+    setupSeen = true;
+    setupInfo = state || setupInfo;
+    setupStep = 0;
+    setupSaving = false;
+    var project = $('setup-project');
+    if (project) project.value = '';
+    var error = $('setup-project-error');
+    if (error) error.textContent = '';
+    setupRenderAgents();
+    setupRender();
+    var modal = $('setup-modal');
+    if (modal) modal.hidden = false;
+    setLast('First-run setup');
+    var next = $('setup-next');
+    if (next && next.focus) next.focus();
+  }
+
+  function setupBack() {
+    if (setupSaving || setupStep === 0) return;
+    setupStep -= 1;
+    setupRender();
+  }
+
+  function setupNext() {
+    if (setupSaving) return;
+    if (setupStep < 3) {
+      setupStep += 1;
+      setupRender();
+      if (setupStep === 1) {
+        var project = $('setup-project');
+        if (project && project.focus) project.focus();
+      }
+      return;
+    }
+    setupFinish();
+  }
+
+  function setupBrowse() {
+    var input = $('setup-project');
+    var start = input && input.value ? input.value.trim() : appRoot;
+    return call('pickFolder', { path: start || '' }).then(function (res) {
+      if (res && res.path && input) {
+        input.value = res.path;
+        if (input.focus) input.focus();
+      }
+      return res;
+    }, function (failure) {
+      toast('error', 'Folder picker: ' + message(failure));
+    });
+  }
+
+  function setupProjectPending(path) {
+    if (!path) return Promise.resolve(null);
+    for (var i = 0; i < savedProjects.length; i++) {
+      if (normPath(savedProjects[i].path) === normPath(path)) {
+        return Promise.resolve(savedProjects[i]);
+      }
+    }
+    return call('projectAdd', { path: path }).then(function (res) {
+      savedProjects = res && Array.isArray(res.projects) ? res.projects : savedProjects;
+      for (var j = 0; j < savedProjects.length; j++) {
+        if (normPath(savedProjects[j].path) === normPath(path)) return savedProjects[j];
+      }
+      return { path: path, name: baseName(path) };
+    });
+  }
+
+  function setupAgentsSave() {
+    var jobs = [];
+    for (var i = 0; i < setupAgents.length; i++) {
+      var entry = setupAgents[i];
+      if (!entry.box || entry.box.disabled) continue;
+      if (!!entry.box.checked === !!entry.enabled) continue;
+      jobs.push(call('agentEnable', {
+        agent: entry.name,
+        enabled: !!entry.box.checked
+      }).then(function () {}, function () {}));
+    }
+    return Promise.all(jobs);
+  }
+
+  function setupFinish() {
+    if (setupSaving) return;
+    setupSaving = true;
+    var project = $('setup-project');
+    var error = $('setup-project-error');
+    var path = project ? project.value.trim() : '';
+    if (error) error.textContent = '';
+    setupProjectPending(path).then(function (picked) {
+      setupAgentsSave().then(function () {
+        return call('setupComplete', {});
+      }).then(function (res) {
+        setupSaving = false;
+        setupInfo = (res && res.setup) || setupInfo;
+        hideModal($('setup-modal'));
+        setLast('Setup complete');
+        toast('ok', 'Omnix is ready');
+        return refreshProjects().then(function () {
+          if (picked) openProject(picked);
+        });
+      }).catch(function (failure) {
+        setupSaving = false;
+        toast('error', 'Setup: ' + message(failure));
+      });
+    }, function (failure) {
+      setupSaving = false;
+      if (error) error.textContent = message(failure);
+      setupStep = 1;
+      setupRender();
+      toast('error', 'Setup: ' + message(failure));
+    });
+  }
+
+  function setupSkip() {
+    if (setupSaving) return;
+    setupSaving = true;
+    call('setupComplete', {}).then(function (res) {
+      setupSaving = false;
+      setupInfo = (res && res.setup) || setupInfo;
+      hideModal($('setup-modal'));
+      setLast('Setup skipped');
+    }, function (failure) {
+      setupSaving = false;
+      toast('error', 'Setup: ' + message(failure));
+    });
+  }
+
+  function openSupport() {
+    return call('supportOpen', {}).then(function (res) {
+      setLast('Support page opened');
+      return res;
+    }, function (failure) {
+      toast('error', 'Support: ' + message(failure));
+    });
+  }
+
+  function openRepo() {
+    var tab = openStatic('browser');
+    var input = $('browser-url');
+    if (input) input.value = REPO_URL;
+    var engine = $('browser-engine');
+    if (engine) engine.value = 'native';
+    browser.url = REPO_URL;
+    browser.engine = 'native';
+    setLast('GitHub: Zwart04/omnix');
+    return tab && openBrowserNative();
+  }
+
+  function openSetupAgain() {
+    return call('setupReset', {}).then(function (res) {
+      setupInfo = res && res.setup ? res.setup : setupInfo;
+      setupSeen = false;
+      setupOpen(setupInfo, true);
+      return res;
+    }, function (failure) {
+      toast('error', 'Setup: ' + message(failure));
+    });
+  }
+
   /* ---------- agent settings ---------- */
 
   var agentSettingsData = null;
+  var settingsSection = 'agents';
+  var pluginsData = null;
+  var pluginCatalogData = null;
+  var devData = null;
 
   function openAgentSettings() {
+    return openSettings('agents');
+  }
+
+  function openPluginsSettings() {
+    return openSettings('plugins');
+  }
+
+  function openDevSettings() {
+    return openSettings('dev');
+  }
+
+  function openSettings(section) {
     closeTabMenu();
     var tab = openStatic('settings');
-    loadAgentSettings();
+    setSettingsSection(section || 'agents');
     return tab;
+  }
+
+  function setSettingsSection(section) {
+    var meta = {
+      agents: {
+        title: 'Agents',
+        crumb: 'Agents',
+        hint: 'Choose which CLIs Omnix may launch and how they start.',
+        refresh: 'Refresh',
+        search: 'Search settings'
+      },
+      plugins: {
+        title: 'Plugins',
+        crumb: 'Plugins',
+        hint: 'Install only what you need. A plugin process starts when you call it, then exits.',
+        refresh: 'Refresh',
+        search: 'Search installed plugins'
+      },
+      dev: {
+        title: 'Kembangkan Omnix',
+        crumb: 'Kembangkan Omnix',
+        hint: 'Let an agent work in its own worktree. You decide when a build is installed.',
+        refresh: 'Refresh',
+        search: 'Search builds and tasks'
+      },
+      about: {
+        title: 'About & Support',
+        crumb: 'About & Support',
+        hint: 'Version, license, and a way to keep Omnix moving.',
+        refresh: 'Refresh',
+        search: 'Search settings'
+      }
+    };
+    if (!meta[section]) section = 'agents';
+    settingsSection = section;
+    var navs = document.querySelectorAll('.settings-nav-item[data-settings]');
+    for (var i = 0; i < navs.length; i++) {
+      var on = navs[i].dataset && navs[i].dataset.settings === section;
+      if (on) navs[i].classList.add('is-active');
+      else navs[i].classList.remove('is-active');
+      navs[i].setAttribute('aria-current', on ? 'page' : 'false');
+    }
+    var paneIds = {
+      agents: 'settings-agents',
+      plugins: 'settings-plugins',
+      dev: 'settings-dev',
+      about: 'settings-about'
+    };
+    for (var key in paneIds) {
+      if (!Object.prototype.hasOwnProperty.call(paneIds, key)) continue;
+      var pane = $(paneIds[key]);
+      if (pane) pane.hidden = key !== section;
+    }
+    var crumb = $('settings-crumb');
+    if (crumb) crumb.textContent = 'Settings / ' + meta[section].crumb;
+    var title = $('settings-title');
+    if (title) title.textContent = meta[section].title;
+    var hint = $('agent-settings-meta');
+    if (hint) hint.textContent = meta[section].hint;
+    var refresh = $('agent-settings-refresh');
+    if (refresh) {
+      refresh.textContent = meta[section].refresh;
+      refresh.title = 'Reload ' + meta[section].title;
+    }
+    var search = $('settings-search');
+    if (search) {
+      search.value = '';
+      search.placeholder = meta[section].search;
+    }
+    loadSettingsSection();
+  }
+
+  function loadSettingsSection() {
+    if (settingsSection === 'plugins') return loadPlugins();
+    if (settingsSection === 'dev') return loadDev();
+    if (settingsSection === 'about') return renderAboutSettings();
+    return loadAgentSettings();
+  }
+
+  function settingsSearchChanged() {
+    if (settingsSection === 'plugins') renderPlugins(pluginsData);
+    else if (settingsSection === 'dev') renderDev(devData);
+    else if (settingsSection === 'about') return;
+    else renderAgentSettings(agentSettingsData);
+  }
+
+  function renderAboutSettings() {
+    var version = $('app-version');
+    var node = $('about-version');
+    if (node) {
+      node.textContent = version && version.textContent ? version.textContent : '?';
+    }
+    var state = $('about-setup-state');
+    if (state) {
+      state.textContent = setupInfo && setupInfo.completedAt
+        ? 'Last completed ' + new Date(setupInfo.completedAt * 1000).toLocaleDateString()
+        : 'Not completed on this workspace yet.';
+    }
+    return Promise.resolve(null);
   }
 
   function loadAgentSettings() {
@@ -1467,6 +1863,12 @@
     }
     for (var i = 0; i < installed.length; i++) {
       box.appendChild(agentSettingsRow(installed[i], defaults, true));
+      var profiles = Array.isArray(data.profiles) ? data.profiles : [];
+      for (var k = 0; k < profiles.length; k++) {
+        if (profiles[k].base === installed[i].name && agentMatches(profiles[k], query)) {
+          box.appendChild(agentProfileRow(profiles[k], defaults, installed[i]));
+        }
+      }
     }
 
     box.appendChild(settingsGroup('Available to install',
@@ -1547,8 +1949,220 @@
     foot.appendChild(el('span', 'set-path mono', 'Command overrides apply on the next launch.'));
     foot.appendChild(state);
     details.appendChild(foot);
+    details.appendChild(agentProfileAdder(agent.name));
     row.appendChild(details);
     return row;
+  }
+
+  function agentProfileAdder(base) {
+    var wrap = el('div', 'agent-profile-add');
+    wrap.appendChild(el('span', 'set-field-label', 'Add account profile'));
+    var input = el('input', 'input');
+    input.type = 'text';
+    input.placeholder = 'profile id, e.g. akun2';
+    input.spellcheck = false;
+    input.autocomplete = 'off';
+    input.setAttribute('aria-label', 'New profile id for ' + agentLabel(base));
+    var add = button('Add profile', 'btn sm', function () {
+      var id = String(input.value || '').trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9-]{0,47}$/.test(id)) {
+        toast('warn', 'Profile id: 1-48 chars, lowercase letters, digits, hyphen.');
+        return;
+      }
+      add.disabled = true;
+      rpc('agentSettingsSave', {
+        agent: base + ':' + id,
+        label: id,
+        args: '',
+        env: '',
+        configDir: '',
+        shareProjects: false
+      }).then(function (res) {
+        add.disabled = false;
+        if (!res) return;
+        input.value = '';
+        toast('ok', 'Profile added: ' + base + ':' + id);
+        return loadAgentSettings();
+      }, function (err) {
+        add.disabled = false;
+        toast('error', 'Add profile: ' + message(err));
+      });
+    });
+    add.type = 'button';
+    wrap.appendChild(input);
+    wrap.appendChild(add);
+    wrap.appendChild(el('span', 'set-field-help',
+      'Each profile gets its own login folder; Omnix never reads the token.'));
+    return wrap;
+  }
+
+  function agentProfileRow(profile, defaults, base) {
+    var row = el('div', 'agent-row agent-profile-row' +
+      (profile.enabled === false ? ' is-disabled' : '') +
+      (profile.available === false ? ' is-missing' : ''));
+    row.dataset.name = profile.name;
+
+    var main = el('div', 'agent-main');
+    var title = el('div', 'agent-title');
+    var badge = profileBadge(profile.name, 'agent-profile-badge');
+    if (badge) title.appendChild(badge);
+    var nameNode = el('span', 'agent-name', profile.label || profile.profile);
+    title.appendChild(nameNode);
+    title.appendChild(el('span', 'tag agent-kind', 'PROFILE'));
+    if (profile.available === false) {
+      title.appendChild(el('span', 'agent-missing-tag', 'Not Detected'));
+    }
+    main.appendChild(title);
+    var cmd = el('code', 'agent-cmd mono', profileCommand(profile, base, defaults));
+    main.appendChild(cmd);
+
+    var login = button('Login profile', 'btn sm agent-login', function () {
+      openProfileLogin(profile.name, profile.supportsConfig === false);
+    });
+    login.type = 'button';
+    login.title = 'Open a terminal signed in as ' + profile.name;
+    main.appendChild(login);
+    row.appendChild(main);
+
+    var more = el('button', 'icon-btn agent-more');
+    more.type = 'button';
+    more.title = 'Profile options';
+    more.setAttribute('aria-label', 'Profile options for ' + profile.name);
+    more.setAttribute('aria-expanded', 'false');
+    more.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">' +
+      '<circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/>' +
+      '<circle cx="12" cy="19" r="1.7"/></svg>';
+    row.appendChild(more);
+
+    var sw = el('label', 'switch');
+    sw.title = profile.enabled === false ? 'Enable ' + profile.name : 'Disable ' + profile.name;
+    var cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = profile.enabled !== false;
+    cb.setAttribute('aria-label', sw.title);
+    sw.appendChild(cb);
+    sw.appendChild(el('span', 'switch-track'));
+    cb.addEventListener('change', guard(function () {
+      return setAgentEnabled(profile, !!cb.checked, row, cb);
+    }));
+    row.appendChild(sw);
+
+    var details = el('div', 'agent-details');
+    details.hidden = true;
+    more.addEventListener('click', guard(function () {
+      details.hidden = !details.hidden;
+      more.setAttribute('aria-expanded', details.hidden ? 'false' : 'true');
+    }));
+
+    var state = el('span', 'set-state is-saved', 'Saved');
+    var argsInput;
+    var envInput;
+    var labelInput;
+    var dirInput;
+    var shareCb;
+    function save() {
+      state.textContent = 'Saving';
+      state.className = 'set-state is-saving';
+      rpc('agentSettingsSave', {
+        agent: profile.name,
+        label: labelInput ? labelInput.value : profile.label,
+        configDir: dirInput ? dirInput.value : profile.configDir,
+        shareProjects: shareCb ? !!shareCb.checked : !!profile.shareProjects,
+        args: argsInput ? argsInput.value : profile.args,
+        env: envInput ? envInput.value : profile.env
+      }).then(function (res) {
+        if (!res) return null;
+        profile.label = labelInput ? labelInput.value.trim() : profile.label;
+        profile.configDir = dirInput ? dirInput.value.trim() : profile.configDir;
+        profile.shareProjects = shareCb ? !!shareCb.checked : profile.shareProjects;
+        profile.args = argsInput ? argsInput.value : profile.args;
+        profile.env = envInput ? envInput.value : profile.env;
+        nameNode.textContent = profile.label || profile.profile;
+        cmd.textContent = profileCommand(profile, base, defaults);
+        state.textContent = 'Saved';
+        state.className = 'set-state is-saved';
+        return res;
+      }, function (err) {
+        state.textContent = 'Not saved';
+        state.className = 'set-state is-error';
+        toast('error', 'Save failed: ' + message(err));
+        return null;
+      });
+    }
+
+    labelInput = settingsField(details, 'Display name', profile.label || '',
+      profile.profile, save, 'Shown in the tab and the Agents panel.');
+    if (profile.supportsConfig !== false) {
+      dirInput = settingsField(details, 'Login folder', profile.configDir || '',
+        profile.configDir || '', save,
+        'Empty uses ~/.omnix/profiles/' + profile.base + '/' + profile.profile + '.');
+    } else {
+      details.appendChild(el('p', 'set-field-help',
+        'Antigravity has no official config-folder flag; this profile shares the main login.'));
+    }
+    argsInput = settingsField(details, 'Arguments', profile.args || '',
+      '--dangerously-skip-permissions', save,
+      'Profile arguments run after the base arguments.');
+    envInput = settingsField(details, 'Environment', profile.env || '',
+      'KEY=value KEY=value', save,
+      'Merged into the agent process environment.');
+    if (profile.base === 'claude') {
+      var share = el('label', 'set-field agent-share');
+      share.appendChild(el('span', 'set-field-label', 'Share project memory'));
+      var shareRow = el('span', 'agent-share-row');
+      shareCb = el('input');
+      shareCb.type = 'checkbox';
+      shareCb.checked = !!profile.shareProjects;
+      shareCb.addEventListener('change', guard(save));
+      shareRow.appendChild(shareCb);
+      shareRow.appendChild(el('span', 'hint', 'Symlink the base account\u2019s projects/ into this profile.'));
+      share.appendChild(shareRow);
+      details.appendChild(share);
+    }
+    var foot = el('div', 'agent-detail-foot');
+    var remove = button('Delete profile', 'btn sm', function () {
+      rpc('agentProfileDelete', { agent: profile.name }).then(function (res) {
+        if (!res) return null;
+        toast('ok', 'Profile removed: ' + profile.name);
+        return loadAgentSettings();
+      }, function (err) {
+        toast('error', 'Delete failed: ' + message(err));
+      });
+    });
+    remove.type = 'button';
+    remove.title = 'Remove this profile from Settings; its login folder is left on disk';
+    foot.appendChild(remove);
+    foot.appendChild(el('span', 'set-path mono', 'Login folder is never deleted.'));
+    foot.appendChild(state);
+    details.appendChild(foot);
+    row.appendChild(details);
+    return row;
+  }
+
+  function profileCommand(profile, base, defaults) {
+    var parts = [(base && base.bin) || profile.base];
+    if (profile.args) parts.push(String(profile.args).trim());
+    if (defaults && defaults.fullAccess && base && base.fullAccessFlag) {
+      parts.push(base.fullAccessFlag);
+    }
+    return '$ ' + parts.join(' ');
+  }
+
+  function openProfileLogin(name, shared) {
+    closeTabMenu();
+    createTerminal({
+      paneKey: 'login:' + name,
+      agent: name,
+      cwd: launchCwd(),
+      title: 'Login ' + agentDisplay(agentsInfo.filter(function (a) {
+        return a.name === name;
+      })[0] || name),
+      login: true
+    });
+    if (shared) {
+      toast('warn', 'This profile shares the main Antigravity login (no config-folder flag).');
+    }
+    setLast('Login: ' + name);
   }
 
   function saveLaunch(agent, argsInput, envInput, state, cmd) {
@@ -1616,6 +2230,669 @@
     if (help) wrap.appendChild(el('span', 'set-field-help', help));
     card.appendChild(wrap);
     return input;
+  }
+
+  /* ---------- plugins ---------- */
+
+  function settingsSwitch(checked, title, onChange) {
+    var wrap = el('label', 'switch');
+    wrap.title = title;
+    var cb = el('input');
+    cb.type = 'checkbox';
+    cb.checked = !!checked;
+    cb.setAttribute('aria-label', title);
+    cb.addEventListener('change', guard(function () {
+      return onChange(!!cb.checked, cb);
+    }));
+    wrap.appendChild(cb);
+    wrap.appendChild(el('span', 'switch-track'));
+    return wrap;
+  }
+
+  function pluginRequested(plugin) {
+    return Array.isArray(plugin.requested) ? plugin.requested : [];
+  }
+
+  function pluginGranted(plugin) {
+    return Array.isArray(plugin.granted) ? plugin.granted : [];
+  }
+
+  function pluginMatches(plugin, query) {
+    if (!query) return true;
+    var hay = [
+      plugin.name,
+      plugin.description,
+      plugin.author,
+      (plugin.kinds || []).join(' ')
+    ].join(' ').toLowerCase();
+    return hay.indexOf(query) >= 0;
+  }
+
+  function loadPlugins() {
+    return call('plugins', {}).then(function (res) {
+      if (!res) return null;
+      pluginsData = res;
+      renderPlugins(res);
+      return res;
+    });
+  }
+
+  function renderPlugins(res) {
+    var box = $('plugin-list');
+    if (!box) return;
+    box.textContent = '';
+    var data = res || pluginsData || {};
+    var list = Array.isArray(data.plugins) ? data.plugins : [];
+    var search = $('settings-search');
+    var query = search ? String(search.value || '').trim().toLowerCase() : '';
+    var shown = list.filter(function (plugin) { return pluginMatches(plugin, query); });
+
+    if (data.catalogNote) {
+      var note = $('plugin-catalog-note');
+      if (note) note.textContent = data.catalogNote;
+    }
+    var note = $('plugin-catalog-note');
+    if (note) {
+      note.textContent = 'Katalog: ' + (data.catalog || 'public GitHub index') +
+        ' \u00b7 data: ' + (data.path || '-') +
+        ' \u00b7 plugin hanya berjalan saat dipanggil.';
+    }
+    var hint = $('agent-settings-meta');
+    if (hint) {
+      hint.textContent = list.length + ' plugin terpasang' +
+        (query ? ' \u00b7 filter "' + query + '"' : '') +
+        '. Proses plugin tidak hidup di latar belakang.';
+    }
+
+    box.appendChild(settingsGroup('Terpasang',
+      list.length ? list.length + ' folder plugin' : 'belum ada plugin'));
+    if (!shown.length) {
+      box.appendChild(el('p', 'side-empty',
+        list.length ? 'Tidak ada plugin yang cocok dengan "' + query + '".'
+          : 'Belum ada plugin. Pasang dari folder, arsip .tar.gz, atau katalog.'));
+      return;
+    }
+    for (var i = 0; i < shown.length; i++) {
+      box.appendChild(pluginRow(shown[i]));
+    }
+  }
+
+  function pluginRow(plugin) {
+    var row = el('div', 'plugin-row' +
+      (plugin.enabled === false ? ' is-disabled' : '') +
+      (plugin.error ? ' is-error' : ''));
+    var head = el('div', 'plugin-head');
+    var title = el('div', 'plugin-title');
+    title.appendChild(el('span', 'plugin-name', plugin.name));
+    if (plugin.version) title.appendChild(el('span', 'tag plugin-kind', 'v' + plugin.version));
+    var kinds = Array.isArray(plugin.kinds) ? plugin.kinds : [];
+    for (var k = 0; k < kinds.length; k++) {
+      title.appendChild(el('span', 'tag plugin-kind', kinds[k]));
+    }
+    if (!plugin.installed) title.appendChild(el('span', 'agent-missing-tag', 'Tidak dikenal'));
+    if (plugin.error) title.appendChild(el('span', 'agent-missing-tag', 'Manifest rusak'));
+    head.appendChild(title);
+
+    var controls = el('div', 'plugin-controls');
+    if (plugin.installed) {
+      controls.appendChild(settingsSwitch(plugin.enabled !== false,
+        plugin.enabled === false ? 'Aktifkan ' + plugin.name : 'Nonaktifkan ' + plugin.name,
+        function (on, cb) {
+          return pluginAction(on ? 'enable' : 'disable', plugin.name, []).then(function (res) {
+            if (!res && cb) cb.checked = !on;
+            return res;
+          });
+        }));
+    }
+    head.appendChild(controls);
+    row.appendChild(head);
+
+    if (plugin.description) row.appendChild(el('p', 'plugin-desc', plugin.description));
+    var meta = [];
+    if (plugin.author) meta.push(plugin.author);
+    if (plugin.license) meta.push(plugin.license);
+    if (plugin.api) meta.push('API ' + plugin.api);
+    if (plugin.source) meta.push(plugin.source);
+    if (plugin.sha256) meta.push('sha256 ' + String(plugin.sha256).slice(0, 12));
+    if (meta.length) row.appendChild(el('div', 'plugin-meta mono', meta.join(' \u00b7 ')));
+
+    var requested = pluginRequested(plugin);
+    var perms = el('div', 'plugin-perms');
+    perms.appendChild(el('span', 'set-field-label', 'Izin'));
+    if (!requested.length) {
+      perms.appendChild(el('span', 'plugin-none', 'Tidak meminta izin'));
+    } else {
+      for (var p = 0; p < requested.length; p++) {
+        perms.appendChild(pluginPermChip(plugin, requested[p]));
+      }
+    }
+    row.appendChild(perms);
+    if (plugin.permissions && requested.length) {
+      row.appendChild(el('div', 'plugin-note', plugin.permissions));
+    }
+
+    var actions = el('div', 'plugin-actions');
+    var panels = pluginPanels.filter(function (panel) {
+      return panel && panel.plugin === plugin.name;
+    });
+    for (var pi = 0; pi < panels.length; pi++) {
+      actions.appendChild(pluginActionButton('Buka panel: ' + (panels[pi].title || panels[pi].name),
+        function (panel) {
+          return function () { return openPluginPanel(panel.plugin, panel.name); };
+        }(panels[pi])));
+    }
+    var commands = pluginCommands.filter(function (command) {
+      return String(command[0] || '').split(':')[0] === plugin.name;
+    });
+    for (var ci = 0; ci < commands.length; ci++) {
+      actions.appendChild(pluginActionButton(commands[ci][1] || commands[ci][0],
+        function (command) {
+          return function () { return runPluginCommand(command[0], command[1]); };
+        }(commands[ci])));
+    }
+    if (plugin.installed) {
+      actions.appendChild(pluginRemoveButton(plugin));
+    }
+    if (actions.children.length) row.appendChild(actions);
+    return row;
+  }
+
+  function pluginActionButton(label, run) {
+    var btn = button(label, 'btn sm', run);
+    btn.type = 'button';
+    return btn;
+  }
+
+  function pluginPermChip(plugin, key) {
+    var granted = pluginGranted(plugin).indexOf(key) >= 0;
+    var label = key + (granted ? ' \u2713' : ' \u2717');
+    var chip = button(label, 'perm-chip' + (granted ? ' is-granted' : ''), function () {
+      return pluginAction(granted ? 'revoke' : 'grant', plugin.name, [key]);
+    });
+    chip.title = granted ? 'Cabut izin ' + key : 'Beri izin ' + key;
+    return chip;
+  }
+
+  function pluginRemoveButton(plugin) {
+    var armed = false;
+    var timer = 0;
+    var btn = el('button', 'btn sm danger', 'Hapus');
+    btn.type = 'button';
+    btn.addEventListener('click', guard(function () {
+      if (!armed) {
+        armed = true;
+        btn.textContent = 'Yakin hapus?';
+        timer = setTimeout(function () {
+          armed = false;
+          btn.textContent = 'Hapus';
+        }, 4000);
+        return;
+      }
+      clearTimeout(timer);
+      return pluginAction('remove', plugin.name, []);
+    }));
+    return btn;
+  }
+
+  function pluginAction(action, name, names, timeout) {
+    var label = action === 'remove' ? 'Plugin dihapus' :
+      action === 'grant' ? 'Izin diberikan' :
+        action === 'revoke' ? 'Izin dicabut' :
+          action === 'enable' ? 'Plugin diaktifkan' :
+            action === 'disable' ? 'Plugin dinonaktifkan' : 'Plugin diperbarui';
+    return rpc('pluginAction', {
+      action: action,
+      name: name || '',
+      names: names || []
+    }, timeout || 60000).then(function (res) {
+      if (action === 'search' || action === 'doctor') return res;
+      toast('ok', label + ': ' + (name || ''));
+      return refreshAppInfo().then(loadPlugins);
+    }, function (err) {
+      toast('error', 'Plugin: ' + message(err));
+      return null;
+    });
+  }
+
+  function installPlugin(source) {
+    var value = String(source || '').trim();
+    if (!value) {
+      toast('warn', 'Isi nama katalog, folder plugin, atau file .tar.gz.');
+      return Promise.resolve(null);
+    }
+    var btn = $('plugin-install-btn');
+    if (btn) btn.disabled = true;
+    return pluginAction('install', value, [], 180000).then(function (res) {
+      if (btn) btn.disabled = false;
+      if (res) toast('ok', 'Terpasang: ' + value + '. Jalankan hanya saat dibutuhkan.');
+      return res;
+    });
+  }
+
+  function searchPluginCatalog(query) {
+    var input = $('plugin-search');
+    var value = String(query == null ? (input ? input.value : '') : query).trim();
+    var box = $('plugin-catalog');
+    if (box) {
+      box.textContent = '';
+      box.appendChild(el('p', 'side-empty', 'Mencari katalog...'));
+    }
+    return pluginAction('search', value, [], 30000).then(function (res) {
+      if (!res) return null;
+      pluginCatalogData = res;
+      renderPluginCatalog(res);
+      return res;
+    });
+  }
+
+  function renderPluginCatalog(res) {
+    var box = $('plugin-catalog');
+    if (!box) return;
+    box.textContent = '';
+    var rows = Array.isArray(res && res.plugins) ? res.plugins : [];
+    box.appendChild(settingsGroup('Katalog',
+      res && res.catalog ? res.catalog : (rows.length + ' hasil')));
+    if (!rows.length) {
+      box.appendChild(el('p', 'side-empty', 'Katalog tidak mengembalikan plugin.'));
+      return;
+    }
+    for (var i = 0; i < rows.length; i++) {
+      box.appendChild(catalogRow(rows[i]));
+    }
+  }
+
+  function catalogRow(entry) {
+    var row = el('div', 'plugin-row catalog-row');
+    var head = el('div', 'plugin-head');
+    var title = el('div', 'plugin-title');
+    title.appendChild(el('span', 'plugin-name', entry.name));
+    if (entry.version) title.appendChild(el('span', 'tag plugin-kind', 'v' + entry.version));
+    var kinds = Array.isArray(entry.kinds) ? entry.kinds : [];
+    for (var k = 0; k < kinds.length; k++) {
+      title.appendChild(el('span', 'tag plugin-kind', kinds[k]));
+    }
+    head.appendChild(title);
+    var controls = el('div', 'plugin-controls');
+    var installed = entry.installed || null;
+    var label = installed
+      ? (installed === entry.version ? 'Terpasang' : 'Perbarui')
+      : 'Pasang';
+    var btn = pluginActionButton(label, function () {
+      return pluginAction(installed ? 'update' : 'install', entry.name, [], 180000);
+    });
+    if (installed === entry.version) btn.disabled = true;
+    controls.appendChild(btn);
+    head.appendChild(controls);
+    row.appendChild(head);
+    if (entry.description) row.appendChild(el('p', 'plugin-desc', entry.description));
+    var meta = [];
+    if (entry.author) meta.push(entry.author);
+    if (entry.license) meta.push(entry.license);
+    if (entry.permissions) meta.push(entry.permissions);
+    if (entry.sha256) meta.push('sha256 ' + String(entry.sha256).slice(0, 12));
+    if (meta.length) row.appendChild(el('div', 'plugin-meta mono', meta.join(' \u00b7 ')));
+    return row;
+  }
+
+  var panelState = null;
+
+  function openPluginPanel(plugin, panel) {
+    return rpc('pluginPanel', { name: plugin, panel: panel || '' }, 15000).then(function (info) {
+      if (!info) return null;
+      var frame = $('plugin-panel-frame');
+      var title = $('plugin-panel-title');
+      var source = $('plugin-panel-source');
+      if (title) title.textContent = info.title || info.name || 'Plugin panel';
+      if (source) source.textContent = info.url || '';
+      if (frame) frame.setAttribute('src', info.url || 'about:blank');
+      panelState = { plugin: info.plugin, name: info.name, frame: frame };
+      showModal($('plugin-panel-modal'));
+      return info;
+    }, function (err) {
+      toast('error', 'Panel: ' + message(err));
+      return null;
+    });
+  }
+
+  function closePluginPanel() {
+    var frame = $('plugin-panel-frame');
+    if (frame) frame.setAttribute('src', 'about:blank');
+    panelState = null;
+    hideModal($('plugin-panel-modal'));
+  }
+
+  function showPluginOutput(title, result, note) {
+    var head = $('plugin-output-title');
+    if (head) head.textContent = title || 'Plugin output';
+    var pre = $('plugin-output-pre');
+    if (pre) {
+      var text = '';
+      if (typeof result === 'string') text = result;
+      else if (result == null) text = 'Selesai tanpa output.';
+      else {
+        try { text = JSON.stringify(result, null, 2); }
+        catch (err) { text = String(result); }
+      }
+      pre.textContent = text;
+    }
+    var foot = $('plugin-output-note');
+    if (foot) foot.textContent = note || '';
+    showModal($('plugin-output-modal'));
+  }
+
+  function showPluginError(title, err) {
+    showPluginOutput(title, { error: message(err) }, 'Plugin tidak menghasilkan jawaban.');
+  }
+
+  function runPluginCommand(fullName, title) {
+    var text = String(fullName || '');
+    var at = text.indexOf(':');
+    if (at <= 0) {
+      toast('warn', 'Nama perintah plugin tidak lengkap.');
+      return Promise.resolve(null);
+    }
+    var plugin = text.slice(0, at);
+    var command = text.slice(at + 1);
+    setLast('Plugin: ' + text);
+    return rpc('pluginRun', {
+      name: plugin,
+      command: command,
+      args: []
+    }, 180000).then(function (res) {
+      showPluginOutput(title || text, res, text);
+      return res;
+    }, function (err) {
+      showPluginError(title || text, err);
+      return null;
+    });
+  }
+
+  /* The sandboxed panel may only answer through this narrow bridge. Nothing
+     from the frame is trusted beyond a method name and JSON params. */
+  window.addEventListener('message', function (ev) {
+    var data = ev && ev.data;
+    if (!data || data.omnixPanel !== true) return;
+    if (!panelState || !panelState.frame) return;
+    if (ev.source !== panelState.frame.contentWindow) return;
+    if (data.ready || !data.method) return;
+    var frame = panelState.frame;
+    var plugin = panelState.plugin;
+    var id = data.id;
+    var reply = function (ok, payload) {
+      try {
+        frame.contentWindow.postMessage({
+          omnixPanelReply: true,
+          id: id,
+          ok: ok,
+          result: ok ? payload : null,
+          error: ok ? null : payload
+        }, '*');
+      } catch (err) { /* frame went away */ }
+    };
+    rpc('pluginPanelCall', {
+      name: plugin,
+      method: String(data.method),
+      params: data.params || {}
+    }, 60000).then(function (res) {
+      reply(true, res);
+    }, function (err) {
+      reply(false, { message: message(err) });
+    });
+  });
+
+  /* ---------- self-development ---------- */
+
+  function fillDevAgents() {
+    var select = $('dev-agent');
+    if (!select) return;
+    var current = select.value;
+    select.textContent = '';
+    var order = ['codex', 'claude', 'antigravity'];
+    var rows = agentsInfo.slice();
+    for (var o = 0; o < order.length; o++) {
+      var found = false;
+      for (var r = 0; r < rows.length; r++) {
+        if (rows[r].name === order[o]) found = true;
+      }
+      if (!found) rows.push({ name: order[o], bin: order[o], available: false, enabled: true });
+    }
+    rows.sort(function (a, b) {
+      var ai = order.indexOf(a.name);
+      var bi = order.indexOf(b.name);
+      if (ai < 0) ai = 99;
+      if (bi < 0) bi = 99;
+      return ai - bi || String(a.name).localeCompare(String(b.name));
+    });
+    var first = '';
+    for (var i = 0; i < rows.length; i++) {
+      var agent = rows[i];
+      var usable = agent.available !== false && agent.enabled !== false;
+      var opt = el('option', null,
+        (agentDisplay(agent) || agent.name) +
+        (usable ? '' : ' \u00b7 tidak siap'));
+      opt.value = agent.name;
+      if (!usable) opt.disabled = true;
+      else if (!first) first = agent.name;
+      select.appendChild(opt);
+    }
+    var pick = current || first || 'codex';
+    select.value = pick;
+  }
+
+  function loadDev() {
+    return call('devStatus', {}).then(function (res) {
+      if (!res) return null;
+      devData = res;
+      fillDevAgents();
+      renderDev(res);
+      return res;
+    });
+  }
+
+  function renderDev(res) {
+    var data = res || devData || {};
+    var builds = Array.isArray(data.builds) ? data.builds : [];
+    var tasks = Array.isArray(data.tasks) ? data.tasks : [];
+    var search = $('settings-search');
+    var query = search ? String(search.value || '').trim().toLowerCase() : '';
+    var hint = $('agent-settings-meta');
+    if (hint) {
+      var installed = data.installed && data.installed.build ? data.installed.build : null;
+      hint.textContent = builds.length + ' build \u00b7 ' + tasks.length + ' tugas' +
+        (installed ? ' \u00b7 terpasang ' + installed : '') +
+        (query ? ' \u00b7 filter "' + query + '"' : '');
+    }
+    var restore = $('dev-restore-btn');
+    if (restore) restore.disabled = !data.previous;
+
+    var tasksBox = $('dev-tasks');
+    if (tasksBox) {
+      tasksBox.textContent = '';
+      var shownTasks = tasks.filter(function (task) {
+        if (!query) return true;
+        return [task.name, task.agent, task.branch, task.worktree, task.status, task.outcome]
+          .join(' ').toLowerCase().indexOf(query) >= 0;
+      });
+      tasksBox.appendChild(settingsGroup('Tugas',
+        data.devHome ? 'home terpisah: ' + data.devHome : 'worktree agent'));
+      if (!shownTasks.length) {
+        tasksBox.appendChild(el('p', 'side-empty', 'Belum ada tugas. Tulis brief lalu buat tugas.'));
+      }
+      for (var t = 0; t < shownTasks.length; t++) {
+        tasksBox.appendChild(devTaskRow(shownTasks[t]));
+      }
+    }
+
+    var buildsBox = $('dev-builds');
+    if (buildsBox) {
+      buildsBox.textContent = '';
+      var shownBuilds = builds.filter(function (build) {
+        if (!query) return true;
+        return [build.id, build.branch, build.commit, build.worktree]
+          .join(' ').toLowerCase().indexOf(query) >= 0;
+      });
+      buildsBox.appendChild(settingsGroup('Build',
+        data.installed && data.installed.build
+          ? 'terpasang: ' + data.installed.build
+          : 'belum ada build yang dipasang'));
+      if (!shownBuilds.length) {
+        buildsBox.appendChild(el('p', 'side-empty', 'Belum ada build. Tekan Build release.'));
+      }
+      for (var b = 0; b < shownBuilds.length; b++) {
+        buildsBox.appendChild(devBuildRow(shownBuilds[b], data));
+      }
+    }
+  }
+
+  function devTaskRow(task) {
+    var row = el('div', 'plugin-row dev-row');
+    var head = el('div', 'plugin-head');
+    var title = el('div', 'plugin-title');
+    title.appendChild(el('span', 'plugin-name', task.name || 'dev task'));
+    title.appendChild(el('span', 'tag plugin-kind', task.agent || 'agent'));
+    var state = task.closed ? 'closed' : (task.status || task.outcome || 'journaled');
+    title.appendChild(el('span', 'tag plugin-kind', state));
+    head.appendChild(title);
+    var controls = el('div', 'plugin-controls');
+    controls.appendChild(pluginActionButton('Buka terminal', function () {
+      return openDevTask(task);
+    }));
+    controls.appendChild(pluginActionButton('Build', function () {
+      return devJob('Build ' + task.name, 'devBuild', { workspace: task.worktree });
+    }));
+    head.appendChild(controls);
+    row.appendChild(head);
+    var meta = [task.branch, task.worktree].filter(Boolean).join(' \u00b7 ');
+    if (meta) row.appendChild(el('div', 'plugin-meta mono', meta));
+    return row;
+  }
+
+  function devBuildRow(build, data) {
+    var row = el('div', 'plugin-row dev-row');
+    var head = el('div', 'plugin-head');
+    var title = el('div', 'plugin-title');
+    title.appendChild(el('span', 'plugin-name', build.id));
+    title.appendChild(el('span', 'tag plugin-kind', build.profile || 'release'));
+    if (data && data.installed && data.installed.build === build.id) {
+      title.appendChild(el('span', 'tag plugin-kind', 'terpasang'));
+    }
+    head.appendChild(title);
+    var controls = el('div', 'plugin-controls');
+    controls.appendChild(pluginActionButton('Jalankan', function () {
+      return devJob('Jalankan ' + build.id, 'devRun', { build: build.id });
+    }));
+    controls.appendChild(pluginActionButton('Pasang build ini', function () {
+      return rpc('devInstall', { build: build.id }, 60000).then(function (res) {
+        if (!res) return null;
+        toast('ok', res.message || 'Build terpasang. Restart Omnix untuk memakainya.');
+        return loadDev();
+      }, function (err) {
+        toast('error', 'Pasang build: ' + message(err));
+        return null;
+      });
+    }));
+    head.appendChild(controls);
+    row.appendChild(head);
+    var meta = [
+      build.branch,
+      build.commit,
+      build.size ? (build.size / 1048576).toFixed(1) + ' MiB' : '',
+      build.built_at ? relTime(build.built_at) : '',
+      build.sha256 ? 'sha256 ' + String(build.sha256).slice(0, 12) : ''
+    ].filter(Boolean).join(' \u00b7 ');
+    if (meta) row.appendChild(el('div', 'plugin-meta mono', meta));
+    var path = el('div', 'plugin-note mono', build.binary || '');
+    path.title = build.binary || '';
+    row.appendChild(path);
+    return row;
+  }
+
+  function openDevTask(task) {
+    if (!task || !task.name) return Promise.resolve(null);
+    return rpc('devTaskInfo', { name: task.name }, 15000).then(function (res) {
+      if (!res || !res.record) return null;
+      return openDevTaskRecord(res.record, res.brief);
+    }, function (err) {
+      toast('error', 'Buka tugas: ' + message(err));
+      return null;
+    });
+  }
+
+  function openDevTaskRecord(record, brief) {
+    if (!record) return null;
+    var tab = createTerminal({
+      paneKey: 'dev:' + record.name,
+      agent: record.agent,
+      cwd: record.worktree,
+      title: record.name,
+      handoff: record.name,
+      handoffBrief: record.name,
+      handoffPrompt: brief || ''
+    });
+    if (tab && tab.paneKey) {
+      rpc('devTaskDelivered', { name: record.name, paneKey: tab.paneKey }, 15000)
+        .then(function () { return loadDev(); }, function () { return null; });
+    }
+    return tab;
+  }
+
+  function createDevTask() {
+    var brief = $('dev-brief');
+    var agent = $('dev-agent');
+    var value = brief ? String(brief.value || '').trim() : '';
+    if (!value) {
+      toast('warn', 'Tulis brief terlebih dahulu.');
+      return Promise.resolve(null);
+    }
+    var btn = $('dev-task-btn');
+    if (btn) btn.disabled = true;
+    var meta = $('dev-task-meta');
+    if (meta) meta.textContent = 'Membuat worktree dan brief...';
+    return rpc('devTask', {
+      brief: value,
+      agent: agent ? agent.value : 'codex'
+    }, 120000).then(function (res) {
+      if (btn) btn.disabled = false;
+      if (!res || !res.record) {
+        if (meta) meta.textContent = 'Tugas tidak dibuat.';
+        return null;
+      }
+      if (brief) brief.value = '';
+      if (meta) meta.textContent = 'Tugas dibuat di ' + res.record.worktree + '.';
+      toast('ok', 'Tugas dibuat: ' + res.record.name);
+      openDevTaskRecord(res.record, res.brief);
+      return loadDev();
+    }, function (err) {
+      if (btn) btn.disabled = false;
+      if (meta) meta.textContent = 'Gagal: ' + message(err);
+      toast('error', 'Tugas: ' + message(err));
+      return null;
+    });
+  }
+
+  function devJob(label, cmd, args) {
+    var output = $('dev-output');
+    if (output) {
+      output.hidden = false;
+      output.textContent = label + '...';
+    }
+    setLast(label);
+    return rpc(cmd, args || {}, 1800000).then(function (res) {
+      if (output) {
+        output.hidden = false;
+        try { output.textContent = JSON.stringify(res, null, 2); }
+        catch (err) { output.textContent = String(res); }
+      }
+      toast('ok', label + ' selesai');
+      return loadDev();
+    }, function (err) {
+      if (output) {
+        output.hidden = false;
+        output.textContent = label + ' gagal:\n' + message(err);
+      }
+      toast('error', label + ': ' + message(err));
+      return null;
+    });
   }
 
   /* ---------- search ---------- */
@@ -1764,10 +3041,47 @@
   };
 
   function agentLabel(name) {
+    var parts = agentParts(name);
+    if (parts) return (AGENT_LABEL[parts.base] || parts.base) + ' \u00b7 ' + parts.profile;
     return AGENT_LABEL[name] || name;
   }
 
+  function agentParts(name) {
+    var text = String(name || '');
+    var at = text.indexOf(':');
+    if (at <= 0 || at === text.length - 1) return null;
+    return { base: text.slice(0, at), profile: text.slice(at + 1) };
+  }
+
+  function agentDisplay(agent) {
+    if (!agent) return '';
+    var name = typeof agent === 'string' ? agent : agent.name;
+    var parts = agentParts(name);
+    if (parts) {
+      var label = (agent && agent.label) || parts.profile;
+      return (AGENT_LABEL[parts.base] || parts.base) + ' \u00b7 ' + label;
+    }
+    return AGENT_LABEL[name] || name;
+  }
+
+  function profileHue(text) {
+    var hue = 0;
+    for (var i = 0; i < text.length; i++) hue = (hue * 31 + text.charCodeAt(i)) % 360;
+    return hue;
+  }
+
+  function profileBadge(name, cls) {
+    var parts = agentParts(name);
+    if (!parts) return null;
+    var badge = el('span', cls || 'profile-badge', parts.profile.charAt(0).toUpperCase());
+    badge.style.backgroundColor = 'hsl(' + profileHue(parts.profile) + ' 68% 42%)';
+    badge.title = 'Profile ' + parts.profile;
+    return badge;
+  }
+
   var agentsInfo = [];
+  var pluginCommands = [];
+  var pluginPanels = [];
   var appRoot = '';
   var handoffSource = null;
   var handoffContext = 'focused';
@@ -1788,11 +3102,17 @@
           name: String(a.name),
           bin: String(a.bin || a.name),
           available: a.available !== false,
-          enabled: a.enabled !== false
+          enabled: a.enabled !== false,
+          label: String(a.label || ''),
+          base: String(a.base || ''),
+          profile: String(a.profile || ''),
+          plugin: String(a.plugin || ''),
+          supportsConfig: a.supportsConfig !== false
         };
       });
     fillAgentSelect($('handoff-target'), 'opencode2');
     fillAgents($('search-agent'), 'any agent', '');
+    fillDevAgents();
   }
 
   function fillAgentSelect(select, preferred) {
@@ -1803,7 +3123,7 @@
     for (var i = 0; i < agentsInfo.length; i++) {
       var agent = agentsInfo[i];
       var opt = el('option', null,
-        agentLabel(agent.name) + ' (CLI)' +
+        agentDisplay(agent) + ' (CLI)' +
         (agent.available ? '' : ' \u00b7 not found') +
         (agent.enabled ? '' : ' \u00b7 disabled'));
       opt.value = agent.name;
@@ -1965,7 +3285,13 @@
       }
       applyWorkspaceTitle();
       TRACE_KEYS = !!info.traceKeys;
+      pluginCommands = Array.isArray(info.pluginCommands) ? info.pluginCommands : [];
+      pluginPanels = Array.isArray(info.pluginPanels) ? info.pluginPanels : [];
       setAgents(info.agents);
+      setupInfo = info.setup || setupInfo;
+      if (setupInfo && setupInfo.needed) {
+        setTimeout(function () { setupOpen(setupInfo); }, 160);
+      }
       var parts = ['omnix ' + version];
       if (info.root) parts.push(info.root);
       parts.push('lightpanda ' + (engine.lightpanda ? (engine.version || 'ready') : 'unavailable'));
@@ -2052,14 +3378,86 @@
       var db = typeof res.dbBytes === 'number' ? (res.dbBytes / 1048576).toFixed(1) + ' MiB' : '?';
       $('status-right').textContent =
         'Sessions ' + num(res.sessions) + ' \u00b7 Messages ' + num(res.messages) + ' \u00b7 Index ' + db;
+      renderConflicts(res.conflicts);
       return res;
+    });
+  }
+
+  /* ---------- shared work warnings ---------- */
+
+  var conflictDismissed = '';
+
+  function conflictSignature(list) {
+    return list.map(function (row) {
+      return String(row.kind || '') + '|' + String(row.value || '');
+    }).join('\n');
+  }
+
+  function renderConflicts(list) {
+    var banner = $('conflict-banner');
+    if (!banner) return;
+    list = Array.isArray(list) ? list : [];
+    var signature = conflictSignature(list);
+    banner.textContent = '';
+    if (!list.length || signature === conflictDismissed) {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+
+    var head = el('div', 'conflict-head');
+    head.appendChild(el('span', 'conflict-title', 'Kerja bersama'));
+    head.appendChild(el('span', 'conflict-sub', list.length + ' peringatan'));
+    var close = button('\u00d7', 'icon-btn conflict-close', function () {
+      conflictDismissed = signature;
+      banner.hidden = true;
+    });
+    close.setAttribute('aria-label', 'Dismiss shared-work warnings');
+    head.appendChild(close);
+    banner.appendChild(head);
+
+    list.forEach(function (row) {
+      var line = el('div', 'conflict-row');
+      line.appendChild(el('span', 'conflict-kind',
+        row.kind === 'folder' ? 'Folder' : 'Akun'));
+      line.appendChild(el('span', 'conflict-msg', String(row.message || '')));
+      if (row.kind === 'folder') {
+        var panes = Array.isArray(row.panes) ? row.panes : [];
+        var target = panes.length ? panes[panes.length - 1] : null;
+        if (target && target.paneKey) {
+          line.appendChild(button('Pindahkan ke worktree baru', 'btn sm', function () {
+            return movePaneToWorktree(target.paneKey);
+          }));
+        }
+      }
+      banner.appendChild(line);
+    });
+  }
+
+  function movePaneToWorktree(paneKey) {
+    var old = byPaneKey(paneKey);
+    return call('paneMoveWorktree', { paneKey: paneKey }, 60000).then(function (res) {
+      if (!res || !res.worktree) return null;
+      var tab = createTerminal({
+        agent: res.agent || null,
+        sessionId: res.sessionId || null,
+        cwd: res.worktree,
+        title: res.title || res.name,
+        label: res.label,
+        handoff: res.handoff || null,
+        parent: res.parent || null,
+        orchestrator: !!res.orchestrator
+      });
+      if (tab && old) closeTab(old);
+      toast('ok', 'Pane dipindahkan ke worktree ' + res.name);
+      refreshMemory();
+      return tab;
     });
   }
 
   /* ---------- usage and memory ---------- */
 
   var usageData = { ram: null, agents: [] };
-  var usageTimer = null;
 
   function refreshUsage() {
     return call('usage', {}, { quiet: true }).then(function (res) {
@@ -2083,6 +3481,7 @@
       if (!res) return null;
       memData = res;
       renderMemory();
+      renderConflicts(res.conflicts);
       return res;
     }, function () {
       memoryBusy = false;
@@ -2345,16 +3744,8 @@
     return refreshUsage();
   }
 
-  function startUsagePoll() {
-    if (usageTimer) return;
-    setTimeout(function () { refreshUsage(); }, 4000);
-    /* `agy` answers on a worker started by the first read; a second read
-       picks the quota up without waiting for the full minute. */
-    setTimeout(function () { refreshUsage(); }, 8000);
-    usageTimer = setInterval(function () {
-      if (!document.hidden) refreshUsage();
-    }, 60000);
-  }
+  /* Usage is fetched only when the owner opens the modal or presses refresh:
+     no timer, because a logged-out `agy` can raise a login window. */
 
   /* The sidebar lists the projects the user added, like Orca. Indexed history
      only fills in the session count and agent marks for those paths. */
@@ -2584,6 +3975,26 @@
     tab.status = status;
     paintTabStatus(tab);
     refreshBusyDots();
+    publishPane(tab);
+    renderWorkers();
+  }
+
+  /* The CLI's source of truth is the host registry, not the DOM. One call per
+     transition; no timers and no polling. */
+  function publishPane(tab) {
+    if (!tab || tab.kind !== 'terminal' || tab.closed || !tab.paneKey) return;
+    call('paneState', {
+      paneKey: tab.paneKey,
+      status: tab.status || 'idle',
+      handoff: tab.handoff || '',
+      parent: tab.parent || '',
+      title: tab.title || '',
+      cwd: tab.cwd || '',
+      agent: tab.agent || '',
+      sessionId: tab.sessionId || '',
+      orchestrator: !!tab.orchestrator,
+      exitCode: tab.exitedCode
+    }, { quiet: true });
   }
 
   function paintTabStatus(tab) {
@@ -3360,8 +4771,15 @@
   /* ---------- command palette ---------- */
 
   function stopAgentBrowser() {
-    call('browserStop').then(function () {
-      toast('ok', 'Shared Lightpanda browser stopped');
+    call('browserStop').then(function (res) {
+      if (res && res.stopped && res.session) {
+        toast('ok', 'Sesi browser ' + res.session + ' ditutup' +
+          (res.daemon ? '; Lightpanda bersama tetap berjalan' : ''));
+      } else if (res && res.stopped) {
+        toast('ok', 'Lightpanda bersama dihentikan');
+      } else {
+        toast('warn', 'Tidak ada sesi browser milik terminal ini.');
+      }
     }).catch(function (err) {
       toast('error', 'Stop browser: ' + message(err));
     });
@@ -3380,6 +4798,11 @@
     { label: 'Hand Off to Another Agent', hint: '', run: function () { openHandoff(null); } },
     { label: 'Docs', hint: '', run: function () { openStatic('docs'); } },
     { label: 'Agent Settings', hint: '', run: openAgentSettings },
+    { label: 'About & Support', hint: 'GPL', run: function () { openSettings('about'); } },
+    { label: 'Support Omnix on Tako', hint: 'Coffee', run: openSupport },
+    { label: 'Setup Omnix Again', hint: 'Wizard', run: function () { openSetupAgain(); } },
+    { label: 'Plugins', hint: 'API 1', run: openPluginsSettings },
+    { label: 'Kembangkan Omnix', hint: 'DEV', run: openDevSettings },
     { label: 'Split Terminal', hint: 'Ctrl+Shift+D', run: splitActive },
     { label: 'Usage and Memory', hint: '', run: openUsage },
     { label: 'Stop Agent Browser', hint: 'Lightpanda', run: stopAgentBrowser },
@@ -3437,12 +4860,38 @@
     }
   }
 
+  function dynamicPaletteItems() {
+    var out = [];
+    for (var c = 0; c < pluginCommands.length; c++) {
+      (function (row) {
+        var name = String(row[0] || '');
+        var title = String(row[1] || name);
+        out.push({
+          label: 'Plugin: ' + title,
+          hint: name,
+          run: function () { return runPluginCommand(name, title); }
+        });
+      })(pluginCommands[c]);
+    }
+    for (var p = 0; p < pluginPanels.length; p++) {
+      (function (panel) {
+        out.push({
+          label: 'Panel: ' + (panel.title || panel.name),
+          hint: panel.plugin + ':' + panel.name,
+          run: function () { return openPluginPanel(panel.plugin, panel.name); }
+        });
+      })(pluginPanels[p]);
+    }
+    return out;
+  }
+
   function paletteFilter(query) {
     var q = String(query == null ? '' : query).trim().toLowerCase();
+    var items = paletteItems.concat(dynamicPaletteItems());
     paletteMatches = [];
-    for (var i = 0; i < paletteItems.length; i++) {
-      if (!q || paletteItems[i].label.toLowerCase().indexOf(q) >= 0) {
-        paletteMatches.push(paletteItems[i]);
+    for (var i = 0; i < items.length; i++) {
+      if (!q || items[i].label.toLowerCase().indexOf(q) >= 0) {
+        paletteMatches.push(items[i]);
       }
     }
     paletteIndex = 0;
@@ -3781,7 +5230,10 @@
       rail.setAttribute('aria-current', collapsed ? 'false' : 'true');
     }
     storeSet('omnix.histCollapsed', collapsed ? '1' : '0');
-    if (!collapsed) ensureHistory();
+    if (!collapsed) {
+      ensureHistory();
+      loadWorkers();
+    }
   }
 
   /* Index work starts only while the panel is open. Saved rows render first,
@@ -3816,6 +5268,171 @@
     renderHistoryList();
   }
 
+  /* ---------- workers / orchestrator ---------- */
+
+  var workersQueued = [];
+  var workerSendTarget = null;
+
+  function workerAgentMeta(agent) {
+    var node = el('span', 'worker-meta');
+    var badge = profileBadge(agent, 'worker-profile');
+    if (badge) node.appendChild(badge);
+    node.appendChild(document.createTextNode(agent || 'shell'));
+    return node;
+  }
+
+  function workerRow(tab) {
+    var row = el('div', 'worker' + (tab.orchestrator ? ' is-orchestrator' : ''));
+    row.setAttribute('role', 'listitem');
+    var dot = el('span');
+    paintStatus(dot, tab.status || 'idle', statusLabel(tab.status || 'idle', 1));
+    row.appendChild(dot);
+    var label = tab.handoff || tab.title || tab.paneKey;
+    if (tab.parent) label = '\u21b3 ' + label;
+    var name = el('span', 'worker-name', label);
+    name.title = label;
+    row.appendChild(name);
+    row.appendChild(workerAgentMeta(tab.agent || 'shell'));
+    row.appendChild(el('span', 'worker-state', tab.orchestrator
+      ? 'orchestrator'
+      : statusLabel(tab.status || 'idle', 1)));
+
+    var open = el('button', 'worker-btn', 'open');
+    open.type = 'button';
+    open.title = 'Open this pane';
+    open.addEventListener('click', guard(function () { activate(tab); }));
+    row.appendChild(open);
+
+    if (tab.agent) {
+      var send = el('button', 'worker-btn', 'send');
+      send.type = 'button';
+      send.title = 'Send a message to this worker';
+      send.addEventListener('click', guard(function () { openWorkerSend(tab); }));
+      row.appendChild(send);
+    }
+    var close = el('button', 'worker-btn', 'close');
+    close.type = 'button';
+    close.title = 'Close this pane';
+    close.addEventListener('click', guard(function () { closeTab(tab); }));
+    row.appendChild(close);
+    return row;
+  }
+
+  function queuedRow(record) {
+    var row = el('div', 'worker is-queued');
+    row.setAttribute('role', 'listitem');
+    var dot = el('span');
+    paintStatus(dot, 'idle', 'queued');
+    row.appendChild(dot);
+    var name = el('span', 'worker-name', record.name || 'handoff');
+    name.title = record.queued_reason || 'queued';
+    row.appendChild(name);
+    row.appendChild(workerAgentMeta(record.agent || ''));
+    row.appendChild(el('span', 'worker-state', 'queued'));
+    var close = el('button', 'worker-btn', 'close');
+    close.type = 'button';
+    close.title = 'Close this handoff';
+    close.addEventListener('click', guard(function () {
+      call('handoffClose', { name: record.name }).then(function (res) {
+        if (res) {
+          toast('ok', 'Handoff closed: ' + record.name);
+          loadWorkers();
+        }
+      });
+    }));
+    row.appendChild(close);
+    return row;
+  }
+
+  function renderWorkers() {
+    var section = $('workers');
+    var box = $('workers-list');
+    if (!section || !box) return;
+    box.textContent = '';
+    var rows = [];
+    for (var i = 0; i < tabs.length; i++) {
+      var tab = tabs[i];
+      if (tab.kind !== 'terminal' || tab.closed) continue;
+      if (!tab.handoff && !tab.orchestrator && !tab.parent) continue;
+      rows.push(tab);
+    }
+    rows.sort(function (a, b) {
+      if (!!a.orchestrator !== !!b.orchestrator) return a.orchestrator ? -1 : 1;
+      return String(a.handoff || a.title).localeCompare(String(b.handoff || b.title));
+    });
+    for (var j = 0; j < rows.length; j++) box.appendChild(workerRow(rows[j]));
+    for (var k = 0; k < workersQueued.length; k++) box.appendChild(queuedRow(workersQueued[k]));
+    section.hidden = rows.length === 0 && workersQueued.length === 0;
+  }
+
+  function loadWorkers() {
+    return call('handoffList', {}, { quiet: true }).then(function (res) {
+      var list = res && Array.isArray(res.handoffs) ? res.handoffs : [];
+      workersQueued = list.filter(function (record) {
+        return !record.closed && record.outcome === 'queued';
+      });
+      renderWorkers();
+      return list;
+    });
+  }
+
+  function openWorkerSend(tab) {
+    workerSendTarget = tab;
+    var title = $('agent-send-title');
+    var target = $('agent-send-target');
+    var text = $('agent-send-text');
+    var note = $('agent-send-note');
+    if (target) target.textContent = tab.handoff || tab.title || tab.paneKey;
+    if (note) {
+      note.textContent = tab.status === 'approval'
+        ? 'Pane is waiting for approval; answer it first.'
+        : '';
+    }
+    if (text) text.value = '';
+    showModal($('agent-send-modal'));
+    if (text && text.focus) text.focus();
+  }
+
+  function sendToWorker() {
+    if (!workerSendTarget) return;
+    var text = $('agent-send-text');
+    var body = text ? text.value : '';
+    if (!body.trim()) {
+      toast('warn', 'Message is empty.');
+      return;
+    }
+    var tab = workerSendTarget;
+    call('agentSend', {
+      target: tab.paneKey,
+      text: body,
+      force: false
+    }).then(function (res) {
+      if (!res) return;
+      hideModal($('agent-send-modal'));
+      toast('ok', 'Message sent to ' + (tab.handoff || tab.title));
+    });
+  }
+
+  function previewGc() {
+    call('gc', { dryRun: true }).then(function (res) {
+      if (!res) return;
+      var lines = Array.isArray(res.actions) ? res.actions : [];
+      var box = $('gc-actions');
+      if (box) box.textContent = lines.length ? lines.join('\n') : 'Nothing to clean.';
+      showModal($('gc-modal'));
+    });
+  }
+
+  function runGc() {
+    call('gc', { dryRun: false }).then(function (res) {
+      if (!res) return;
+      hideModal($('gc-modal'));
+      toast('ok', 'Bersihkan selesai: ' +
+        (Array.isArray(res.actions) ? res.actions.length : 0) + ' langkah');
+      loadWorkers();
+    });
+  }
+
   /* ---------- events from host ---------- */
 
   EVENTS.ptyData = function (payload) {
@@ -3837,6 +5454,7 @@
     var tab = byPaneKey(payload.paneKey);
     if (!tab || tab.exited) return;
     tab.exited = true;
+    tab.exitedCode = payload.code == null ? null : payload.code;
     tab.spawned = false;
     tab.handoffSend = null;
     if (tab.settleTimer) {
@@ -3854,11 +5472,43 @@
     setLast('Terminal exited (code ' + code + ')');
   };
 
+  EVENTS.paneOpen = function (payload) {
+    if (!payload || !payload.paneKey || byPaneKey(payload.paneKey)) return;
+    var tab = createTerminal({
+      paneKey: payload.paneKey,
+      attach: true,
+      title: payload.title || payload.handoff || payload.label || payload.agent,
+      agent: payload.agent || null,
+      cwd: payload.cwd || null,
+      handoff: payload.handoff || null,
+      parent: payload.parent || null,
+      orchestrator: !!payload.orchestrator
+    });
+    if (!tab) return;
+    tab.status = payload.status || 'working';
+    paintTabStatus(tab);
+    publishPane(tab);
+    renderWorkers();
+    toast('ok', 'Worker pane opened: ' + (payload.handoff || payload.title || payload.paneKey));
+  };
+
+  EVENTS.paneClosed = function (payload) {
+    var tab = payload && byPaneKey(payload.paneKey);
+    if (tab && !tab.closed) closeTab(tab);
+  };
+
   EVENTS.browserNav = function (payload) {
     if (payload.url) {
       browser.url = String(payload.url);
       var input = $('browser-url');
       if (input) input.value = browser.url;
+    }
+    if (payload.open && browser.url) {
+      browser.engine = 'native';
+      var engine = $('browser-engine');
+      if (engine) engine.value = 'native';
+      openStatic('browser');
+      setTimeout(function () { openBrowserNative(); }, 40);
     }
     if (payload.title) setLast('Browser: ' + payload.title);
   };
@@ -3878,7 +5528,7 @@
       select.appendChild(any);
     }
     for (var i = 0; i < agentsInfo.length; i++) {
-      var opt = el('option', null, agentLabel(agentsInfo[i].name));
+      var opt = el('option', null, agentDisplay(agentsInfo[i]));
       opt.value = agentsInfo[i].name;
       select.appendChild(opt);
     }
@@ -3938,6 +5588,33 @@
 
     var sideSettings = $('side-settings');
     if (sideSettings) sideSettings.addEventListener('click', guard(openAgentSettings));
+    var sideSupport = $('side-support');
+    if (sideSupport) sideSupport.addEventListener('click', guard(openSupport));
+
+    var setupNextBtn = $('setup-next');
+    if (setupNextBtn) setupNextBtn.addEventListener('click', guard(setupNext));
+    var setupBackBtn = $('setup-back');
+    if (setupBackBtn) setupBackBtn.addEventListener('click', guard(setupBack));
+    var setupSkipBtn = $('setup-skip');
+    if (setupSkipBtn) setupSkipBtn.addEventListener('click', guard(setupSkip));
+    var setupBrowseBtn = $('setup-browse');
+    if (setupBrowseBtn) setupBrowseBtn.addEventListener('click', guard(setupBrowse));
+    var setupSupportBtn = $('setup-support');
+    if (setupSupportBtn) setupSupportBtn.addEventListener('click', guard(openSupport));
+    var setupProjectInput = $('setup-project');
+    if (setupProjectInput) setupProjectInput.addEventListener('keydown', guard(function (ev) {
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        setupNext();
+      }
+    }));
+
+    var aboutSupport = $('about-support');
+    if (aboutSupport) aboutSupport.addEventListener('click', guard(openSupport));
+    var aboutRepo = $('about-repo');
+    if (aboutRepo) aboutRepo.addEventListener('click', guard(openRepo));
+    var aboutSetup = $('about-setup');
+    if (aboutSetup) aboutSetup.addEventListener('click', guard(openSetupAgain));
 
     var winMin = $('win-min');
     if (winMin) winMin.addEventListener('click', guard(function () {
@@ -4046,7 +5723,7 @@
     }
 
     var settingsRefresh = $('agent-settings-refresh');
-    if (settingsRefresh) settingsRefresh.addEventListener('click', guard(loadAgentSettings));
+    if (settingsRefresh) settingsRefresh.addEventListener('click', guard(loadSettingsSection));
 
     var settingsBack = $('settings-back');
     if (settingsBack) settingsBack.addEventListener('click', guard(function () {
@@ -4055,8 +5732,99 @@
     }));
 
     var settingsSearch = $('settings-search');
-    if (settingsSearch) settingsSearch.addEventListener('input', guard(function () {
-      renderAgentSettings(agentSettingsData);
+    if (settingsSearch) settingsSearch.addEventListener('input', guard(settingsSearchChanged));
+
+    var settingsNavs = document.querySelectorAll('.settings-nav-item[data-settings]');
+    for (var sn = 0; sn < settingsNavs.length; sn++) {
+      (function (node) {
+        if (!node || !node.dataset) return;
+        node.addEventListener('click', guard(function () {
+          setSettingsSection(node.dataset.settings);
+        }));
+      })(settingsNavs[sn]);
+    }
+
+    var pluginInstall = $('plugin-install-btn');
+    if (pluginInstall) pluginInstall.addEventListener('click', guard(function () {
+      var source = $('plugin-install-source');
+      return installPlugin(source ? source.value : '');
+    }));
+    var pluginInstallSource = $('plugin-install-source');
+    if (pluginInstallSource) {
+      pluginInstallSource.addEventListener('keydown', guard(function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        return installPlugin(pluginInstallSource.value);
+      }));
+    }
+    var pluginSearch = $('plugin-search-btn');
+    if (pluginSearch) pluginSearch.addEventListener('click', guard(function () {
+      return searchPluginCatalog();
+    }));
+    var pluginSearchInput = $('plugin-search');
+    if (pluginSearchInput) {
+      pluginSearchInput.addEventListener('keydown', guard(function (ev) {
+        if (ev.key !== 'Enter') return;
+        ev.preventDefault();
+        return searchPluginCatalog(pluginSearchInput.value);
+      }));
+    }
+    var pluginDoctor = $('plugin-doctor-btn');
+    if (pluginDoctor) pluginDoctor.addEventListener('click', guard(function () {
+      return rpc('pluginAction', { action: 'doctor', name: '', names: [] }, 60000).then(function (res) {
+        showPluginOutput('Plugin doctor', res, 'Pemeriksaan manifest dan izin');
+        return res;
+      }, function (err) {
+        showPluginError('Plugin doctor', err);
+        return null;
+      });
+    }));
+
+    var devTask = $('dev-task-btn');
+    if (devTask) devTask.addEventListener('click', guard(createDevTask));
+    var devBuild = $('dev-build-btn');
+    if (devBuild) devBuild.addEventListener('click', guard(function () {
+      return devJob('Build release', 'devBuild', {});
+    }));
+    var devTest = $('dev-test-btn');
+    if (devTest) devTest.addEventListener('click', guard(function () {
+      return devJob('Test', 'devTest', {});
+    }));
+    var devRun = $('dev-run-btn');
+    if (devRun) devRun.addEventListener('click', guard(function () {
+      return devJob('Jalankan build', 'devRun', {});
+    }));
+    var devRestore = $('dev-restore-btn');
+    if (devRestore) devRestore.addEventListener('click', guard(function () {
+      return rpc('devRestore', {}, 60000).then(function (res) {
+        if (!res) return null;
+        toast('ok', res.message || 'Binary sebelumnya dikembalikan. Restart Omnix.');
+        return loadDev();
+      }, function (err) {
+        toast('error', 'Kembalikan: ' + message(err));
+        return null;
+      });
+    }));
+
+    var pluginPanelClose = $('plugin-panel-close');
+    if (pluginPanelClose) pluginPanelClose.addEventListener('click', guard(closePluginPanel));
+    var pluginPanelOk = $('plugin-panel-ok');
+    if (pluginPanelOk) pluginPanelOk.addEventListener('click', guard(closePluginPanel));
+    var pluginPanelModal = $('plugin-panel-modal');
+    if (pluginPanelModal) pluginPanelModal.addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === pluginPanelModal) closePluginPanel();
+    }));
+    var pluginOutputClose = $('plugin-output-close');
+    if (pluginOutputClose) pluginOutputClose.addEventListener('click', guard(function () {
+      hideModal($('plugin-output-modal'));
+    }));
+    var pluginOutputOk = $('plugin-output-ok');
+    if (pluginOutputOk) pluginOutputOk.addEventListener('click', guard(function () {
+      hideModal($('plugin-output-modal'));
+    }));
+    var pluginOutputModal = $('plugin-output-modal');
+    if (pluginOutputModal) pluginOutputModal.addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === pluginOutputModal) hideModal($('plugin-output-modal'));
     }));
 
     var perms = $('agent-default-perms');
@@ -4125,6 +5893,34 @@
     $('handoff-start').addEventListener('click', guard(startHandoff));
     $('handoff-modal').addEventListener('click', guard(function (ev) {
       if (ev && ev.target === $('handoff-modal')) hideModal($('handoff-modal'));
+    }));
+
+    var sendClose = $('agent-send-close');
+    if (sendClose) sendClose.addEventListener('click', guard(function () {
+      hideModal($('agent-send-modal'));
+    }));
+    var sendCancel = $('agent-send-cancel');
+    if (sendCancel) sendCancel.addEventListener('click', guard(function () {
+      hideModal($('agent-send-modal'));
+    }));
+    var sendOk = $('agent-send-ok');
+    if (sendOk) sendOk.addEventListener('click', guard(sendToWorker));
+    var sendModal = $('agent-send-modal');
+    if (sendModal) sendModal.addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === sendModal) hideModal(sendModal);
+    }));
+
+    var gcPreview = $('gc-preview');
+    if (gcPreview) gcPreview.addEventListener('click', guard(previewGc));
+    var gcClose = $('gc-close');
+    if (gcClose) gcClose.addEventListener('click', guard(function () { hideModal($('gc-modal')); }));
+    var gcCancel = $('gc-cancel');
+    if (gcCancel) gcCancel.addEventListener('click', guard(function () { hideModal($('gc-modal')); }));
+    var gcRun = $('gc-run');
+    if (gcRun) gcRun.addEventListener('click', guard(runGc));
+    var workersRefresh = $('workers-refresh');
+    if (workersRefresh) workersRefresh.addEventListener('click', guard(function () {
+      loadWorkers();
     }));
     var radios = document.querySelectorAll('#handoff-modal .radio-row');
     for (var r = 0; r < radios.length; r++) {
@@ -4257,7 +6053,6 @@
     refreshAppInfo().then(function () { checkUpdates(false); });
     refreshStatus().then(refreshProjects);
     startMemoryPoll();
-    startUsagePoll();
     setInterval(function () { checkUpdates(false); }, 6 * 60 * 60 * 1000);
   }
 
