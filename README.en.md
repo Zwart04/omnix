@@ -62,10 +62,10 @@ Prebuilt packages are built by CI on `v*` tags and published on the
 
 | Platform | File | Install |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.9_amd64.deb` | `sudo apt install ./omnix_0.6.9_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.6.9-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.9-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.7.0_amd64.deb` | `sudo apt install ./omnix_0.7.0_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.7.0-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.7.0-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-setup-x64.exe` | run the installer; WebView2 is installed automatically when missing |
-| macOS 11+ (universal) | `Omnix-0.6.9-macos-universal.dmg` | open the DMG, drag `Omnix` to `/Applications` |
+| macOS 11+ (universal) | `Omnix-0.7.0-macos-universal.dmg` | open the DMG, drag `Omnix` to `/Applications` |
 
 ### Build from source
 
@@ -154,6 +154,7 @@ the installed binary is replaced only after the owner clicks **Pasang build ini*
 
 ## Documentation
 
+- [`CHANGELOG.md`](CHANGELOG.md) — changes per release.
 - [`docs/app.md`](docs/app.md) — user guide: install per OS, window, terminal, profiles, browser, state, troubleshooting (Indonesian).
 - [`docs/architecture.md`](docs/architecture.md) — data model, invariants, roadmap.
 - [`docs/browser.md`](docs/browser.md) — native + Lightpanda browser tutorial, commands, harness, security.

@@ -59,10 +59,10 @@ Paket siap pasang dibangun CI pada tag `v*` dan tersedia di
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.6.9_amd64.deb` | `sudo apt install ./omnix_0.6.9_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.6.9-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.6.9-1-x86_64.pkg.tar.zst` |
+| Linux x86_64 (Debian/Ubuntu) | `omnix_0.7.0_amd64.deb` | `sudo apt install ./omnix_0.7.0_amd64.deb` |
+| Linux x86_64 (Arch) | `omnix-0.7.0-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.7.0-1-x86_64.pkg.tar.zst` |
 | Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (universal) | `Omnix-0.6.9-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| macOS 11+ (universal) | `Omnix-0.7.0-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 ### Build dari source
 
@@ -156,6 +156,7 @@ mempublikasikan rilis, atau memasang. Detail: [`docs/dev.md`](docs/dev.md).
 
 ## Dokumentasi
 
+- [`CHANGELOG.md`](CHANGELOG.md) — riwayat perubahan per rilis.
 - [`docs/app.md`](docs/app.md) — panduan pengguna: instalasi per OS, jendela, terminal, profil akun, browser, state, troubleshooting.
 - [`docs/architecture.md`](docs/architecture.md) — model data, invariant, roadmap.
 - [`docs/browser.md`](docs/browser.md) — tutorial lengkap browser native + Lightpanda, command, harness, keamanan.
