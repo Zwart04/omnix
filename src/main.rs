@@ -4,7 +4,7 @@ mod agent;
 mod browser;
 mod control;
 mod dev;
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "gui", target_os = "linux"))]
 mod cookies;
 #[cfg(feature = "gui")]
 mod gc;
@@ -22,7 +22,7 @@ mod projects;
 mod pty;
 #[cfg(feature = "gui")]
 mod selftest;
-#[cfg(feature = "gui")]
+#[cfg(all(feature = "gui", target_os = "linux"))]
 mod shot;
 mod setup;
 mod sources;
@@ -1434,7 +1434,7 @@ fn cmd_browser(args: &[String]) -> Result<()> {
             }
         }
         Some("session") => {
-            #[cfg(feature = "gui")]
+            #[cfg(all(feature = "gui", target_os = "linux"))]
             {
                 let action = args.get(1).map(String::as_str).unwrap_or("");
                 let from = value(args, "--from").unwrap_or_else(|| "native".into());
@@ -1472,6 +1472,11 @@ fn cmd_browser(args: &[String]) -> Result<()> {
                     );
                 }
             }
+            #[cfg(all(feature = "gui", not(target_os = "linux")))]
+            {
+                let _ = args;
+                bail!("browser session import/clear is available on Linux only");
+            }
             #[cfg(not(feature = "gui"))]
             {
                 let _ = args;
@@ -1479,7 +1484,7 @@ fn cmd_browser(args: &[String]) -> Result<()> {
             }
         }
         Some("screenshot") => {
-            #[cfg(feature = "gui")]
+            #[cfg(all(feature = "gui", target_os = "linux"))]
             {
                 let opts = shot::parse_args(&args[1..])?;
                 let value = shot::capture(&opts)?;
@@ -1489,6 +1494,11 @@ fn cmd_browser(args: &[String]) -> Result<()> {
                     value["width"].as_i64().unwrap_or(0),
                     value["height"].as_i64().unwrap_or(0)
                 );
+            }
+            #[cfg(all(feature = "gui", not(target_os = "linux")))]
+            {
+                let _ = &args;
+                bail!("browser screenshot is available on Linux only");
             }
             #[cfg(not(feature = "gui"))]
             {
