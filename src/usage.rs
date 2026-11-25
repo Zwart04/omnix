@@ -368,13 +368,107 @@ pub fn ram() -> Option<Value> {
     None
 }
 
+/// Claude Code has no documented quota file, but its OAuth credentials can
+/// answer the same endpoint the CLI panel uses. Keep a short cache so the
+/// status bar and the modal do not hammer the API.
+const CLAUDE_API_TTL: Duration = Duration::from_secs(60);
+static CLAUDE_API_CACHE: Mutex<Option<(Instant, String, Option<Value>)>> = Mutex::new(None);
+
+fn claude_usage_from_api(config: &Path) -> Option<Value> {
+    let key = config.to_string_lossy().to_string();
+    if let Ok(guard) = CLAUDE_API_CACHE.lock() {
+        if let Some((at, cached_key, value)) = guard.as_ref() {
+            if cached_key == &key && at.elapsed() < CLAUDE_API_TTL {
+                return value.clone();
+            }
+        }
+    }
+    let value = query_claude_usage(config);
+    if let Ok(mut guard) = CLAUDE_API_CACHE.lock() {
+        *guard = Some((Instant::now(), key, value.clone()));
+    }
+    value
+}
+
+fn query_claude_usage(config: &Path) -> Option<Value> {
+    let bytes = std::fs::read(config.join(".credentials.json")).ok()?;
+    let credentials: Value = serde_json::from_slice(&bytes).ok()?;
+    let oauth = credentials.get("claudeAiOauth")?;
+    let token = oauth.get("accessToken").and_then(Value::as_str)?.trim();
+    if token.is_empty() {
+        return None;
+    }
+    let plan = oauth
+        .get("subscriptionType")
+        .and_then(Value::as_str)
+        .filter(|text| !text.is_empty())
+        .map(str::to_string);
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(2))
+        .timeout(Duration::from_secs(4))
+        .build();
+    let response = agent
+        .get("https://api.anthropic.com/api/oauth/usage")
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("anthropic-beta", "oauth-2025-04-20")
+        .set("User-Agent", "claude-code/2.1.0")
+        .call()
+        .ok()?;
+    let body = response.into_string().ok()?;
+    parse_claude_usage(&body, plan.as_deref())
+}
+
+/// The OAuth endpoint reports `{five_hour, seven_day, ...}` with either
+/// `utilization` or `used_percentage`, plus an ISO `resets_at`.
+fn parse_claude_usage(body: &str, plan: Option<&str>) -> Option<Value> {
+    let value: Value = serde_json::from_str(body).ok()?;
+    let mut windows = Vec::new();
+    for (key, kind, label, minutes) in [
+        ("five_hour", "session", "5h", 300_i64),
+        ("seven_day", "weekly", "Weekly", 10080_i64),
+        ("seven_day_opus", "weekly-opus", "Weekly (Opus)", 10080_i64),
+        ("seven_day_sonnet", "weekly-sonnet", "Weekly (Sonnet)", 10080_i64),
+    ] {
+        let Some(entry) = value.get(key) else { continue };
+        let used = entry
+            .get("utilization")
+            .or_else(|| entry.get("used_percentage"))
+            .or_else(|| entry.get("usedPercent"))
+            .and_then(Value::as_f64);
+        let Some(used) = used else { continue };
+        let reset = entry
+            .get("resets_at")
+            .and_then(|reset| match reset {
+                Value::String(text) => parse_iso_seconds(text),
+                Value::Number(number) => number.as_i64(),
+                _ => None,
+            })
+            .map(|reset| (reset - unix_now()).max(0))
+            .unwrap_or(0);
+        windows.push(json!({
+            "kind": kind,
+            "label": label,
+            "usedPercent": used.clamp(0.0, 100.0),
+            "resetsInSeconds": reset,
+            "windowMinutes": minutes,
+        }));
+    }
+    if windows.is_empty() {
+        return None;
+    }
+    Some(json!({ "agent": "claude", "plan": plan, "windows": windows }))
+}
+
 /// Claude Code has no documented quota file. If the user's install writes one
-/// (`~/.claude/usage.json`), read the percentages; otherwise say nothing.
+/// (`~/.claude/usage.json`), read the percentages; otherwise try OAuth.
 pub fn claude_quota(home: &Path) -> Option<Value> {
     claude_quota_at(&home.join(".claude"))
 }
 
 pub fn claude_quota_at(config: &Path) -> Option<Value> {
+    if let Some(live) = claude_usage_from_api(config) {
+        return Some(live);
+    }
     let bytes = std::fs::read(config.join("usage.json")).ok()?;
     let value: Value = serde_json::from_slice(&bytes).ok()?;
     let mut windows = Vec::new();
@@ -564,6 +658,23 @@ mod tests {
         assert!(names.contains(&"claude:akun2"), "rows were {names:?}");
         assert!(!names.contains(&"codex"), "base login must not be faked");
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn parses_claude_oauth_usage() {
+        let body = r#"{
+          "five_hour": {"utilization": 100, "resets_at": "2026-11-24T12:00:00Z"},
+          "seven_day": {"utilization": 81, "resets_at": "2026-11-25T20:00:00Z"}
+        }"#;
+        let quota = parse_claude_usage(body, Some("max")).expect("quota");
+        assert_eq!(quota["agent"], "claude");
+        assert_eq!(quota["plan"], "max");
+        let windows = quota["windows"].as_array().unwrap();
+        assert_eq!(windows.len(), 2);
+        assert_eq!(windows[0]["kind"], "session");
+        assert_eq!(windows[0]["usedPercent"], 100.0);
+        assert_eq!(windows[1]["windowMinutes"], 10080);
+        assert!(parse_claude_usage("{}", None).is_none());
     }
 
     #[test]

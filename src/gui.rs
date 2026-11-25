@@ -133,7 +133,7 @@ fn pane_conflicts(app: &App) -> Value {
             out.push(json!({
                 "kind": "folder",
                 "value": cwd,
-                "message": format!("{} agent berjalan di folder yang sama: {cwd}", panes.len()),
+                "message": format!("{} agents are running in this folder: {cwd}", panes.len()),
                 "panes": panes,
             }));
         }
@@ -143,7 +143,7 @@ fn pane_conflicts(app: &App) -> Value {
             out.push(json!({
                 "kind": "profile",
                 "value": account,
-                "message": format!("{} worker memakai akun/profil yang sama: {account}", panes.len()),
+                "message": format!("{} workers use the same account/profile: {account}", panes.len()),
                 "panes": panes,
             }));
         }
@@ -1547,6 +1547,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 },
                 "panes": panes,
                 "conflicts": pane_conflicts(app),
+                "ram": usage::ram(),
             }))
         })(),
         "browserOpen" => (|| {

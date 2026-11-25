@@ -3383,7 +3383,6 @@
   function refreshAppInfo() {
     return call('appInfo', {}).then(function (info) {
       if (!info) return null;
-      var engine = info.engine || {};
       var version = info.version || '?';
       $('app-version').textContent = 'v' + version;
       applyPlatform(info.platform);
@@ -3404,10 +3403,13 @@
       if (setupInfo && setupInfo.needed) {
         setTimeout(function () { setupOpen(setupInfo); }, 160);
       }
-      var parts = ['omnix ' + version];
-      if (info.root) parts.push(info.root);
-      parts.push('lightpanda ' + (engine.lightpanda ? (engine.version || 'ready') : 'unavailable'));
-      $('status-left').textContent = parts.join(' \u00b7 ');
+      /* The sidebar footer already carries the version. The bar names the
+         workspace and keeps the long path in the tooltip. */
+      var left = $('status-left');
+      if (left) {
+        left.textContent = appRoot ? baseName(appRoot) : 'Omnix';
+        left.title = appRoot;
+      }
       return info;
     });
   }
@@ -3415,6 +3417,49 @@
   /* ---------- updates ---------- */
 
   var updateInfo = null;
+
+  function updateNoticeDismissed(version) {
+    var key = 'omnix.updateDismissed';
+    try {
+      return window.localStorage.getItem(key) === String(version || '');
+    } catch (err) {
+      return false;
+    }
+  }
+
+  function dismissUpdateNotice(version) {
+    try {
+      window.localStorage.setItem('omnix.updateDismissed', String(version || ''));
+    } catch (err) { /* storage unavailable: the notice returns next launch */ }
+  }
+
+  /* The update notice doubles as a support card: the Tako art and the support
+     action stay visible so people know how to keep the project moving. */
+  function showUpdateNotice(info, force) {
+    var box = $('update-notice');
+    if (!box || !info || !info.version) return;
+    if (!force && updateNoticeDismissed(info.version)) {
+      box.hidden = true;
+      return;
+    }
+    var title = $('update-title');
+    var text = $('update-text');
+    var install = $('update-install');
+    if (title) title.textContent = 'Omnix ' + info.version + ' is available';
+    if (text) {
+      text.textContent = 'Update now, or support Omnix on Tako so the updates keep coming.';
+    }
+    if (install) {
+      install.disabled = false;
+      install.textContent = 'Update now';
+    }
+    box.hidden = false;
+  }
+
+  function hideUpdateNotice() {
+    var box = $('update-notice');
+    if (box) box.hidden = true;
+  }
 
   function checkUpdates(manual) {
     return rpc('updateCheck', {}, 25000).then(function (res) {
@@ -3428,6 +3473,8 @@
           chip.title = 'Download Omnix ' + updateInfo.version;
         }
       }
+      if (updateInfo) showUpdateNotice(updateInfo, !!manual);
+      else hideUpdateNotice();
       if (manual) {
         setLast('Update check complete');
         toast('info', updateInfo
@@ -3448,9 +3495,14 @@
     if (!updateInfo) return null;
     var version = updateInfo.version;
     var chip = $('update-chip');
+    var install = $('update-install');
     if (chip) {
       chip.disabled = true;
       chip.textContent = 'Updating...';
+    }
+    if (install) {
+      install.disabled = true;
+      install.textContent = 'Updating...';
     }
     setLast('Downloading Omnix ' + version + '...');
     return call('updateInstall', {}, { quiet: true, timeout: 180000 }).then(function (res) {
@@ -3458,6 +3510,10 @@
         if (chip) {
           chip.disabled = false;
           chip.textContent = 'Update ' + version;
+        }
+        if (install) {
+          install.disabled = false;
+          install.textContent = 'Update now';
         }
         setLast('Update failed');
         toast('error', (res && res.message) || 'Update failed. Download it from GitHub instead.');
@@ -3467,8 +3523,9 @@
       if (res.quit) {
         setLast('Restarting Omnix...');
         setTimeout(function () { call('windowClose', {}, { quiet: true }); }, 1200);
-      } else if (chip) {
-        chip.hidden = true;
+      } else {
+        if (chip) chip.hidden = true;
+        hideUpdateNotice();
       }
       return res;
     });
@@ -3487,9 +3544,6 @@
       var list = Array.isArray(res.workspaces) ? res.workspaces : [];
       applyWorkspaceTitle();
       renderProjects(savedProjects);
-      var db = typeof res.dbBytes === 'number' ? (res.dbBytes / 1048576).toFixed(1) + ' MiB' : '?';
-      $('status-right').textContent =
-        'Sessions ' + num(res.sessions) + ' \u00b7 Messages ' + num(res.messages) + ' \u00b7 Index ' + db;
       renderConflicts(res.conflicts);
       return res;
     });
@@ -3498,10 +3552,15 @@
   /* ---------- shared work warnings ---------- */
 
   var conflictDismissed = '';
+  var conflictShown = '';
 
   function conflictSignature(list) {
     return list.map(function (row) {
-      return String(row.kind || '') + '|' + String(row.value || '');
+      var panes = Array.isArray(row.panes) ? row.panes : [];
+      var keys = panes.map(function (pane) {
+        return String((pane && pane.paneKey) || '');
+      }).join(',');
+      return String(row.kind || '') + '|' + String(row.value || '') + '|' + keys;
     }).join('\n');
   }
 
@@ -3510,40 +3569,74 @@
     if (!banner) return;
     list = Array.isArray(list) ? list : [];
     var signature = conflictSignature(list);
-    banner.textContent = '';
-    if (!list.length || signature === conflictDismissed) {
+    if (!list.length) {
+      conflictShown = '';
+      banner.hidden = true;
+      banner.textContent = '';
+      return;
+    }
+    if (signature === conflictDismissed) {
       banner.hidden = true;
       return;
     }
+    /* The scan repeats every couple of seconds. Rebuilding identical markup
+       makes the terminal underneath resize and shimmer, so paint only when
+       the set of conflicts actually changes. */
+    if (signature === conflictShown) return;
+    conflictShown = signature;
+    banner.textContent = '';
     banner.hidden = false;
 
-    var head = el('div', 'conflict-head');
-    head.appendChild(el('span', 'conflict-title', 'Kerja bersama'));
-    head.appendChild(el('span', 'conflict-sub', list.length + ' peringatan'));
+    var mark = el('span', 'conflict-icon');
+    mark.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.2 14 13H2L8 2.2Z"/><path d="M8 6v3.2M8 11.4v.2"/></svg>';
+    mark.setAttribute('aria-hidden', 'true');
+    banner.appendChild(mark);
+
+    var folder = null;
+    var profile = null;
+    var workers = 2;
+    list.forEach(function (row) {
+      if (row.kind === 'folder' && !folder) folder = row;
+      if (row.kind === 'profile' && !profile) profile = row;
+      var panes = Array.isArray(row.panes) ? row.panes : [];
+      workers = Math.max(workers, panes.length);
+    });
+
+    /* One quiet line: who is sharing what, one action, one close. The full
+       folder paths and account names stay in the pane titles, not here. */
+    var text = el('span', 'conflict-text');
+    text.appendChild(el('strong', null, workers + ' agents'));
+    if (folder) {
+      var where = baseName(folder.value) || 'this folder';
+      text.appendChild(document.createTextNode(' share ' + where));
+    } else {
+      var account = profile && profile.value ? String(profile.value) : '';
+      text.appendChild(document.createTextNode(
+        account ? ' share the ' + account + ' account' : ' share one account'));
+    }
+    if (folder && profile) {
+      text.appendChild(el('span', 'conflict-extra', ' \u00b7 same account'));
+    }
+    banner.appendChild(text);
+
+    if (folder) {
+      var panes = Array.isArray(folder.panes) ? folder.panes : [];
+      var target = panes.length ? panes[panes.length - 1] : null;
+      if (target && target.paneKey) {
+        var move = button('Move to worktree', 'conflict-action', function () {
+          return movePaneToWorktree(target.paneKey);
+        });
+        move.setAttribute('aria-label', 'Move one agent into its own worktree');
+        banner.appendChild(move);
+      }
+    }
+
     var close = button('\u00d7', 'icon-btn conflict-close', function () {
       conflictDismissed = signature;
       banner.hidden = true;
     });
-    close.setAttribute('aria-label', 'Dismiss shared-work warnings');
-    head.appendChild(close);
-    banner.appendChild(head);
-
-    list.forEach(function (row) {
-      var line = el('div', 'conflict-row');
-      line.appendChild(el('span', 'conflict-kind',
-        row.kind === 'folder' ? 'Folder' : 'Akun'));
-      line.appendChild(el('span', 'conflict-msg', String(row.message || '')));
-      if (row.kind === 'folder') {
-        var panes = Array.isArray(row.panes) ? row.panes : [];
-        var target = panes.length ? panes[panes.length - 1] : null;
-        if (target && target.paneKey) {
-          line.appendChild(button('Pindahkan ke worktree baru', 'btn sm', function () {
-            return movePaneToWorktree(target.paneKey);
-          }));
-        }
-      }
-      banner.appendChild(line);
-    });
+    close.setAttribute('aria-label', 'Dismiss shared workspace warning');
+    banner.appendChild(close);
   }
 
   function movePaneToWorktree(paneKey) {
@@ -3661,10 +3754,14 @@
     var app = res.app || {};
     var ai = res.ai || {};
     var other = res.other || {};
+    var ram = res.ram || usageData.ram || {};
     var appRss = Number(app.rss) || 0;
     var aiRss = Number(ai.rss) || 0;
+    var ramTotal = Number(ram.totalBytes) || 0;
+    var ramUsed = Number(ram.usedBytes) || 0;
+    var ramPct = ramTotal > 0 ? Math.round(ramUsed / ramTotal * 100) : null;
 
-    var chip = $('usage-chip');
+    var chip = $('memory-chip');
     if (chip) {
       var budget = res.budget || {};
       var over = budget.over === true;
@@ -3677,9 +3774,12 @@
       }
       if (over) chip.classList.add('over');
       else chip.classList.remove('over');
-      chip.title = 'AI usage and memory' +
-        (over ? ' \u2014 AI terminals over the ' + fmtBytes(Number(budget.limitBytes) || 0) +
-          ' budget' : '');
+      var stripNode = $('memory-strip');
+      if (stripNode) stripNode.textContent = appRss > 0 ? fmtBytes(appRss) : '-';
+      chip.title = 'Memory' +
+        (appRss > 0 ? ' \u00b7 ' + fmtBytes(appRss) + ' in ' + (app.processes || 0) + ' processes' : '') +
+        (ramPct == null ? '' : ' \u00b7 system ' + ramPct + '%') +
+        (over ? ' \u2014 AI terminals over the ' + fmtBytes(Number(budget.limitBytes) || 0) + ' budget' : '');
     }
 
     var totalNode = $('memory-total');
@@ -3692,6 +3792,12 @@
     if (aiNode) {
       aiNode.textContent = 'AI ' + fmtBytes(aiRss) + ' \u00b7 ' + (ai.processes || 0) +
         (ai.processes === 1 ? ' process' : ' processes');
+    }
+    var ramNode = $('memory-ram');
+    if (ramNode) {
+      ramNode.textContent = ramTotal > 0
+        ? 'System memory ' + fmtBytes(ramUsed) + ' of ' + fmtBytes(ramTotal) + ' (' + ramPct + '%)'
+        : 'System memory unavailable';
     }
 
     var list = $('memory-list');
@@ -3745,7 +3851,16 @@
     if (minutes >= 1440) return Math.round(minutes / 1440) + 'd window';
     if (minutes >= 60) return Math.round(minutes / 60) + 'h window';
     if (minutes > 0) return minutes + 'm window';
-    return String(win.kind || 'window');
+    var label = String(win.label || '');
+    if (label && label !== win.kind) return label;
+    var kind = String(win.kind || '').toLowerCase();
+    if (kind === 'five_hour' || kind === 'session') return '5h window';
+    if (kind === 'seven_day') return 'Weekly window';
+    if (kind === 'seven_day_opus') return 'Weekly window (Opus)';
+    if (kind === 'seven_day_sonnet') return 'Weekly window (Sonnet)';
+    if (kind === 'primary') return 'Session window';
+    if (kind === 'secondary') return 'Weekly window';
+    return label || 'Usage window';
   }
 
   /* One line per agent, like Orca: show the window that is closest to its
@@ -3763,21 +3878,14 @@
     return best;
   }
 
-  /* "Gemini Models \u00b7 Weekly" becomes "Gemini wk" in the status bar. */
-  function compactWindow(win) {
-    var parts = String((win && win.label) || '').split('\u00b7');
-    if (parts.length < 2) return '';
-    var group = parts[0].trim().split(/\s+/)[0];
-    var span = parts[1].trim().toLowerCase();
-    if (!group) return '';
-    if (span.indexOf('week') === 0) span = 'wk';
-    else if (span.indexOf('five hour') === 0 || span === '5h') span = '5h';
-    else span = span.replace(/[^a-z0-9]+/g, '').slice(0, 4);
-    return span ? group + ' ' + span : group;
+  function planLabel(agent) {
+    var plan = String((agent && agent.plan) || '').trim();
+    if (!plan) return '';
+    return plan.charAt(0).toUpperCase() + plan.slice(1);
   }
 
-  /* Bottom bar, like Orca: the brand mark, the window closest to its limit,
-     and the percentage used. The modal keeps the full detail. */
+  /* Bottom bar: one compact chip per provider. The bar shows only the peak
+     percentage; window and reset details stay in the tooltip and the menu. */
   function renderUsageStrip(agents) {
     var strip = $('usage-strip');
     if (!strip) return;
@@ -3791,12 +3899,7 @@
       var key = iconKey(name);
       var item = el('span', 'usage-item is-' + key);
       item.appendChild(iconNode(name, 'usage-mark'));
-      var tag = key === 'antigravity' ? compactWindow(best.win) : '';
-      if (tag) item.appendChild(el('span', 'usage-tag', tag));
       item.appendChild(el('span', 'usage-pct', Math.round(best.used) + '%'));
-      if (key !== 'antigravity') {
-        item.appendChild(el('span', 'usage-reset', fmtReset(best.win.resetsInSeconds)));
-      }
       item.title = agentLabel(name) +
         (best.win.label ? ' \u00b7 ' + String(best.win.label) : '') +
         ' \u00b7 ' + Math.round(best.used) + '% used \u00b7 resets in ' +
@@ -3804,72 +3907,141 @@
       strip.appendChild(item);
       shown++;
     }
-    if (!shown) strip.appendChild(el('span', 'usage-strip-empty', '\u2014'));
+    var chip = $('usage-chip');
+    if (chip) chip.hidden = false;
+    if (!shown) {
+      var empty = el('span', 'usage-item usage-item-empty');
+      empty.appendChild(el('span', 'usage-pct', 'AI \u2013'));
+      empty.title = 'AI usage \u00b7 open to read quotas';
+      strip.appendChild(empty);
+    }
+  }
+
+  var usageMode = 'compact';
+  var usageSortDesc = true;
+
+  function usageRows(agents) {
+    var rows = [];
+    for (var i = 0; i < agents.length; i++) {
+      var agent = agents[i] || {};
+      var windows = Array.isArray(agent.windows) ? agent.windows : [];
+      var best = peakWindow(windows);
+      if (!best) continue;
+      if (usageMode === 'compact') {
+        rows.push({ agent: agent, win: best.win, used: best.used, minutes: best.minutes });
+      } else {
+        for (var j = 0; j < windows.length; j++) {
+          var win = windows[j] || {};
+          rows.push({
+            agent: agent,
+            win: win,
+            used: Math.max(0, Math.min(100, Number(win.usedPercent) || 0)),
+            minutes: Number(win.windowMinutes) || 0
+          });
+        }
+      }
+    }
+    rows.sort(function (a, b) {
+      return usageSortDesc ? b.used - a.used : a.used - b.used;
+    });
+    return rows;
+  }
+
+  function usageRow(row) {
+    var agent = row.agent || {};
+    var win = row.win || {};
+    var key = iconKey(String(agent.agent || ''));
+    var node = el('button', 'usage-row is-' + key);
+    node.type = 'button';
+
+    var provider = el('span', 'usage-provider');
+    provider.appendChild(iconNode(String(agent.agent || ''), 'usage-mark'));
+    var text = el('span', 'usage-provider-text');
+    var line = el('span', 'usage-name-row');
+    line.appendChild(el('span', 'usage-name', agentLabel(String(agent.agent || 'agent'))));
+    var plan = planLabel(agent);
+    if (plan) line.appendChild(el('span', 'usage-plan', plan));
+    text.appendChild(line);
+    var when = windowLabel(win);
+    text.appendChild(el('span', 'usage-window',
+      when + ' \u00b7 resets in ' + fmtReset(win.resetsInSeconds)));
+    provider.appendChild(text);
+    node.appendChild(provider);
+
+    var meter = el('span', 'usage-meter');
+    var bar = el('span', 'usage-bar');
+    var fill = el('span', row.used >= 90 ? 'high' : '');
+    fill.style.width = row.used + '%';
+    bar.appendChild(fill);
+    meter.appendChild(bar);
+    meter.appendChild(el('span', 'usage-window-pct', Math.round(row.used) + '% used'));
+    node.appendChild(meter);
+
+    var chev = el('span', 'usage-chev');
+    chev.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 4 4-4 4"/></svg>';
+    node.appendChild(chev);
+
+    node.setAttribute('aria-label',
+      agentLabel(String(agent.agent || 'agent')) + ' ' +
+      String(win.label || windowLabel(win)) + ': ' + Math.round(row.used) + '% used');
+    node.addEventListener('click', guard(function () {
+      usageMode = 'detailed';
+      syncUsageTabs();
+      renderUsage();
+    }));
+    return node;
+  }
+
+  function syncUsageTabs() {
+    var tabs = document.querySelectorAll('[data-usage-mode]');
+    for (var i = 0; i < tabs.length; i++) {
+      var active = tabs[i].getAttribute('data-usage-mode') === usageMode;
+      tabs[i].classList.toggle('is-active', active);
+      tabs[i].setAttribute('aria-selected', active ? 'true' : 'false');
+    }
+    var sort = $('usage-sort-label');
+    if (sort) sort.textContent = 'Used';
+    var arrow = $('usage-sort-arrow');
+    if (arrow) arrow.style.transform = usageSortDesc ? '' : 'rotate(180deg)';
   }
 
   function renderUsage() {
-    var ram = usageData.ram || {};
-    var total = Number(ram.totalBytes) || 0;
-    var used = Number(ram.usedBytes) || 0;
-    var pct = total > 0 ? Math.round(used / total * 100) : null;
     var agents = Array.isArray(usageData.agents) ? usageData.agents : [];
 
     renderUsageStrip(agents);
-
-    var ramNode = $('usage-ram');
-    if (ramNode) {
-      ramNode.textContent = total > 0
-        ? 'Memory ' + fmtBytes(used) + ' of ' + fmtBytes(total) + ' (' + pct + '%)'
-        : 'Memory data unavailable';
-    }
+    syncUsageTabs();
 
     var list = $('usage-list');
     if (!list) return;
     list.textContent = '';
-    if (!agents.length) {
+    var rows = usageRows(agents);
+    if (!rows.length) {
       list.appendChild(el('div', 'usage-empty', 'No provider keeps local quota data yet.'));
       return;
     }
-    for (var i = 0; i < agents.length; i++) {
-      var agent = agents[i] || {};
-      var rows = Array.isArray(agent.windows) ? agent.windows : [];
-      var best = peakWindow(rows);
-      var row = el('div', 'usage-limit');
-      var id = el('div', 'usage-limit-id');
-      id.appendChild(el('span', 'usage-agent-name', agentLabel(String(agent.agent || 'agent'))));
-      var bits = [];
-      if (agent.plan) {
-        var plan = String(agent.plan);
-        bits.push(plan.charAt(0).toUpperCase() + plan.slice(1) + ' plan');
-      }
-      if (best) {
-        bits.push(String(best.win.label || windowLabel(best.win)));
-        bits.push('resets in ' + fmtReset(best.win.resetsInSeconds));
-      }
-      id.appendChild(el('span', 'usage-limit-sub', best ? bits.join(' \u00b7 ') : 'No quota window reported'));
-      row.appendChild(id);
-
-      var bar = el('div', 'usage-bar');
-      var fill = el('span', best && best.used >= 90 ? 'high' : '');
-      fill.style.width = (best ? best.used : 0) + '%';
-      bar.appendChild(fill);
-      row.appendChild(bar);
-      row.appendChild(el('span', 'usage-window-pct', best ? Math.round(best.used) + '%' : '-'));
-      list.appendChild(row);
+    for (var i = 0; i < rows.length; i++) {
+      list.appendChild(usageRow(rows[i]));
     }
   }
 
   function openUsage() {
+    usageMode = 'compact';
+    syncUsageTabs();
     renderUsage();
-    renderMemory();
     showModal($('usage-modal'));
-    refreshMemory();
     /* Antigravity is fetched on a worker; a second read picks it up without
        freezing the modal while `agy` starts. */
     setTimeout(function () {
       if (!$('usage-modal').hidden) refreshUsage();
     }, 2500);
     return refreshUsage();
+  }
+
+  /* Process memory has its own menu, so the AI quota list stays focused. */
+  function openMemory() {
+    renderMemory();
+    showModal($('memory-modal'));
+    return refreshMemory();
   }
 
   /* Usage is fetched only when the owner opens the modal or presses refresh:
@@ -5221,7 +5393,8 @@
     { label: 'Plugins', hint: 'API 1', run: openPluginsSettings },
     { label: 'Kembangkan Omnix', hint: 'DEV', run: openDevSettings },
     { label: 'Split Terminal', hint: 'Ctrl+Shift+D', run: splitActive },
-    { label: 'Usage and Memory', hint: '', run: openUsage },
+    { label: 'AI Usage', hint: 'Quota', run: openUsage },
+    { label: 'Memory', hint: 'RAM', run: openMemory },
     { label: 'Stop Agent Browser', hint: 'Lightpanda', run: stopAgentBrowser },
     { label: 'Add Project Folder', hint: '', run: pickProject },
     { label: 'Add Project by Path', hint: '', run: openProjectModal },
@@ -5441,6 +5614,7 @@
       else if (!$('project-modal').hidden) { take(); hideModal($('project-modal')); }
       else if (!$('cmd-modal').hidden) { take(); hideModal($('cmd-modal')); }
       else if (!$('usage-modal').hidden) { take(); hideModal($('usage-modal')); }
+      else if (!$('memory-modal').hidden) { take(); hideModal($('memory-modal')); }
       else if (!($('tab-new-menu') || {}).hidden) { take(); closeTabMenu(); }
     }
   }
@@ -6096,6 +6270,15 @@
     }));
     var updateChip = $('update-chip');
     if (updateChip) updateChip.addEventListener('click', guard(installUpdate));
+    var updateInstall = $('update-install');
+    if (updateInstall) updateInstall.addEventListener('click', guard(installUpdate));
+    var updateSupport = $('update-support');
+    if (updateSupport) updateSupport.addEventListener('click', guard(openSupport));
+    var updateDismiss = $('update-dismiss');
+    if (updateDismiss) updateDismiss.addEventListener('click', guard(function () {
+      if (updateInfo) dismissUpdateNotice(updateInfo.version);
+      hideUpdateNotice();
+    }));
 
     setSideCollapsed(storeGet('omnix.sideCollapsed') === '1');
 
@@ -6133,16 +6316,53 @@
     }));
     var usageRefresh = $('usage-refresh');
     if (usageRefresh) usageRefresh.addEventListener('click', guard(function () {
-      refreshMemory();
       return refreshUsage();
     }));
     var usageClose = $('usage-close');
     if (usageClose) usageClose.addEventListener('click', guard(function () {
       hideModal($('usage-modal'));
     }));
+    var usageTabs = document.querySelectorAll('[data-usage-mode]');
+    for (var t = 0; t < usageTabs.length; t++) {
+      usageTabs[t].addEventListener('click', guard(function (ev) {
+        var mode = ev.currentTarget.getAttribute('data-usage-mode');
+        if (mode) usageMode = mode;
+        renderUsage();
+      }));
+    }
+    var usageSort = $('usage-sort');
+    if (usageSort) usageSort.addEventListener('click', guard(function () {
+      usageSortDesc = !usageSortDesc;
+      renderUsage();
+    }));
+    var usageDetails = $('usage-details');
+    if (usageDetails) usageDetails.addEventListener('click', guard(function () {
+      usageMode = 'detailed';
+      renderUsage();
+    }));
+    var usageAccounts = $('usage-accounts');
+    if (usageAccounts) usageAccounts.addEventListener('click', guard(function () {
+      hideModal($('usage-modal'));
+      openSettings('agents');
+    }));
     var usageModal = $('usage-modal');
     if (usageModal) usageModal.addEventListener('click', guard(function (ev) {
       if (ev && ev.target === usageModal) hideModal($('usage-modal'));
+    }));
+
+    var memoryChip = $('memory-chip');
+    if (memoryChip) memoryChip.addEventListener('click', guard(openMemory));
+    var memoryRefresh = $('memory-refresh');
+    if (memoryRefresh) memoryRefresh.addEventListener('click', guard(function () {
+      return refreshMemory();
+    }));
+    var memoryClose = $('memory-close');
+    if (memoryClose) memoryClose.addEventListener('click', guard(function () {
+      hideModal($('memory-modal'));
+    }));
+    var memoryModal = $('memory-modal');
+    if (memoryModal) memoryModal.addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === memoryModal) hideModal($('memory-modal'));
     }));
 
     var panelButtons = document.querySelectorAll('.panel-btn[data-panel]');

@@ -625,7 +625,8 @@ pub fn scan(conn: &mut Connection, settings_root: &Path) -> Result<ScanReport> {
     let db = opencode_db();
     if db.exists() {
         // schema drift must not take the JSONL sources down with it
-        if opencode_scan(conn, &db, &mut report).is_err() {
+        if let Err(err) = opencode_scan(conn, &db, &mut report) {
+            eprintln!("scan: opencode {}: {err:#}", db.display());
             report.skipped += 1;
         }
     }

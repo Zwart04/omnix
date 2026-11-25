@@ -86,7 +86,7 @@ const byId = new Map();
   'browser-url', 'browser-open', 'browser-engine', 'browser-native', 'browser-text',
   'search-form', 'search-query', 'search-conversation', 'search-agent', 'search-results', 'search-meta',
   'handoff-form', 'handoff-name', 'handoff-agent', 'handoff-base', 'handoff-prompt', 'handoff-result',
-  'docs-frame', 'toasts', 'statusbar', 'status-left', 'status-right', 'status-last', 'update-chip',
+  'docs-frame', 'toasts', 'statusbar', 'status-left', 'update-chip',
   'history-list', 'history-search', 'history-meta', 'history-count', 'history-rescan',
   'history-agents', 'history-scope', 'history-collapse', 'history-expand', 'agents-panel',
   'history-filter', 'history-sort', 'history-collapse-all', 'history-time',
@@ -96,7 +96,9 @@ const byId = new Map();
   'side-workspace', 'workspace-group', 'workspace-group-body', 'workspace-collapse',
   'workspace-refresh',
   'usage-chip', 'usage-open', 'usage-strip', 'usage-strip-refresh', 'usage-modal', 'usage-close',
-  'usage-refresh', 'usage-ram', 'usage-list', 'usage-note',
+  'usage-refresh', 'usage-list', 'usage-note',
+  'memory-chip', 'memory-strip', 'memory-modal', 'memory-close', 'memory-refresh',
+  'memory-total', 'memory-ai', 'memory-list', 'memory-ram',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
   'workers', 'workers-list', 'workers-refresh', 'gc-preview',
@@ -393,7 +395,8 @@ require('./app.js');
   }));
   await tick();
 
-  assert.match(byId.get('status-left').textContent, /omnix 0\.1\.0/, 'version rendered');
+  assert.strictEqual(byId.get('status-left').textContent, 'repo', 'status bar names the workspace');
+  assert.match(byId.get('app-version').textContent, /v0\.1\.0/, 'version rendered in the sidebar footer');
 
   // ---- historySessions: scope arg, count, cards ----
   const sessionsReq = posted[posted.length - 1];
@@ -929,7 +932,7 @@ require('./app.js');
   docHandlers.keydown({ key: 'k', ctrlKey: true, preventDefault: noop });
   assert.strictEqual(byId.get('palette').hidden, false, 'Ctrl+K opens the palette');
   const rows = byId.get('palette-list').children;
-  assert.strictEqual(rows.length, 22, 'all commands listed with an empty query');
+  assert.strictEqual(rows.length, 23, 'all commands listed with an empty query');
   byId.get('palette-input').handlers.keydown({ key: 'ArrowDown', preventDefault: noop });
   assert.strictEqual(byId.get('palette-list').children[1].getAttribute('aria-selected'), 'true',
     'arrow down moves the selection');
@@ -949,7 +952,6 @@ require('./app.js');
   window.__omnix.emit('toast', '{"level":"warn","message":"host says hi"}');
   await tick();
 
-  assert.match(byId.get('status-last').textContent, /code 0/, 'ptyExit rendered');
   assert.ok(byId.get('toasts').children.length >= 1, 'toast event rendered');
 
   // the AI memory budget warns once when the terminal tree crosses it
@@ -977,7 +979,7 @@ require('./app.js');
   assert.strictEqual(byId.get('conflict-banner').hidden, false,
     'shared-folder warning banner is visible');
   const moveButton = all(byId.get('conflict-banner'),
-    (n) => n.tagName === 'button' && /Pindahkan ke worktree baru/.test(String(n.textContent)))[0];
+    (n) => n.tagName === 'button' && /Move to worktree/.test(String(n.textContent)))[0];
   assert.ok(moveButton, 'the banner offers a move-to-worktree action');
   docHandlers.visibilitychange();
   await tick();
@@ -1321,32 +1323,32 @@ require('./app.js');
     ]
   }));
   await tick();
-  const limits = byClass('usage-list', 'usage-limit');
+  const limits = byClass('usage-list', 'usage-row');
   assert.strictEqual(limits.length, 2, 'one quota line per agent');
-  const codexName = all(limits[0], (n) => n.className === 'usage-agent-name')[0];
+  const codexName = all(limits[0], (n) => n.className === 'usage-name')[0];
   assert.strictEqual(codexName.textContent, 'Codex', 'agent name is readable');
-  const codexSub = all(limits[0], (n) => n.className === 'usage-limit-sub')[0];
-  assert.match(codexSub.textContent, /Free plan/, 'plan is shown');
-  assert.match(codexSub.textContent, /resets in/, 'reset countdown is shown');
+  const codexPlan = all(limits[0], (n) => n.className === 'usage-plan')[0];
+  assert.match(codexPlan.textContent, /Free/, 'plan is shown');
+  const codexWhen = all(limits[0], (n) => n.className === 'usage-window')[0];
+  assert.match(codexWhen.textContent, /resets in/, 'reset countdown is shown');
   const codexPct = all(limits[0], (n) => n.className === 'usage-window-pct')[0];
-  assert.strictEqual(codexPct.textContent, '100%', 'the tightest window wins');
+  assert.strictEqual(codexPct.textContent, '100% used', 'the tightest window wins');
   const agPct = all(limits[1], (n) => n.className === 'usage-window-pct')[0];
-  assert.strictEqual(agPct.textContent, '1%', 'antigravity reports remaining quota');
+  assert.strictEqual(agPct.textContent, '1% used', 'antigravity reports remaining quota');
 
-  // the same snapshot fills the Orca-style strip in the status bar
+  // the same snapshot fills the compact strip in the status bar
+  assert.strictEqual(byId.get('usage-chip').hidden, false, 'AI chip appears with data');
   const stripItems = byClass('usage-strip', 'usage-item');
   assert.strictEqual(stripItems.length, 2, 'bottom bar lists every agent');
   const stripPcts = all(byId.get('usage-strip'), (n) => n.className === 'usage-pct');
   assert.deepStrictEqual(stripPcts.map((n) => n.textContent), ['100%', '1%'],
     'bottom bar shows the tightest window percentage');
-  const stripTags = all(byId.get('usage-strip'), (n) => n.className === 'usage-tag');
-  assert.strictEqual(stripTags.length, 1, 'only antigravity needs a window tag');
-  assert.strictEqual(stripTags[0].textContent, 'Gemini wk', 'window label is compact');
+  assert.strictEqual(all(byId.get('usage-strip'), (n) => n.className === 'usage-tag').length, 0,
+    'the bar leaves window tags to the menu');
+  assert.strictEqual(all(byId.get('usage-strip'), (n) => n.className === 'usage-reset').length, 0,
+    'the bar leaves reset times to the menu');
   const stripMarks = byClass('usage-strip', 'usage-mark');
   assert.strictEqual(stripMarks.length, 2, 'each entry has a brand mark');
-  const stripResets = byClass('usage-strip', 'usage-reset');
-  assert.strictEqual(stripResets.length, 1, 'codex keeps the reset countdown');
-  assert.strictEqual(stripResets[0].textContent, '15m', 'reset countdown is compact');
   const beforeUsage = posted.length;
   byId.get('usage-strip-refresh').handlers.click(noop());
   assert.strictEqual(posted.length, beforeUsage + 1, 'strip refresh reads quotas again');
@@ -1354,8 +1356,43 @@ require('./app.js');
   window.__omnix.reply(posted[posted.length - 1].id, true,
     '{"ram":{},"agents":[]}');
   await tick();
-  assert.strictEqual(byClass('usage-strip', 'usage-strip-empty').length, 1,
-    'an empty snapshot leaves a dash');
+  assert.strictEqual(byId.get('usage-chip').hidden, false,
+    'the AI entry stays visible without data');
+  const emptyEntry = byClass('usage-strip', 'usage-item-empty')[0];
+  assert.ok(emptyEntry, 'the empty AI entry keeps a dash');
+  const emptyText = all(emptyEntry,
+    (n) => n !== emptyEntry && n.className === 'usage-pct')[0];
+  assert.strictEqual(emptyText.textContent, 'AI –', 'the empty entry reads AI -');
+  byId.get('usage-close').handlers.click(noop());
+  assert.strictEqual(byId.get('usage-modal').hidden, true, 'usage menu closes');
+
+  // memory has its own menu and its own RPC, separate from AI quotas
+  byId.get('memory-chip').handlers.click(noop());
+  await tick();
+  assert.strictEqual(byId.get('usage-modal').hidden, true, 'memory is not the usage modal');
+  assert.strictEqual(byId.get('memory-modal').hidden, false, 'memory menu opens');
+  const memOpenReq = lastReq('memory');
+  assert.ok(memOpenReq, 'memory menu refreshes memory');
+  window.__omnix.reply(memOpenReq.id, true, JSON.stringify({
+    available: true, pid: 1,
+    app: { rss: 157286400, processes: 4 },
+    ai: { rss: 52428800, processes: 2 },
+    other: { rss: 104857600, processes: 2 },
+    budget: { limitBytes: 1048576, over: false },
+    panes: [],
+    ram: { totalBytes: 16 * 1024 * 1024 * 1024, usedBytes: 8 * 1024 * 1024 * 1024 }
+  }));
+  await tick();
+  assert.strictEqual(byId.get('memory-strip').textContent, '150 MB',
+    'memory chip shows app RSS');
+  assert.strictEqual(byId.get('memory-total').textContent, '150 MB in 4 processes',
+    'memory menu shows the process total');
+  assert.strictEqual(byId.get('memory-ai').textContent, 'AI 50 MB \u00b7 2 processes',
+    'AI share has its own tag');
+  assert.strictEqual(byId.get('memory-ram').textContent,
+    'System memory 8.0 GB of 16.0 GB (50%)', 'system RAM comes from the memory RPC');
+  byId.get('memory-close').handlers.click(noop());
+  assert.strictEqual(byId.get('memory-modal').hidden, true, 'memory menu closes');
 
   // workers: the CLI's pane registry, queued handoffs, send, and invoked cleanup
   const listReq = lastReq('handoffList');
