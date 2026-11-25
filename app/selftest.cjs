@@ -409,6 +409,7 @@ require('./app.js');
         agent: 'claude', sessionId: 'uuid-1', title: 'wire indexed history',
         cwd: '/repo', updatedAt: Math.floor(Date.now() / 1000) - 420,
         messageCount: 299, resumeCommand: 'claude --resume uuid-1',
+        model: 'claude/opus-4', branch: 'master',
         preview: 'add a right panel that lists indexed sessions'
       },
       {
@@ -498,7 +499,14 @@ require('./app.js');
   assert.strictEqual(cards.length, 3, 'one card per session');
   const metaRow = all(cards[0], (n) => n.className === 'sess-meta')[0];
   assert.deepStrictEqual(metaRow.children.map((c) => c.textContent),
-    ['299 msgs', '7m ago', 'claude'], 'card meta row');
+    ['Claude Code', '299 msgs', '7m ago'], 'card meta row');
+  const foot = all(cards[0], (n) => n.className === 'sess-foot')[0];
+  assert.ok(foot, 'card has a model/branch footer');
+  assert.strictEqual(all(foot, (n) => n.className === 'sess-model')[0].textContent, 'opus-4',
+    'model name is shortened to its last segment');
+  const branchChip = all(foot, (n) => n.className === 'sess-branch')[0];
+  assert.strictEqual(all(branchChip, (n) => n !== branchChip && n.tagName === 'span')[0].textContent,
+    'master', 'branch chip carries the branch');
 
 
   // ---- scope chip sends the right scope ----
@@ -587,9 +595,9 @@ require('./app.js');
   }));
   await tick();
 
-  const resumeBtn = byClass('history-list', 'sess-main')[0];
+  const resumeBtn = byClass('history-list', 'sess')[0];
   assert.ok(resumeBtn, 'session card renders');
-  resumeBtn.handlers.click(noop());
+  resumeBtn.handlers.click({ target: resumeBtn });
   const spawn = posted[posted.length - 1];
   assert.strictEqual(spawn.cmd, 'ptySpawn', 'resume spawns a pty');
   assert.strictEqual(spawn.args.agent, 'claude', 'spawn carries the agent');
@@ -1049,8 +1057,13 @@ require('./app.js');
   assert.ok(handoffWrite, 'handoff types the brief into the new terminal');
   assert.ok(handoffWrite.args.data.startsWith('\x1b[200~'), 'brief arrives as a bracketed paste');
   assert.match(handoffWrite.args.data, /# Handoff to codex/, 'the prompt carries the transcript');
-  assert.ok(handoffWrite.args.data.endsWith('\x1b[201~\r'),
-    'the prompt is submitted with enter');
+  assert.ok(handoffWrite.args.data.endsWith('\x1b[201~'),
+    'the brief is one paste without an early enter');
+  window.__omnix.reply(handoffWrite.id, true, '{"ok":true}');
+  await new Promise((r) => setTimeout(r, 1350));
+  const handoffSubmit = posted.filter((r) => r.cmd === 'ptyWrite').pop();
+  assert.strictEqual(handoffSubmit.args.data, '\r',
+    'the prompt is submitted after the paste settles');
 
   byId.get('tab-new').handlers.click(noop());
   byId.get('tab-new-menu').children[1].handlers.click(noop());
