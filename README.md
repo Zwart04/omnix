@@ -71,6 +71,12 @@ Pilih satu berkas sesuai OS dan prosesor (x64 untuk Intel/AMD, universal
 untuk macOS Intel maupun Apple Silicon). Berkas `Source code` di halaman rilis
 hanya diperlukan kalau kamu ingin membangun sendiri.
 
+Build macOS ditandatangani ad-hoc dan belum dinotarisasi; kalau Gatekeeper
+menolak, klik kanan `Omnix.app` lalu **Open**, atau jalankan
+`xattr -dr com.apple.quarantine /Applications/Omnix.app`. Installer Windows
+belum ditandatangani, jadi SmartScreen bisa menampilkan **More info → Run
+anyway**.
+
 ### Build dari source
 
 Linux membutuhkan `pkg-config` dan paket dev WebKitGTK 4.1:

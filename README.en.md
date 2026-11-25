@@ -73,6 +73,11 @@ Pick the one file that matches your OS and CPU (x64 for Intel/AMD, universal
 for macOS on either Intel or Apple Silicon). The `Source code` archives on the
 release page are only needed if you want to build Omnix yourself.
 
+The macOS build is ad-hoc signed and not notarized; if Gatekeeper blocks it,
+right-click `Omnix.app` and choose **Open**, or run
+`xattr -dr com.apple.quarantine /Applications/Omnix.app`. The Windows installer
+is unsigned, so SmartScreen may ask for **More info → Run anyway**.
+
 ### Build from source
 
 Linux needs `pkg-config` and the WebKitGTK 4.1 development packages:
