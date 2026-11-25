@@ -3,6 +3,36 @@
 Notable changes to Omnix. Release notes for every tag are also on the
 [releases page](https://github.com/Zwart04/omnix/releases).
 
+## [0.7.2] - 2026-11-25
+
+### Added
+
+- **Live AI usage panel** — status-bar chips and a full panel with compact and
+  detailed views, sort and refresh, plan/account labels, and per-agent rows.
+  Claude quota is read live through the CLI OAuth token when present, with a
+  cached/local fallback so the panel still works offline.
+- **Memory chip** — process memory and system RAM are visible in the status bar
+  and explained in a modal instead of hiding inside a log.
+- **Update notice** — a Tako support card that offers the update, links to the
+  support page, and can be dismissed per version.
+- **Faster project scanning** — opencode scan failures are logged instead of
+  disappearing silently, and the history selftest now covers the usage panel,
+  memory chip, and update notice.
+
+### Fixed
+
+- Includes the 0.7.1 handoff fix: the brief is pasted first, then Enter is sent,
+  so the target agent receives the whole prompt.
+- Conflict copy is explicit that two panes are sharing one folder/worktree.
+
+### Verification
+
+- 92 Rust tests and `node app/selftest.cjs` pass.
+- Release workflow builds Linux (`.deb`, Arch package, updater binary), Windows
+  installer, and macOS universal DMG.
+
+[0.7.2]: https://github.com/Zwart04/omnix/releases/tag/v0.7.2
+
 ## [0.7.1] - 2026-11-24
 
 ### Fixed

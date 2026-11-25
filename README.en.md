@@ -63,11 +63,11 @@ Prebuilt packages are built by CI on `v*` tags and published on the
 
 | Platform | File | Install |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `Omnix-0.7.1-Linux-Debian-Ubuntu-x64.deb` | `sudo apt install ./Omnix-0.7.1-Linux-Debian-Ubuntu-x64.deb` |
-| Linux x86_64 (Arch) | `Omnix-0.7.1-Linux-Arch-x64.pkg.tar.zst` | `sudo pacman -U Omnix-0.7.1-Linux-Arch-x64.pkg.tar.zst` |
-| Linux x86_64 (portable) | `Omnix-0.7.1-Linux-x64` | `chmod +x`, then run it; this file also feeds auto-update |
-| Windows 10/11 x64 | `Omnix-0.7.1-Windows-x64-Setup.exe` | run the installer; WebView2 is installed automatically when missing |
-| macOS 11+ (Intel & Apple Silicon) | `Omnix-0.7.1-macOS-universal.dmg` | open the DMG, drag `Omnix` to `/Applications` |
+| Linux x86_64 (Debian/Ubuntu) | `Omnix-0.7.2-Linux-Debian-Ubuntu-x64.deb` | `sudo apt install ./Omnix-0.7.2-Linux-Debian-Ubuntu-x64.deb` |
+| Linux x86_64 (Arch) | `Omnix-0.7.2-Linux-Arch-x64.pkg.tar.zst` | `sudo pacman -U Omnix-0.7.2-Linux-Arch-x64.pkg.tar.zst` |
+| Linux x86_64 (portable) | `Omnix-0.7.2-Linux-x64` | `chmod +x`, then run it; this file also feeds auto-update |
+| Windows 10/11 x64 | `Omnix-0.7.2-Windows-x64-Setup.exe` | run the installer; WebView2 is installed automatically when missing |
+| macOS 11+ (Intel & Apple Silicon) | `Omnix-0.7.2-macOS-universal.dmg` | open the DMG, drag `Omnix` to `/Applications` |
 
 Pick the one file that matches your OS and CPU (x64 for Intel/AMD, universal
 for macOS on either Intel or Apple Silicon). The `Source code` archives on the

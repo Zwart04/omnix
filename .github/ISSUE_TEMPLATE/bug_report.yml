@@ -14,7 +14,7 @@ body:
     attributes:
       label: Omnix version
       description: Output of `omnix --version` or the version chip.
-      placeholder: "0.7.1"
+      placeholder: "0.7.2"
     validations:
       required: true
   - type: dropdown
