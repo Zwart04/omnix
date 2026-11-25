@@ -417,6 +417,8 @@ pub struct SessionRow {
     pub updated_at: Option<i64>,
     pub message_count: i64,
     pub resume_command: String,
+    pub file_path: String,
+    pub model: Option<String>,
     pub preview: String,
 }
 
@@ -457,7 +459,7 @@ pub fn list(
 ) -> Result<Vec<SessionRow>> {
     let mut sql = String::from(
         "SELECT s.agent, s.session_id, s.title, s.cwd, s.updated_at, s.message_count,
-                s.resume_command,
+                s.resume_command, s.file_path, s.model,
                 COALESCE((SELECT substr(f.user_text, 1, 220) FROM messages m
                           JOIN messages_fts f ON f.rowid = m.id
                           WHERE m.session_row_id = s.id AND m.role = 'user'
@@ -480,8 +482,10 @@ pub fn list(
             updated_at: row.get(4)?,
             message_count: row.get(5)?,
             resume_command: row.get(6)?,
+            file_path: row.get(7)?,
+            model: row.get(8)?,
             preview: row
-                .get::<_, String>(7)?
+                .get::<_, String>(9)?
                 .split_whitespace()
                 .collect::<Vec<_>>()
                 .join(" "),
@@ -504,6 +508,33 @@ pub fn count(
     let mut stmt = conn.prepare(&sql)?;
     let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     Ok(stmt.query_row(refs.as_slice(), |row| row.get(0))?)
+}
+
+/// Remove one session from the local index. The agent transcript on disk is
+/// left untouched; a later rescan can index it again.
+pub fn remove_session(conn: &Connection, agent: &str, session_id: &str) -> Result<bool> {
+    let row: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM sessions WHERE agent = ?1 AND session_id = ?2",
+            params![agent, session_id],
+            |row| row.get(0),
+        )
+        .ok();
+    let Some(row_id) = row else {
+        return Ok(false);
+    };
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM messages_fts WHERE rowid IN (SELECT id FROM messages WHERE session_row_id = ?1)",
+        params![row_id],
+    )?;
+    tx.execute(
+        "DELETE FROM messages WHERE session_row_id = ?1",
+        params![row_id],
+    )?;
+    tx.execute("DELETE FROM sessions WHERE id = ?1", params![row_id])?;
+    tx.commit()?;
+    Ok(true)
 }
 
 #[derive(Debug)]

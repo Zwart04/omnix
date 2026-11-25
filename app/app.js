@@ -1092,7 +1092,9 @@
         minimumContrastRatio: 4.5,
         scrollback: 2000,
         scrollSensitivity: 3,
-        smoothScrollDuration: 80,
+        /* Instant wheel scrolling: the animated variant kept re-scheduling
+           frames and felt laggy on software-rendered WebKitGTK. */
+        smoothScrollDuration: 0,
         macOptionIsMeta: true,
         theme: termTheme()
       });
@@ -2201,7 +2203,7 @@
       for (var i = 0; i < agentsInfo.length; i++) {
         if (agentsInfo[i].name === agent.name) agentsInfo[i].enabled = enabled;
       }
-      fillAgentSelect($('handoff-target'), 'opencode2');
+      fillAgentPicker('opencode2');
       toast('ok', agentLabel(agent.name) + (enabled ? ' enabled' : ' disabled'));
       renderAgentSettings(agentSettingsData);
       return res;
@@ -2983,6 +2985,11 @@
     'codex': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path></svg>`,
     'command': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.6 8.6 8 4 12.4"/><path d="M9.4 12.4H12.4"/></svg>`,
     'handoff': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8h8"/><path d="m7.5 4.5 3.5 3.5-3.5 3.5"/><path d="M13 3v10"/></svg>`,
+    branch: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`,
+    chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-6a8 8 0 0 1 8-8h2a8 8 0 0 1 8 3z"/><path d="M8 10h8"/><path d="M8 14h5"/></svg>`,
+    more: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>`,
+    copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
+    trash: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12"/><path d="M9 7V4h6v3"/></svg>`,
     folder: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L12.5 6H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>`,
     file: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/></svg>`,
     'copilot': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M16.295 5.29l-0.242 0.986h-2.32c-1.721 0-3.22 1.197-3.638 2.902l-2.101 8.593H3.798c-2.44 0-4.229-2.342-3.637-4.761l2.106-8.612c0.557-2.274 2.556-3.87 4.85-3.87h5.54c2.44 0 4.23 2.343 3.638 4.761"></path><path d="M16.295 5.29l-0.242 0.986h-2.32c-1.721 0-3.22 1.197-3.638 2.902l-2.101 8.593H3.798c-2.44 0-4.229-2.342-3.637-4.761l2.106-8.612c0.557-2.274 2.556-3.87 4.85-3.87h5.54c2.44 0 4.23 2.343 3.638 4.761M7.752 18.758l0.242-0.986h2.321c1.72 0 3.22-1.197 3.637-2.903l2.102-8.593h4.196c2.439 0 4.228 2.343 3.637 4.762l-2.107 8.611c-0.556 2.274-2.555 3.87-4.85 3.87h-5.54c-2.44 0-4.229-2.342-3.638-4.761"></path><path d="M7.752 18.758l0.242-0.986h2.321c1.72 0 3.22-1.197 3.637-2.903l2.102-8.593h4.196c2.439 0 4.228 2.343 3.637 4.762l-2.107 8.611c-0.556 2.274-2.555 3.87-4.85 3.87h-5.54c-2.44 0-4.229-2.342-3.638-4.761"></path></svg>`,
@@ -3110,44 +3117,143 @@
           supportsConfig: a.supportsConfig !== false
         };
       });
-    fillAgentSelect($('handoff-target'), 'opencode2');
+    fillAgentPicker('opencode2');
     fillAgents($('search-agent'), 'any agent', '');
     fillDevAgents();
   }
 
-  function fillAgentSelect(select, preferred) {
-    if (!select) return;
-    var current = select.value;
-    select.textContent = '';
+  /* The handoff target is a DOM listbox, not a native <select>. GTK gives a
+     native select its own popup window, and that window survived minimizing
+     the app. A DOM menu is clipped to this window and closes with it. */
+  var handoffTarget = '';
+
+  function findAgent(name) {
+    for (var i = 0; i < agentsInfo.length; i++) {
+      if (agentsInfo[i].name === name) return agentsInfo[i];
+    }
+    return null;
+  }
+
+  function fillAgentPicker(preferred) {
     var fallback = '';
+    var pick = '';
     for (var i = 0; i < agentsInfo.length; i++) {
       var agent = agentsInfo[i];
-      var opt = el('option', null,
-        agentDisplay(agent) + ' (CLI)' +
-        (agent.available ? '' : ' \u00b7 not found') +
-        (agent.enabled ? '' : ' \u00b7 disabled'));
-      opt.value = agent.name;
-      if (!agent.available || !agent.enabled) opt.disabled = true;
-      else if (!fallback) fallback = agent.name;
-      select.appendChild(opt);
+      if (!agent.available || !agent.enabled) continue;
+      if (!fallback) fallback = agent.name;
+      if (!pick && (agent.name === handoffTarget || agent.name === preferred)) pick = agent.name;
     }
-    var pick = current || preferred || fallback;
-    var usable = false;
-    for (var j = 0; j < agentsInfo.length; j++) {
-      if (agentsInfo[j].name === pick && agentsInfo[j].available && agentsInfo[j].enabled) usable = true;
+    setHandoffTarget(pick || fallback);
+    buildHandoffOptions();
+  }
+
+  function buildHandoffOptions() {
+    var menu = $('handoff-target-menu');
+    if (!menu) return;
+    menu.textContent = '';
+    for (var i = 0; i < agentsInfo.length; i++) {
+      var agent = agentsInfo[i];
+      var option = el('button', 'picker-option');
+      option.type = 'button';
+      option.setAttribute('role', 'option');
+      option.dataset.agent = agent.name;
+      option.setAttribute('aria-selected', agent.name === handoffTarget ? 'true' : 'false');
+      option.appendChild(iconNode(agent.name));
+      option.appendChild(el('span', 'picker-option-label', agentDisplay(agent) + ' (CLI)'));
+      if (!agent.available) option.appendChild(el('span', 'picker-option-note', 'not found'));
+      else if (!agent.enabled) option.appendChild(el('span', 'picker-option-note', 'disabled'));
+      if (!agent.available || !agent.enabled) option.disabled = true;
+      option.addEventListener('click', guard((function (name) {
+        return function (ev) {
+          if (ev && ev.stopPropagation) ev.stopPropagation();
+          chooseHandoffTarget(name);
+        };
+      })(agent.name)));
+      menu.appendChild(option);
     }
-    select.value = usable ? pick : fallback;
+  }
+
+  function setHandoffTarget(name) {
+    handoffTarget = String(name || '');
+    var agent = findAgent(handoffTarget);
+    var value = $('handoff-target-value');
+    if (value) {
+      value.textContent = agent ? agentDisplay(agent) : (handoffTarget || 'Choose an agent');
+    }
+    var button = $('handoff-target');
+    if (button) button.removeAttribute('title');
+    var options = document.querySelectorAll('#handoff-target-menu .picker-option');
+    for (var i = 0; i < options.length; i++) {
+      options[i].setAttribute('aria-selected',
+        options[i].dataset.agent === handoffTarget ? 'true' : 'false');
+    }
+  }
+
+  function closeHandoffPicker() {
+    var menu = $('handoff-target-menu');
+    var button = $('handoff-target');
+    if (menu) menu.hidden = true;
+    if (button) button.setAttribute('aria-expanded', 'false');
+  }
+
+  function openHandoffPicker() {
+    var menu = $('handoff-target-menu');
+    var button = $('handoff-target');
+    if (!menu || !button || menu.hidden === false) return;
+    buildHandoffOptions();
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    var selected = menu.querySelector('[aria-selected="true"]:not(:disabled)') ||
+      menu.querySelector('.picker-option:not(:disabled)');
+    if (selected && selected.focus) selected.focus();
+  }
+
+  function toggleHandoffPicker() {
+    var menu = $('handoff-target-menu');
+    if (menu && menu.hidden) openHandoffPicker();
+    else closeHandoffPicker();
+  }
+
+  function chooseHandoffTarget(name) {
+    setHandoffTarget(name);
+    closeHandoffPicker();
+    var button = $('handoff-target');
+    if (button && button.focus) button.focus();
+  }
+
+  function handoffPickerKeydown(ev) {
+    var menu = $('handoff-target-menu');
+    if (!menu || menu.hidden) return;
+    var options = Array.prototype.slice.call(
+      menu.querySelectorAll('.picker-option:not(:disabled)'));
+    if (!options.length) return;
+    var at = options.indexOf(document.activeElement);
+    if (ev.key === 'ArrowDown') {
+      ev.preventDefault();
+      options[Math.min(options.length - 1, at + 1)].focus();
+    } else if (ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      options[Math.max(0, at - 1)].focus();
+    } else if (ev.key === 'Home') {
+      ev.preventDefault();
+      options[0].focus();
+    } else if (ev.key === 'End') {
+      ev.preventDefault();
+      options[options.length - 1].focus();
+    }
   }
 
   function showModal(node) {
     if (!node) return;
     node.hidden = false;
-    var focus = node.querySelector('select, input');
+    var focus = node.querySelector('[data-autofocus], select, input');
     if (focus && focus.focus) focus.focus();
   }
 
   function hideModal(node) {
-    if (node) node.hidden = true;
+    if (!node) return;
+    if (node.id === 'handoff-modal') closeHandoffPicker();
+    node.hidden = true;
   }
 
   function setHandoffContext(value) {
@@ -3185,7 +3291,8 @@
     if (cwd) {
       cwd.textContent = (handoffSource && handoffSource.cwd) || appRoot || '-';
     }
-    fillAgentSelect($('handoff-target'), 'opencode2');
+    closeHandoffPicker();
+    fillAgentPicker('opencode2');
     var start = $('handoff-start');
     if (start) start.disabled = !handoffSource;
     setHandoffContext('focused');
@@ -3197,8 +3304,7 @@
       toast('warn', 'Choose a session from Agents history first.');
       return Promise.resolve(null);
     }
-    var select = $('handoff-target');
-    var agent = select ? select.value : '';
+    var agent = handoffTarget;
     if (!agent) {
       toast('warn', 'Pick a target agent.');
       return Promise.resolve(null);
@@ -3487,6 +3593,22 @@
       memoryBusy = false;
       return null;
     });
+  }
+
+  /* Stepped spinner: four transforms per second instead of a 60fps CSS
+     animation. The CSS version repainted the whole window on this WebKitGTK
+     build, so an agent TUI that redraws its status line made typing lag. */
+  function startWorkingSpin() {
+    var angle = 0;
+    setInterval(function () {
+      if (document.hidden) return;
+      var nodes = document.querySelectorAll('.tab-status.is-working, .work-dot.is-working');
+      if (!nodes.length) return;
+      angle = (angle + 90) % 360;
+      for (var i = 0; i < nodes.length; i++) {
+        nodes[i].style.transform = 'rotate(' + angle + 'deg)';
+      }
+    }, 250);
   }
 
   function startMemoryPoll() {
@@ -4608,53 +4730,342 @@
       .trim();
   }
 
+  /* Model ids are often provider/vendor/name; the card shows the readable
+     name and keeps the full id in the tooltip. */
+  function shortModel(model) {
+    var text = String(model || '');
+    var cut = text.lastIndexOf('/');
+    return cut >= 0 && cut < text.length - 1 ? text.slice(cut + 1) : text;
+  }
+
+  var sessionMenuNode = null;
+  var sessionMenuTrigger = null;
+
+  function closeSessionMenu() {
+    if (sessionMenuNode && sessionMenuNode.parentNode) {
+      sessionMenuNode.parentNode.removeChild(sessionMenuNode);
+    }
+    if (sessionMenuTrigger && sessionMenuTrigger.setAttribute) {
+      sessionMenuTrigger.setAttribute('aria-expanded', 'false');
+    }
+    sessionMenuNode = null;
+    sessionMenuTrigger = null;
+  }
+
+  function copyText(text, label) {
+    var value = String(text == null ? '' : text);
+    if (!value) {
+      toast('warn', 'Nothing to copy for ' + label + '.');
+      return;
+    }
+    function fallback() {
+      var area = document.createElement('textarea');
+      area.value = value;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.top = '-1000px';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+      document.body.removeChild(area);
+      toast(ok ? 'ok' : 'error',
+        ok ? label + ' copied' : 'Could not copy ' + label.toLowerCase());
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(value).then(function () {
+        toast('ok', label + ' copied');
+      }, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  var confirmResolve = null;
+
+  function settleConfirm(value) {
+    var modal = $('confirm-modal');
+    if (modal) modal.hidden = true;
+    var resolve = confirmResolve;
+    confirmResolve = null;
+    if (resolve) resolve(value);
+  }
+
+  function askConfirm(title, text, okLabel) {
+    var modal = $('confirm-modal');
+    if (!modal) return Promise.resolve(false);
+    if (confirmResolve) settleConfirm(false);
+    var titleNode = $('confirm-title');
+    var textNode = $('confirm-text');
+    var ok = $('confirm-ok');
+    if (titleNode) titleNode.textContent = title || 'Confirm';
+    if (textNode) textNode.textContent = text || '';
+    if (ok) {
+      ok.textContent = okLabel || 'Confirm';
+      ok.classList.add('is-danger');
+    }
+    modal.hidden = false;
+    if (ok && ok.focus) ok.focus();
+    return new Promise(function (resolve) { confirmResolve = resolve; });
+  }
+
+  function openSession(s) {
+    return resumeSession({
+      paneKey: 'h:' + s.agent + ':' + s.sessionId,
+      agent: s.agent,
+      sessionId: s.sessionId,
+      cwd: s.cwd,
+      title: s.title
+    });
+  }
+
+  function resumeInWorktree(s) {
+    if (!s || !s.agent || !s.sessionId) {
+      toast('warn', 'This session has no agent ID to resume.');
+      return Promise.resolve(null);
+    }
+    if (!s.cwd) {
+      toast('warn', 'This session has no working folder to branch from.');
+      return Promise.resolve(null);
+    }
+    setLast('Creating worktree\u2026');
+    return call('resumeWorktree', {
+      agent: s.agent,
+      sessionId: s.sessionId,
+      cwd: s.cwd,
+      title: s.title || ''
+    }, { timeout: 120000 }).then(function (res) {
+      if (!res || !res.worktree) return null;
+      createTerminal({
+        paneKey: 'hw:' + s.agent + ':' + s.sessionId + ':' + Date.now(),
+        agent: s.agent,
+        sessionId: s.sessionId,
+        cwd: res.worktree,
+        title: agentDisplay(s.agent) + ' \u00b7 ' + res.branch
+      });
+      toast('ok', 'Worktree ' + res.branch + ' ready');
+      setLast('Worktree ready');
+      return res;
+    });
+  }
+
+  function revealSessionLog(s) {
+    if (!s || !s.logPath) {
+      toast('warn', 'No log path is indexed for this session.');
+      return Promise.resolve(null);
+    }
+    var database = /\.(db|sqlite|sqlite3)$/i.test(s.logPath);
+    return call('openPath', { path: s.logPath, folder: database }, { quiet: true })
+      .then(function (res) {
+        if (res) return res;
+        if (s.cwd) return call('openPath', { path: s.cwd });
+        toast('warn', 'The log is no longer on disk.');
+        return null;
+      });
+  }
+
+  function openWorkingDirectory(s) {
+    if (!s || !s.cwd) {
+      toast('warn', 'This session has no working folder.');
+      return Promise.resolve(null);
+    }
+    return call('openPath', { path: s.cwd });
+  }
+
+  function deleteHistorySession(s) {
+    var title = cleanText(s.title) || 'this session';
+    return askConfirm('Remove session?',
+      'Remove "' + title + '" from Omnix history? The agent transcript stays on ' +
+      'disk, so a later rescan can index it again.', 'Remove').then(function (ok) {
+      if (!ok) return null;
+      return call('historyDeleteSession', {
+        agent: s.agent,
+        sessionId: s.sessionId
+      }, { quiet: true }).then(function (res) {
+        if (!res) {
+          toast('error', 'Could not remove the session.');
+          return null;
+        }
+        toast('ok', 'Session removed from history');
+        return loadSessions().then(renderHistory);
+      });
+    });
+  }
+
+  function sessionMenuRow(label, hint, glyph, run, danger) {
+    var row = menuRow(label, hint, glyph, function () {
+      closeSessionMenu();
+      return run();
+    });
+    if (danger) row.classList.add('is-danger');
+    return row;
+  }
+
+  function openSessionMenu(trigger, s) {
+    closeSessionMenu();
+    var menu = el('div', 'menu sess-menu');
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', 'Session actions');
+
+    menu.appendChild(sessionMenuRow('Resume in Worktree', '', 'branch', function () {
+      return resumeInWorktree(s);
+    }));
+    menu.appendChild(sessionMenuRow('Resume in New Chat', '', 'chat', function () {
+      return openSession(s);
+    }));
+    menu.appendChild(sessionMenuRow('Copy Resume Command', '', 'copy', function () {
+      copyText(s.resumeCommand, 'Resume command');
+    }));
+    menu.appendChild(sessionMenuRow('Hand off to agent', '', 'handoff', function () {
+      return openHandoff(s);
+    }));
+    menu.appendChild(el('div', 'menu-sep'));
+    menu.appendChild(sessionMenuRow('Reveal Log', '', 'file', function () {
+      return revealSessionLog(s);
+    }));
+    menu.appendChild(sessionMenuRow('Open Working Directory', '', 'folder', function () {
+      return openWorkingDirectory(s);
+    }));
+    menu.appendChild(sessionMenuRow('Copy Session ID', '', 'copy', function () {
+      copyText(s.sessionId, 'Session ID');
+    }));
+    menu.appendChild(sessionMenuRow('Copy Log Path', '', 'copy', function () {
+      copyText(s.logPath, 'Log path');
+    }));
+    menu.appendChild(el('div', 'menu-sep'));
+    menu.appendChild(sessionMenuRow('Delete', '', 'trash', function () {
+      return deleteHistorySession(s);
+    }, true));
+
+    document.body.appendChild(menu);
+    var rect = trigger.getBoundingClientRect();
+    var width = menu.offsetWidth || 232;
+    var height = menu.offsetHeight || 300;
+    var left = Math.min(rect.right - width, window.innerWidth - width - 8);
+    left = Math.max(8, left);
+    var top = rect.bottom + 4;
+    if (top + height > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - height - 4);
+    }
+    menu.style.left = left + 'px';
+    menu.style.top = top + 'px';
+    sessionMenuNode = menu;
+    sessionMenuTrigger = trigger;
+    trigger.setAttribute('aria-expanded', 'true');
+    var first = menu.querySelector('.menu-item');
+    if (first && first.focus) first.focus();
+    menu.addEventListener('keydown', function (ev) {
+      var items = Array.prototype.slice.call(
+        menu.querySelectorAll('.menu-item:not(:disabled)'));
+      var at = items.indexOf(document.activeElement);
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        if (items.length) items[Math.min(items.length - 1, at + 1)].focus();
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        if (items.length) items[Math.max(0, at - 1)].focus();
+      } else if (ev.key === 'Home') {
+        ev.preventDefault();
+        if (items.length) items[0].focus();
+      } else if (ev.key === 'End') {
+        ev.preventDefault();
+        if (items.length) items[items.length - 1].focus();
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        closeSessionMenu();
+        if (trigger.focus) trigger.focus();
+      } else if (ev.key === 'Tab') {
+        closeSessionMenu();
+      }
+    });
+  }
+
+  function sessionAction(kind, label, run) {
+    var action = el('button', 'sess-act sess-act-' + kind);
+    action.type = 'button';
+    /* No native title: WebKitGTK renders it in a separate X window, and that
+       window can sit over the very button it describes and eat the click. */
+    action.setAttribute('aria-label', label);
+    action.innerHTML = ICONS[kind] || '';
+    action.addEventListener('click', guard(function (ev) {
+      if (ev && ev.stopPropagation) ev.stopPropagation();
+      return run(ev);
+    }));
+    return action;
+  }
+
   function sessionCard(s) {
     var card = el('div', 'sess');
     card.setAttribute('role', 'listitem');
-
-    var main = el('button', 'sess-main');
-    main.type = 'button';
-    main.setAttribute('aria-label',
-      'Resume ' + (s.title || 'session') + ' from ' + (s.agent || 'agent'));
-
-    var top = el('span', 'sess-top');
+    card.tabIndex = 0;
     var titleText = cleanText(s.title) || '(untitled)';
+    card.setAttribute('aria-label', 'Resume ' + titleText + ' from ' + (s.agent || 'agent'));
+
+    var head = el('div', 'sess-head');
+    head.appendChild(iconNode(s.agent));
     var title = el('span', 'sess-title', titleText);
     title.title = titleText;
-    top.appendChild(title);
-    main.appendChild(top);
+    head.appendChild(title);
+
+    var actions = el('div', 'sess-actions');
+    actions.appendChild(sessionAction('branch', 'Resume in Worktree', function () {
+      return resumeInWorktree(s);
+    }));
+    actions.appendChild(sessionAction('chat', 'Resume in New Chat', function () {
+      return openSession(s);
+    }));
+    actions.appendChild(sessionAction('handoff', 'Hand off to agent', function () {
+      return openHandoff(s);
+    }));
+    var more = sessionAction('more', 'More actions', function () {
+      openSessionMenu(more, s);
+    });
+    more.setAttribute('aria-haspopup', 'menu');
+    more.setAttribute('aria-expanded', 'false');
+    actions.appendChild(more);
+    head.appendChild(actions);
+    card.appendChild(head);
 
     var preview = cleanText(s.preview);
     if (preview && titleText && preview.indexOf(titleText.slice(0, 40)) !== 0) {
-      main.appendChild(el('span', 'sess-preview', preview));
+      card.appendChild(el('div', 'sess-preview', preview));
     }
 
-    var meta = el('span', 'sess-meta');
-    meta.appendChild(el('span', null, fmtNum(s.messageCount || 0) + ' msgs'));
+    var meta = el('div', 'sess-meta');
+    meta.appendChild(el('span', 'sess-provider', agentDisplay(s.agent) || s.agent || '?'));
+    var msgs = Number(s.messageCount) || 0;
+    meta.appendChild(el('span', null, fmtNum(msgs) + (msgs === 1 ? ' msg' : ' msgs')));
     meta.appendChild(el('span', null, relTime(s.updatedAt) || 'unknown'));
-    meta.appendChild(el('span', null, s.agent || '?'));
-    main.appendChild(meta);
+    card.appendChild(meta);
 
-    main.addEventListener('click', guard(function () {
-      resumeSession({
-        paneKey: 'h:' + s.agent + ':' + s.sessionId,
-        agent: s.agent,
-        sessionId: s.sessionId,
-        cwd: s.cwd,
-        title: s.title
-      });
+    if (s.model || s.branch) {
+      var foot = el('div', 'sess-foot');
+      if (s.model) {
+        var model = el('span', 'sess-model', shortModel(s.model));
+        model.title = s.model;
+        foot.appendChild(model);
+      }
+      if (s.branch) {
+        var branch = el('span', 'sess-branch');
+        branch.innerHTML = ICONS.branch;
+        branch.appendChild(el('span', null, s.branch));
+        branch.title = s.branch;
+        foot.appendChild(branch);
+      }
+      card.appendChild(foot);
+    }
+
+    card.addEventListener('click', guard(function (ev) {
+      if (ev.target && ev.target.closest && ev.target.closest('.sess-actions')) return;
+      return openSession(s);
     }));
-
-    var hop = el('button', 'sess-hop', '\u2192');
-    hop.type = 'button';
-    hop.title = 'Hand off to another agent';
-    hop.setAttribute('aria-label', 'Hand off ' + (s.title || 'session'));
-    hop.addEventListener('click', guard(function () {
-      openHandoff({ agent: s.agent, sessionId: s.sessionId, cwd: s.cwd, title: s.title });
+    card.addEventListener('keydown', guard(function (ev) {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      if (ev.target && ev.target.closest && ev.target.closest('.sess-actions')) return;
+      ev.preventDefault();
+      return openSession(s);
     }));
-
-    card.appendChild(main);
-    card.appendChild(hop);
     return card;
   }
 
@@ -5015,7 +5426,11 @@
       return;
     }
     if (key === 'Escape') {
-      if (paletteVisible()) { take(); paletteClose(); }
+      var pickerMenu = $('handoff-target-menu');
+      if (pickerMenu && !pickerMenu.hidden) { take(); closeHandoffPicker(); }
+      else if (sessionMenuNode) { take(); closeSessionMenu(); }
+      else if (!$('confirm-modal').hidden) { take(); settleConfirm(false); }
+      else if (paletteVisible()) { take(); paletteClose(); }
       else if (!$('handoff-modal').hidden) { take(); hideModal($('handoff-modal')); }
       else if (!$('project-modal').hidden) { take(); hideModal($('project-modal')); }
       else if (!$('cmd-modal').hidden) { take(); hideModal($('cmd-modal')); }
@@ -5543,7 +5958,7 @@
   function wire() {
     wirePanelResizers();
     fillAgents($('search-agent'), 'any agent', '');
-    fillAgentSelect($('handoff-target'), 'opencode2');
+    fillAgentPicker('opencode2');
 
     var newProject = $('new-project');
     if (newProject) newProject.addEventListener('click', guard(pickProject));
@@ -5618,8 +6033,25 @@
 
     var winMin = $('win-min');
     if (winMin) winMin.addEventListener('click', guard(function () {
+      /* A popup left open would otherwise outlive the window it belongs to. */
+      closeHandoffPicker();
+      closeSessionMenu();
       call('windowMinimize', {});
     }));
+
+    window.addEventListener('blur', function () {
+      closeHandoffPicker();
+      closeSessionMenu();
+    });
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) return;
+      closeHandoffPicker();
+      closeSessionMenu();
+    });
+    window.addEventListener('resize', function () {
+      closeHandoffPicker();
+      closeSessionMenu();
+    });
     var winMax = $('win-max');
     if (winMax) winMax.addEventListener('click', guard(function () {
       call('windowMaximize', {});
@@ -5895,6 +6327,48 @@
       if (ev && ev.target === $('handoff-modal')) hideModal($('handoff-modal'));
     }));
 
+    var handoffTargetButton = $('handoff-target');
+    if (handoffTargetButton) {
+      handoffTargetButton.addEventListener('click', guard(function (ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        toggleHandoffPicker();
+      }));
+      handoffTargetButton.addEventListener('keydown', guard(function (ev) {
+        if (ev.key !== 'ArrowDown' && ev.key !== 'ArrowUp') return;
+        ev.preventDefault();
+        openHandoffPicker();
+      }));
+    }
+    var handoffTargetMenu = $('handoff-target-menu');
+    if (handoffTargetMenu) {
+      handoffTargetMenu.addEventListener('keydown', guard(handoffPickerKeydown));
+    }
+
+    var confirmOk = $('confirm-ok');
+    if (confirmOk) confirmOk.addEventListener('click', guard(function () {
+      settleConfirm(true);
+    }));
+    var confirmCancel = $('confirm-cancel');
+    if (confirmCancel) confirmCancel.addEventListener('click', guard(function () {
+      settleConfirm(false);
+    }));
+    var confirmClose = $('confirm-close');
+    if (confirmClose) confirmClose.addEventListener('click', guard(function () {
+      settleConfirm(false);
+    }));
+    var confirmModal = $('confirm-modal');
+    if (confirmModal) confirmModal.addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === confirmModal) settleConfirm(false);
+    }));
+
+    document.addEventListener('click', function (ev) {
+      var picker = $('handoff-target-picker');
+      if (picker && ev.target && !picker.contains(ev.target)) closeHandoffPicker();
+      if (sessionMenuNode && ev.target && !sessionMenuNode.contains(ev.target)) {
+        closeSessionMenu();
+      }
+    });
+
     var sendClose = $('agent-send-close');
     if (sendClose) sendClose.addEventListener('click', guard(function () {
       hideModal($('agent-send-modal'));
@@ -5961,6 +6435,10 @@
       if ($('palette') && !$('palette').hidden) return;
       var tag = (ev.target && ev.target.tagName || '').toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      /* Menus, pickers and modals own their arrow keys; pulling focus back to
+         the pty here made keyboard navigation impossible. */
+      if (ev.target && ev.target.closest &&
+          ev.target.closest('[role="menu"], [role="listbox"], .modal, .menu, .picker-menu')) return;
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
       focusTerm(activeTab);
     }, true);
@@ -6053,6 +6531,7 @@
     refreshAppInfo().then(function () { checkUpdates(false); });
     refreshStatus().then(refreshProjects);
     startMemoryPoll();
+    startWorkingSpin();
     setInterval(function () { checkUpdates(false); }, 6 * 60 * 60 * 1000);
   }
 

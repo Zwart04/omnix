@@ -38,6 +38,32 @@ pub fn open_support() -> Result<()> {
     Ok(())
 }
 
+/// Open a local file or folder in the desktop's default handler. Callers pass
+/// paths that came from the history index or a session's working directory.
+pub fn open_path(path: &Path) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut cmd = std::process::Command::new("open");
+        cmd.arg(path);
+        cmd
+    };
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut cmd = std::process::Command::new("explorer");
+        cmd.arg(path);
+        cmd
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut cmd = {
+        let mut cmd = std::process::Command::new("xdg-open");
+        cmd.arg(path);
+        cmd
+    };
+    cmd.spawn()
+        .with_context(|| format!("open {}", path.display()))?;
+    Ok(())
+}
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct State {
     #[serde(default)]

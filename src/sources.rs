@@ -428,11 +428,30 @@ fn opencode_scan(conn: &mut Connection, db: &Path, report: &mut ScanReport) -> R
             ))
         })?;
         let mut lines = Vec::new();
+        let mut model: Option<String> = None;
         for row in rows.filter_map(Result::ok) {
             let (kind, data, created) = row;
             let Ok(value) = serde_json::from_str::<Value>(&data) else {
                 continue;
             };
+            if kind == "assistant" {
+                if let Some(reported) = value.get("model") {
+                    let id = reported
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .or_else(|| reported.as_str());
+                    if let Some(id) = id.filter(|id| !id.is_empty()) {
+                        let provider = reported
+                            .get("providerID")
+                            .and_then(Value::as_str)
+                            .filter(|p| !p.is_empty());
+                        model = Some(match provider {
+                            Some(provider) => format!("{provider}/{id}"),
+                            None => id.to_string(),
+                        });
+                    }
+                }
+            }
             let text = match value.get("content") {
                 Some(content) => text_of(content),
                 None => value
@@ -459,7 +478,10 @@ fn opencode_scan(conn: &mut Connection, db: &Path, report: &mut ScanReport) -> R
             cwd: meta.cwd,
             updated_at,
             lines,
-            usage: history::Usage::default(),
+            usage: history::Usage {
+                model,
+                ..history::Usage::default()
+            },
         };
         store(conn, &key, parsed, report)?;
     }
@@ -467,12 +489,16 @@ fn opencode_scan(conn: &mut Connection, db: &Path, report: &mut ScanReport) -> R
 }
 
 fn is_fresh(conn: &Connection, key: &str, updated_at: i64) -> bool {
+    /* OpenCode stores the model on each assistant message, not in its session
+       row. Older indexes were written before we read it, so a row without a
+       model is refreshed once instead of being treated as complete. */
+    let needs_model = key.starts_with("opencode://");
     conn.query_row(
-        "SELECT updated_at FROM sessions WHERE file_path = ?1 AND message_count > 0",
+        "SELECT updated_at, model FROM sessions WHERE file_path = ?1 AND message_count > 0",
         [key],
-        |row| row.get::<_, i64>(0),
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?)),
     )
-    .map(|stored| stored == updated_at)
+    .map(|(stored, model)| stored == updated_at && (!needs_model || model.is_some()))
     .unwrap_or(false)
 }
 

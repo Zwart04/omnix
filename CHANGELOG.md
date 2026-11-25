@@ -20,6 +20,11 @@ Notable changes to Omnix. Release notes for every tag are also on the
   session, with `--all` for the shared daemon. Preview auto-port, native
   screenshots, preview proxy, cookie handoff, host allowlist, and MCP proxy are
   wired into the app.
+- **Agent history & handoff panel** — indexed sessions show their CLI, model,
+  branch, message count, and age, with resume in a worktree or new chat, copy
+  resume command, hand off to another agent, reveal log, open working directory,
+  and delete. Handoff starts the target CLI in a fresh terminal with a focused
+  brief or the full transcript.
 - **First-run setup wizard** — four steps persisted in `.omnix/setup.json`,
   shown only for a fresh workspace, replayable from Settings.
 - **About & Support** — version, license, setup state, GitHub link, and the Tako
@@ -33,10 +38,12 @@ Notable changes to Omnix. Release notes for every tag are also on the
   pull-request templates, contribution guide, security policy, and code of
   conduct.
 - License aligned to GPL-3.0-or-later across manifests, examples, and docs.
+- Lower CPU on 2x displays: DMA-BUF stays on by default, the working spinner
+  steps at 4 Hz, and wheel scrolling repaints once per gesture.
 
 ### Verification
 
-- 90 Rust tests and `node app/selftest.cjs` pass.
+- 91 Rust tests and `node app/selftest.cjs` pass.
 - Release workflow builds Linux (`.deb`, Arch package, updater binary), Windows
   installer, and macOS universal DMG.
 

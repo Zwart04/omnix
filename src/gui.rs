@@ -25,6 +25,7 @@ const TUTORIAL: &str = include_str!("../tutorial/index.html");
 const ICON: &str = include_str!("../app/icon.svg");
 const LOGO_PNG: &[u8] = include_bytes!("../app/logo.png");
 const LOGO_RGBA: &[u8] = include_bytes!("../app/logo.rgba");
+const TAKO_PNG: &[u8] = include_bytes!("../app/tako.png");
 const LOGO_SIDE: u32 = 128;
 
 pub enum UserEvent {
@@ -193,6 +194,7 @@ fn asset(path: &str) -> Option<(&'static [u8], &'static str)> {
         "/tutorial.html" => (TUTORIAL.as_bytes(), "text/html; charset=utf-8"),
         "/icon.svg" => (ICON.as_bytes(), "image/svg+xml"),
         "/logo.png" => (LOGO_PNG, "image/png"),
+        "/tako.png" => (TAKO_PNG, "image/png"),
         _ => return None,
     })
 }
@@ -326,6 +328,27 @@ fn url_allowed(url: &str) -> bool {
 
 fn history_db(root: &PathBuf) -> PathBuf {
     root.join(".omnix").join("history.sqlite")
+}
+
+/// Current branch of a working directory, shown on history cards. A missing
+/// repo or a detached HEAD is simply left blank.
+fn git_branch(dir: &str) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() || name == "HEAD" {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn as_str(args: &Value, key: &str) -> Option<String> {
@@ -1088,9 +1111,16 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 cwd_prefix.as_deref(),
                 query.as_deref(),
             )?;
+            let mut branches: HashMap<String, Option<String>> = HashMap::new();
             let sessions: Vec<Value> = rows
                 .into_iter()
                 .map(|r| {
+                    let branch = r.cwd.as_deref().and_then(|cwd| {
+                        branches
+                            .entry(cwd.to_string())
+                            .or_insert_with(|| git_branch(cwd))
+                            .clone()
+                    });
                     json!({
                         "agent": r.agent,
                         "sessionId": r.session_id,
@@ -1099,6 +1129,9 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                         "updatedAt": r.updated_at,
                         "messageCount": r.message_count,
                         "resumeCommand": r.resume_command,
+                        "logPath": r.file_path,
+                        "model": r.model,
+                        "branch": branch,
                         "preview": r.preview,
                     })
                 })
@@ -1108,6 +1141,45 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "root": app.root.to_string_lossy(),
                 "total": total,
                 "sessions": sessions,
+            }))
+        })(),
+        "historyDeleteSession" => (|| {
+            let agent = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
+            let session = as_str(&args, "sessionId")
+                .ok_or_else(|| anyhow!("sessionId is required"))?;
+            let conn = history::open(&history_db(&app.root))?;
+            let removed = history::remove_session(&conn, &agent, &session)?;
+            Ok(json!({ "removed": removed }))
+        })(),
+        "openPath" => (|| {
+            let path = as_str(&args, "path").ok_or_else(|| anyhow!("path is required"))?;
+            let mut target = PathBuf::from(&path);
+            if as_bool(&args, "folder") {
+                if let Some(parent) = target.parent() {
+                    target = parent.to_path_buf();
+                }
+            }
+            if !target.exists() {
+                return Err(anyhow!("path does not exist: {}", target.display()));
+            }
+            crate::setup::open_path(&target)?;
+            Ok(json!({ "path": target.to_string_lossy() }))
+        })(),
+        "resumeWorktree" => (|| {
+            let cwd = as_str(&args, "cwd").ok_or_else(|| anyhow!("cwd is required"))?;
+            let agent = as_str(&args, "agent").unwrap_or_else(|| "agent".into());
+            let session = as_str(&args, "sessionId").unwrap_or_default();
+            let title = as_str(&args, "title").unwrap_or_else(|| "session".into());
+            let key = format!("hist:{agent}:{session}");
+            let moved = crate::handoff::worktree_for_pane(
+                std::path::Path::new(&cwd),
+                &key,
+                &format!("{agent} {title}"),
+            )?;
+            Ok(json!({
+                "name": moved.name,
+                "worktree": moved.worktree.to_string_lossy(),
+                "branch": moved.branch,
             }))
         })(),
         "historySearch" => (|| {
@@ -2103,12 +2175,14 @@ pub fn run() -> Result<()> {
         // SAFETY: called before any GTK/WebKit initialisation and before threads start.
         unsafe { std::env::set_var("GDK_BACKEND", "x11") };
     }
-    // The DMA-BUF renderer keeps extra GPU buffers alive; on a text UI the
-    // fallback path is lighter (measured ~100 MB less at startup) and avoids
-    // the driver crashes it is known for. OMNIX_DMABUF=1 opts back in.
+    // The DMA-BUF renderer keeps compositing on the GPU. The fallback path
+    // saves ~100 MB at startup but repaints the whole window per frame, which
+    // made typing and scrolling stutter on a 2x display (measured ~10x more
+    // CPU). OMNIX_NO_DMABUF=1 opts back into the lighter fallback for old
+    // drivers that crash with DMA-BUF.
     #[cfg(target_os = "linux")]
     if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
-        && std::env::var_os("OMNIX_DMABUF").is_none()
+        && std::env::var_os("OMNIX_NO_DMABUF").is_some()
     {
         // SAFETY: same, before GTK/WebKit initialisation.
         unsafe { std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1") };

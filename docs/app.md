@@ -47,8 +47,10 @@ membunuh agent tanpa izin. Untuk menurunkan angka:
    dijalankan dari terminal Omnix, perintah ini mengukur seluruh tree app,
    bukan hanya proses CLI-nya.
 
-Di Linux renderer DMA-BUF WebKit dimatikan secara default (peak startup turun
-sekitar 100 MB); `OMNIX_DMABUF=1` mengembalikannya bila driver GPU justru butuh.
+Di Linux renderer DMA-BUF WebKit aktif secara default supaya compositing tetap
+di GPU dan mengetik/scrolling mulus; fallback software bisa memakan CPU sekitar
+10x lebih tinggi. `OMNIX_NO_DMABUF=1` mematikannya (hemat sekitar 100 MB saat
+startup) bila driver GPU lama bermasalah dengan DMA-BUF.
 Omnix tidak memaksa WebKit membuang cache saat idle: trim bawaan WebKit hanya
 bereaksi di bawah tekanan memori sistem, dan menurunkan limitnya sendiri membuat
 engine terus membuang cache (lebih lambat) demi penghematan yang kecil.
@@ -110,7 +112,7 @@ Membuat paket `.deb` (butuh `dpkg-deb`, tanpa `cargo-deb`):
 
 ```bash
 sh dist/linux/build-deb.sh
-sudo apt install dist/linux/omnix_0.1.0_amd64.deb
+sudo apt install dist/linux/Omnix-<versi>-Linux-Debian-Ubuntu-x64.deb
 ```
 
 Paket memasang `/usr/bin/omnix`, desktop entry, ikon, dan mendeklarasikan
@@ -118,8 +120,8 @@ Paket memasang `/usr/bin/omnix`, desktop entry, ikon, dan mendeklarasikan
 dari `dpkg --print-architecture`.
 
 Untuk Arch Linux, `dist/linux/build-arch.sh` membangun
-`omnix-<versi>-1-x86_64.pkg.tar.zst` dengan isi yang sama; pasang memakai
-`sudo pacman -U omnix-*-x86_64.pkg.tar.zst`.
+`Omnix-<versi>-Linux-Arch-x64.pkg.tar.zst` dengan isi yang sama; pasang memakai
+`sudo pacman -U dist/linux/Omnix-*-Linux-Arch-x64.pkg.tar.zst`.
 
 Mencopot pemasangan manual:
 
@@ -143,7 +145,8 @@ Skrip memakai `target\release\omnix.exe`. Untuk build silang dari Linux
 (mis. CI atau mesin tanpa Windows), jalankan
 `cargo xwin build --release --target x86_64-pc-windows-msvc`; skrip otomatis
 memakai `target\x86_64-pc-windows-msvc\release\omnix.exe` kalau berkas
-release biasa tidak ada. Hasilnya `dist\windows\build\omnix-setup-x64.exe`.
+release biasa tidak ada. Hasilnya
+`dist\windows\build\Omnix-<versi>-Windows-x64-Setup.exe`.
 
 Installer memakai Inno Setup 6 (skrip memasangnya lewat Chocolatey bila belum
 ada), memasang per-user tanpa prompt admin, dan menyertakan
@@ -163,9 +166,10 @@ sh dist/macos/build-app.sh --binary <arm64-binary> --binary <x64-binary>
 
 Dua `--binary` digabung dengan `lipo` menjadi satu aplikasi universal. Hasilnya
 `Omnix.app` di `dist/macos/build/` dan
-`dist/macos/Omnix-<versi>-macos-universal.dmg` berisi aplikasi plus pintasan
+`dist/macos/Omnix-<versi>-macOS-universal.dmg` berisi aplikasi plus pintasan
 `Applications`. Satu binary tanpa `--binary` ganda menghasilkan
-`...-macos.dmg` (atau `...-arm64.dmg` / `...-x64.dmg` kalau `OMNIX_ARCH` diset).
+`...-macOS.dmg` (atau `...-macOS-arm64.dmg` / `...-macOS-x64.dmg` kalau
+`OMNIX_ARCH` diset).
 Bundle memakai
 `CFBundleIdentifier dev.omnix.app` dan `LSMinimumSystemVersion 11.0`. Skrip
 melakukan ad-hoc codesign kalau `codesign` tersedia; itu bukan notarization.
@@ -182,14 +186,14 @@ bawah sidebar diklik.
 
 Aset yang dipilih mengikuti platform:
 
-- Windows: `omnix-setup-x64.exe`, dijalankan senyap dengan
+- Windows: `Omnix-<versi>-Windows-x64-Setup.exe`, dijalankan senyap dengan
   `/SILENT /CLOSEAPPLICATIONS /NORESTART`; installer menutup proses lama dan
   meluncurkan Omnix lagi.
 - macOS: DMG dibuka dan aplikasi menutup diri; pengguna menyeret Omnix ke
   Applications.
-- Linux: binary `omnix-linux-x64` menggantikan executable yang sedang berjalan
-  bila direktori itu bisa ditulis, lalu proses baru dijalankan. Kalau tidak
-  (mis. `/usr/bin` milik root), paket `.deb` / `.pkg.tar.zst` dibuka lewat
+- Linux: binary `Omnix-<versi>-Linux-x64` menggantikan executable yang sedang
+  berjalan bila direktori itu bisa ditulis, lalu proses baru dijalankan. Kalau
+  tidak (mis. `/usr/bin` milik root), paket `.deb` / `.pkg.tar.zst` dibuka lewat
   `xdg-open`.
 
 Terminal juga bisa: `omnix update --check` dan `omnix update`. Tidak ada
@@ -697,7 +701,8 @@ lain, nama paketnya bisa `webkit2gtk4.1-devel`, `gtk3-devel`, dan
 `libsoup3-devel`.
 
 **Aplikasi tidak mau start karena WebView2 tidak ditemukan (Windows).**
-Jalankan ulang `omnix-setup-x64.exe`; installer memasang WebView2 otomatis.
+Jalankan ulang `Omnix-<versi>-Windows-x64-Setup.exe`; installer memasang
+WebView2 otomatis.
 Kalau mesin sedang offline, unduh Evergreen Bootstrapper dari
 <https://go.microsoft.com/fwlink/p/?LinkId=2124703>, jalankan, lalu buka Omnix.
 
