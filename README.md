@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/omnix.png" alt="Workspace Omnix dengan pratinjau rencana dari agent, hasil test, dan panel riwayat sesi" width="100%" />
+  <img src="docs/assets/omnix.png?v=2" alt="Workspace Omnix dengan pratinjau rencana dari agent, hasil test, dan panel riwayat sesi" width="100%" />
 </div>
 
 <h1 align="center">Omnix</h1>
@@ -26,7 +26,7 @@ di belakang.
 
 ## Lihat cara kerjanya
 
-![Demo Omnix: agent menulis rencana, handoff ke OpenCode 2, lalu semua test lulus](docs/assets/demo.gif)
+![Demo Omnix: agent menulis rencana, handoff ke OpenCode 2, lalu semua test lulus](docs/assets/demo.gif?v=2)
 
 Satu putaran orkestrasi: agent pertama menulis `docs/retry-plan.md`, panel
 riwayat membuka handoff ke OpenCode 2 dengan brief terfokus, lalu agent kedua

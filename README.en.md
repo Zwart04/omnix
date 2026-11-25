@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/omnix.png" alt="Omnix workspace with an agent plan preview, test output, and the session history panel" width="100%" />
+  <img src="docs/assets/omnix.png?v=2" alt="Omnix workspace with an agent plan preview, test output, and the session history panel" width="100%" />
 </div>
 
 <h1 align="center">Omnix</h1>
@@ -28,7 +28,7 @@ entry point.
 
 ## See it move
 
-![Omnix demo: an agent writes the plan, hands off to OpenCode 2, then the tests pass](docs/assets/demo.gif)
+![Omnix demo: an agent writes the plan, hands off to OpenCode 2, then the tests pass](docs/assets/demo.gif?v=2)
 
 One orchestration loop: the first agent writes `docs/retry-plan.md`, the history
 panel hands the work to OpenCode 2 with a focused brief, and the second agent
