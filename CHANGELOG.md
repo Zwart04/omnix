@@ -3,6 +3,23 @@
 Notable changes to Omnix. Release notes for every tag are also on the
 [releases page](https://github.com/Zwart04/omnix/releases).
 
+## [0.7.1] - 2026-11-24
+
+### Fixed
+
+- Handoff brief is submitted only after the paste settles, so the target agent
+  receives the whole prompt instead of an Enter keystroke racing the paste.
+- README demo and hero refreshed from a real opencode → OpenCode 2 run; image
+  links carry a cache-buster so GitHub serves the new files.
+
+### Verification
+
+- 91 Rust tests and `node app/selftest.cjs` pass.
+- Release workflow builds Linux (`.deb`, Arch package, updater binary), Windows
+  installer, and macOS universal DMG.
+
+[0.7.1]: https://github.com/Zwart04/omnix/releases/tag/v0.7.1
+
 ## [0.7.0] - 2026-11-24
 
 ### Added
