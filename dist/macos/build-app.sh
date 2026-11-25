@@ -78,7 +78,7 @@ if [ -n "$BINARY2" ]; then
 fi
 
 APP=$BUILD_DIR/$APP_NAME.app
-OUT=$SCRIPT_DIR/$APP_NAME-$VERSION-macos$SUFFIX.dmg
+OUT=$SCRIPT_DIR/$APP_NAME-$VERSION-macOS$SUFFIX.dmg
 
 rm -rf "$APP"
 install -d "$APP/Contents/MacOS" "$APP/Contents/Resources"

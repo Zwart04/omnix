@@ -107,7 +107,7 @@ Description: Light workbench for worktrees, agent sessions, and browsers
 EOF
 chmod 0644 "$STAGE/DEBIAN/control" "$STAGE/usr/share/applications/$APP.desktop"
 
-OUT=$SCRIPT_DIR/${APP}_${VERSION}_${ARCH}.deb
+OUT=$SCRIPT_DIR/Omnix-${VERSION}-Linux-Debian-Ubuntu-x64.deb
 dpkg-deb --root-owner-group --build "$STAGE" "$OUT" >/dev/null
 
 printf 'Built %s\n' "$OUT"

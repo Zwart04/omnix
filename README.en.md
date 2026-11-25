@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/omnix.png" alt="Omnix workspace with two terminals, a project sidebar, and git output" width="100%" />
+  <img src="docs/assets/omnix.png" alt="Omnix workspace with an agent plan preview, test output, and the session history panel" width="100%" />
 </div>
 
 <h1 align="center">Omnix</h1>
@@ -28,10 +28,11 @@ entry point.
 
 ## See it move
 
-![Omnix demo: command palette, split terminal, then git status](docs/assets/demo.gif)
+![Omnix demo: an agent writes the plan, hands off to OpenCode 2, then the tests pass](docs/assets/demo.gif)
 
-One short loop: `Ctrl K` opens the command palette, `Split Terminal` creates a
-second pane, and `git status` runs in the new terminal.
+One orchestration loop: the first agent writes `docs/retry-plan.md`, the history
+panel hands the work to OpenCode 2 with a focused brief, and the second agent
+implements the plan and runs `cargo test` — all in one window.
 
 ## Why Omnix
 
@@ -62,10 +63,15 @@ Prebuilt packages are built by CI on `v*` tags and published on the
 
 | Platform | File | Install |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.7.0_amd64.deb` | `sudo apt install ./omnix_0.7.0_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.7.0-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.7.0-1-x86_64.pkg.tar.zst` |
-| Windows x64 | `omnix-setup-x64.exe` | run the installer; WebView2 is installed automatically when missing |
-| macOS 11+ (universal) | `Omnix-0.7.0-macos-universal.dmg` | open the DMG, drag `Omnix` to `/Applications` |
+| Linux x86_64 (Debian/Ubuntu) | `Omnix-0.7.0-Linux-Debian-Ubuntu-x64.deb` | `sudo apt install ./Omnix-0.7.0-Linux-Debian-Ubuntu-x64.deb` |
+| Linux x86_64 (Arch) | `Omnix-0.7.0-Linux-Arch-x64.pkg.tar.zst` | `sudo pacman -U Omnix-0.7.0-Linux-Arch-x64.pkg.tar.zst` |
+| Linux x86_64 (portable) | `Omnix-0.7.0-Linux-x64` | `chmod +x`, then run it; this file also feeds auto-update |
+| Windows 10/11 x64 | `Omnix-0.7.0-Windows-x64-Setup.exe` | run the installer; WebView2 is installed automatically when missing |
+| macOS 11+ (Intel & Apple Silicon) | `Omnix-0.7.0-macOS-universal.dmg` | open the DMG, drag `Omnix` to `/Applications` |
+
+Pick the one file that matches your OS and CPU (x64 for Intel/AMD, universal
+for macOS on either Intel or Apple Silicon). The `Source code` archives on the
+release page are only needed if you want to build Omnix yourself.
 
 ### Build from source
 
@@ -81,8 +87,8 @@ sh dist/linux/install.sh
 # or build a package
 sh dist/linux/build-deb.sh
 sh dist/linux/build-arch.sh
-sudo apt install dist/linux/omnix_*.deb
-sudo pacman -U dist/linux/omnix-*.pkg.tar.zst
+sudo apt install dist/linux/Omnix-*.deb
+sudo pacman -U dist/linux/Omnix-*.pkg.tar.zst
 ```
 
 Windows uses `dist/windows/build-installer.ps1`; macOS uses
@@ -181,9 +187,13 @@ plugins (manifest, permissions, SHA-256, crash, timeout), locks/leases, browser
 sessions, previews, dev builds, setup, and the FTS5 migration.
 `app/selftest.cjs` stubs the WebView and checks RPC, sidebar, history, splits,
 palette, settings/about, the wizard, plugins, and dev without opening a window.
-All **90 Rust tests** pass.
+All **91 Rust tests** pass.
 
 ## Support Omnix
+
+<p align="center">
+  <img src="docs/assets/tako.png" alt="Omnix mascot holding a cup of coffee" width="240" />
+</p>
 
 Omnix is free and open source. If it saves you time, you can buy the developer a
 coffee on Tako:

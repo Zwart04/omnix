@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Build the Windows installer (omnix-setup-x64.exe).
+  Build the Windows installer (Omnix-<version>-Windows-x64-Setup.exe).
 
 .DESCRIPTION
   Stages omnix.exe, downloads the Microsoft WebView2 Evergreen Bootstrapper,
@@ -75,7 +75,7 @@ if (-not $Iscc) {
 }
 if (-not $Iscc) { throw 'ISCC.exe not found; install Inno Setup 6' }
 
-$Out = Join-Path $Stage 'omnix-setup-x64.exe'
+$Out = Join-Path $Stage "Omnix-$Version-Windows-x64-Setup.exe"
 if (Test-Path -LiteralPath $Out) { Remove-Item -LiteralPath $Out -Force }
 
 & $Iscc "/DMyAppVersion=$Version" "/O$Stage" (Join-Path $ScriptDir 'omnix.iss')

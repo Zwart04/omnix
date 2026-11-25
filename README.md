@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/assets/omnix.png" alt="Workspace Omnix dengan dua terminal, sidebar project, dan output git" width="100%" />
+  <img src="docs/assets/omnix.png" alt="Workspace Omnix dengan pratinjau rencana dari agent, hasil test, dan panel riwayat sesi" width="100%" />
 </div>
 
 <h1 align="center">Omnix</h1>
@@ -26,10 +26,12 @@ di belakang.
 
 ## Lihat cara kerjanya
 
-![Demo Omnix: command palette, split terminal, lalu git status](docs/assets/demo.gif)
+![Demo Omnix: agent menulis rencana, handoff ke OpenCode 2, lalu semua test lulus](docs/assets/demo.gif)
 
-Satu putaran singkat: `Ctrl K` membuka command palette, `Split Terminal`
-membelah pane, lalu `git status` dijalankan di terminal baru.
+Satu putaran orkestrasi: agent pertama menulis `docs/retry-plan.md`, panel
+riwayat membuka handoff ke OpenCode 2 dengan brief terfokus, lalu agent kedua
+mengimplementasikan rencana dan menjalankan `cargo test` — semuanya di satu
+jendela.
 
 ## Kenapa Omnix
 
@@ -59,10 +61,15 @@ Paket siap pasang dibangun CI pada tag `v*` dan tersedia di
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `omnix_0.7.0_amd64.deb` | `sudo apt install ./omnix_0.7.0_amd64.deb` |
-| Linux x86_64 (Arch) | `omnix-0.7.0-1-x86_64.pkg.tar.zst` | `sudo pacman -U omnix-0.7.0-1-x86_64.pkg.tar.zst` |
-| Windows x64 | `omnix-setup-x64.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (universal) | `Omnix-0.7.0-macos-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| Linux x86_64 (Debian/Ubuntu) | `Omnix-0.7.0-Linux-Debian-Ubuntu-x64.deb` | `sudo apt install ./Omnix-0.7.0-Linux-Debian-Ubuntu-x64.deb` |
+| Linux x86_64 (Arch) | `Omnix-0.7.0-Linux-Arch-x64.pkg.tar.zst` | `sudo pacman -U Omnix-0.7.0-Linux-Arch-x64.pkg.tar.zst` |
+| Linux x86_64 (portable) | `Omnix-0.7.0-Linux-x64` | `chmod +x`, lalu jalankan; berkas ini juga dipakai auto-update |
+| Windows 10/11 x64 | `Omnix-0.7.0-Windows-x64-Setup.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
+| macOS 11+ (Intel & Apple Silicon) | `Omnix-0.7.0-macOS-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+
+Pilih satu berkas sesuai OS dan prosesor (x64 untuk Intel/AMD, universal
+untuk macOS Intel maupun Apple Silicon). Berkas `Source code` di halaman rilis
+hanya diperlukan kalau kamu ingin membangun sendiri.
 
 ### Build dari source
 
@@ -78,8 +85,8 @@ sh dist/linux/install.sh
 # atau paket Debian / Arch
 sh dist/linux/build-deb.sh
 sh dist/linux/build-arch.sh
-sudo apt install dist/linux/omnix_*.deb
-sudo pacman -U dist/linux/omnix-*.pkg.tar.zst
+sudo apt install dist/linux/Omnix-*.deb
+sudo pacman -U dist/linux/Omnix-*.pkg.tar.zst
 ```
 
 Windows memakai `dist/windows/build-installer.ps1`; macOS memakai
@@ -182,9 +189,13 @@ sungguhan, menguji profil Codex/Claude (env, folder, symlink, kuota), plugin
 (manifest, izin, SHA-256, crash, timeout), lock/lease, sesi browser, preview,
 dev build, setup, dan migrasi FTS5. `app/selftest.cjs` men-stub WebView lalu
 memeriksa RPC, sidebar, history, split pane, palette, settings/about, wizard,
-plugin, dan dev tanpa membuka jendela. Saat ini **90 test Rust** lulus.
+plugin, dan dev tanpa membuka jendela. Saat ini **91 test Rust** lulus.
 
 ## Dukung Omnix
+
+<p align="center">
+  <img src="docs/assets/tako.png" alt="Ilustrasi kucing Omnix membawakan secangkir kopi" width="240" />
+</p>
 
 Omnix gratis dan open source. Kalau ia menghemat waktumu, kamu bisa mentraktir
 developer secangkir kopi di Tako:

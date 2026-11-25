@@ -3,6 +3,7 @@
 node_modules/
 dist/linux/*.deb
 dist/linux/*.pkg.tar.zst
+dist/linux/Omnix-*
 dist/linux/omnix-linux-x64
 dist/windows/build/
 dist/windows/MicrosoftEdgeWebView2Setup.exe

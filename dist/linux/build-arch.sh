@@ -103,7 +103,7 @@ depend = gtk3
 depend = libsoup3
 EOF
 
-OUT=$SCRIPT_DIR/${APP}-${VERSION}-1-x86_64.pkg.tar.zst
+OUT=$SCRIPT_DIR/Omnix-${VERSION}-Linux-Arch-x64.pkg.tar.zst
 (cd "$STAGE" && tar --zstd --owner=0 --group=0 -cf "$OUT" .PKGINFO usr)
 
 printf 'Built %s\n' "$OUT"

@@ -129,7 +129,8 @@ fn pick_asset(assets: &[Asset]) -> Option<&Asset> {
     let debian = Path::new("/etc/debian_version").exists();
     assets
         .iter()
-        .find(|asset| asset.name == "omnix-linux-x64")
+        .find(|asset| asset.name.ends_with("-Linux-x64"))
+        .or_else(|| assets.iter().find(|asset| asset.name == "omnix-linux-x64"))
         .or_else(|| {
             assets.iter().find(|asset| {
                 if arch {
@@ -224,7 +225,7 @@ fn install_asset(name: &str, bytes: &[u8], version: &str, _restart: bool) -> Res
 
 #[cfg(target_os = "linux")]
 fn install_asset(name: &str, bytes: &[u8], version: &str, restart: bool) -> Result<Value> {
-    if name == "omnix-linux-x64" {
+    if name.ends_with("-Linux-x64") || name == "omnix-linux-x64" {
         if let Ok(exe) = replace_exe(bytes) {
             if restart {
                 /* current_exe() after the rename reports "... (deleted)", so
@@ -300,9 +301,29 @@ mod tests {
 
     #[test]
     fn asset_names_stay_in_the_temp_dir() {
+        assert!(safe_name("Omnix-0.7.0-Windows-x64-Setup.exe").is_ok());
         assert!(safe_name("omnix-setup-x64.exe").is_ok());
         assert!(safe_name("../evil").is_err());
         assert!(safe_name("").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_update_prefers_the_portable_binary() {
+        let assets = vec![
+            Asset {
+                name: "Omnix-0.7.0-Linux-Debian-Ubuntu-x64.deb".into(),
+                browser_download_url: "https://example.invalid/deb".into(),
+            },
+            Asset {
+                name: "Omnix-0.7.0-Linux-x64".into(),
+                browser_download_url: "https://example.invalid/bin".into(),
+            },
+        ];
+        assert_eq!(
+            pick_asset(&assets).map(|asset| asset.name.as_str()),
+            Some("Omnix-0.7.0-Linux-x64")
+        );
     }
 
     #[cfg(target_os = "linux")]

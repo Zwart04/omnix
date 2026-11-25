@@ -52,7 +52,9 @@ jobs:
 
       - name: Stage Linux updater binary
         if: runner.os == 'Linux'
-        run: cp target/release/omnix dist/linux/omnix-linux-x64
+        run: |
+          VERSION=$(sed -n 's/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml | head -n 1)
+          cp target/release/omnix "dist/linux/Omnix-${VERSION}-Linux-x64"
 
       - name: Build Windows installer
         if: runner.os == 'Windows'
@@ -73,46 +75,46 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: omnix-linux-x64
+          name: Omnix-Linux-x64
           path: |
             dist/linux/*.deb
             dist/linux/*.pkg.tar.zst
-            dist/linux/omnix-linux-x64
+            dist/linux/Omnix-*-Linux-x64
           if-no-files-found: error
 
       - name: Attach Linux packages to release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'Linux' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/linux/*.deb
             dist/linux/*.pkg.tar.zst
-            dist/linux/omnix-linux-x64
+            dist/linux/Omnix-*-Linux-x64
 
       - name: Upload Windows installer
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
-          name: omnix-windows-x64
-          path: dist/windows/build/omnix-setup-x64.exe
+          name: Omnix-Windows-x64
+          path: dist/windows/build/Omnix-*-Windows-x64-Setup.exe
           if-no-files-found: error
 
       - name: Attach Windows installer to release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'Windows' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/windows/build/omnix-setup-x64.exe
+          files: dist/windows/build/Omnix-*-Windows-x64-Setup.exe
 
       - name: Upload macOS DMG
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
-          name: omnix-macos
-          path: dist/macos/Omnix-*-macos*.dmg
+          name: Omnix-macOS
+          path: dist/macos/Omnix-*-macOS*.dmg
           if-no-files-found: error
 
       - name: Attach macOS DMG to release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/macos/Omnix-*-macos*.dmg
+          files: dist/macos/Omnix-*-macOS*.dmg
