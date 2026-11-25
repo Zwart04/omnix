@@ -1229,12 +1229,18 @@
       tab.handoffSend = null;
       var text = tab.handoffPrompt;
       tab.handoffPrompt = null;
-      var paste = '\x1b[200~' + text + '\x1b[201~\r';
+      var paste = '\x1b[200~' + text + '\x1b[201~';
       call('ptyWrite', { paneKey: tab.paneKey, data: paste }, { quiet: true })
         .then(function () {
           noteInput(tab);
           toast('ok', 'Handoff prompt sent to ' + tab.title);
           setLast('Handoff prompt sent \u00b7 ' + tab.title);
+          /* The TUI needs a moment to ingest the bracketed paste before it
+             treats Enter as "submit" instead of part of the paste. */
+          setTimeout(function () {
+            if (tab.closed || tab.exited) return;
+            call('ptyWrite', { paneKey: tab.paneKey, data: '\r' }, { quiet: true });
+          }, 1200);
         });
     }
 
