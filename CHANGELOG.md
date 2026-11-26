@@ -3,6 +3,56 @@
 Notable changes to Omnix. Release notes for every tag are also on the
 [releases page](https://github.com/Zwart04/omnix/releases).
 
+## [0.8.0] - 2026-11-26
+
+### Added
+
+- **Quota detection and orchestrator notice** — while a worker runs (interactive
+  pane or headless), Omnix reads the output and recognizes an exhausted quota
+  for Codex, Antigravity (per model group), and Claude Code, including the
+  recovery time in WIB, the model, and the original message excerpt.
+- **Quota events** — `agent-quota-exhausted`, `agent-stalled`, and
+  `agent-quota-action` are written to `~/.omnix/events.jsonl`.
+  `omnix events --follow --kind agent-quota-exhausted` streams one JSON line per
+  event, and `omnix agent wait <name> --until ...,quota` exits with code 75 and
+  prints the event JSON.
+- **Never lose work** — on exhaustion Omnix commits a WIP commit on the handoff
+  branch (`WIP [omnix] kuota <agent> habis <jam>`, without pushing unless
+  `--push-wip`) and writes a blocked report with the original message, the
+  changed files, and the WIP sha.
+- **Per-handoff quota action** — `omnix handoff ... --on-quota stop|wait|fallback=A:M[,...]`.
+  `wait` resends the brief after the reset time, `fallback` continues in the same
+  worktree with the next provider while skipping ones `omnix usage` already shows
+  as exhausted, and `stop` (the default) just reports and stops.
+- **Honest `omnix usage`** — every provider and every window is shown with its
+  reset time in WIB (Codex 5h and weekly, Antigravity per model group, Claude
+  Code), unknown data reads "tidak diketahui" instead of being hidden, and
+  `omnix usage --check AGENT[:MODEL]` exits 0 when available or 75 when exhausted.
+- **Headless without the app** — `omnix handoff ... --run` now works with the app
+  closed (detached process + log + events), and `--foreground` runs it in the
+  terminal. The dry-run `launch:` preview prints the full argv, including model
+  and effort.
+- **Queue conditions** — `omnix handoff ... --after HANDOFF`, `--at HH:MM`, and
+  `--min-free-mb N` hold a handoff until its condition is met.
+- **Per-project Project Team** — a project can limit handoffs to a known set of
+  agents/models, pick an orchestrator and worker roles, and choose the project's
+  quota policy. The Team modal holds the fallback/on-quota configuration, so it
+  is no longer part of the Hand Off Agent feature.
+
+### Changed
+
+- The agent guide now warns against leaving a dev server as an agent background
+  task (start, probe, use, and stop it in one shell command) and asks workers to
+  commit WIP after each finished step.
+
+### Verification
+
+- 115 Rust tests and `node app/selftest.cjs` pass.
+- Release workflow builds Linux (`.deb`, Arch package, updater binary), Windows
+  installer, and macOS universal DMG.
+
+[0.8.0]: https://github.com/Zwart04/omnix/releases/tag/v0.8.0
+
 ## [0.7.2] - 2026-11-25
 
 ### Added

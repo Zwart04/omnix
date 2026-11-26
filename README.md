@@ -61,11 +61,11 @@ Paket siap pasang dibangun CI pada tag `v*` dan tersedia di
 
 | Platform | Berkas | Cara pasang |
 | --- | --- | --- |
-| Linux x86_64 (Debian/Ubuntu) | `Omnix-0.7.2-Linux-Debian-Ubuntu-x64.deb` | `sudo apt install ./Omnix-0.7.2-Linux-Debian-Ubuntu-x64.deb` |
-| Linux x86_64 (Arch) | `Omnix-0.7.2-Linux-Arch-x64.pkg.tar.zst` | `sudo pacman -U Omnix-0.7.2-Linux-Arch-x64.pkg.tar.zst` |
-| Linux x86_64 (portable) | `Omnix-0.7.2-Linux-x64` | `chmod +x`, lalu jalankan; berkas ini juga dipakai auto-update |
-| Windows 10/11 x64 | `Omnix-0.7.2-Windows-x64-Setup.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
-| macOS 11+ (Intel & Apple Silicon) | `Omnix-0.7.2-macOS-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
+| Linux x86_64 (Debian/Ubuntu) | `Omnix-0.8.0-Linux-Debian-Ubuntu-x64.deb` | `sudo apt install ./Omnix-0.8.0-Linux-Debian-Ubuntu-x64.deb` |
+| Linux x86_64 (Arch) | `Omnix-0.8.0-Linux-Arch-x64.pkg.tar.zst` | `sudo pacman -U Omnix-0.8.0-Linux-Arch-x64.pkg.tar.zst` |
+| Linux x86_64 (portable) | `Omnix-0.8.0-Linux-x64` | `chmod +x`, lalu jalankan; berkas ini juga dipakai auto-update |
+| Windows 10/11 x64 | `Omnix-0.8.0-Windows-x64-Setup.exe` | jalankan installer; WebView2 dipasang otomatis bila belum ada |
+| macOS 11+ (Intel & Apple Silicon) | `Omnix-0.8.0-macOS-universal.dmg` | buka DMG, seret `Omnix` ke `/Applications` |
 
 Pilih satu berkas sesuai OS dan prosesor (x64 untuk Intel/AMD, universal
 untuk macOS Intel maupun Apple Silicon). Berkas `Source code` di halaman rilis

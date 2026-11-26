@@ -74,9 +74,21 @@
 
       <div class="side-foot">
         <span class="side-foot-label">
-          <span class="side-dot" aria-hidden="true"></span>Local workspace
+          <span class="side-dot" aria-hidden="true"></span>Workspace
         </span>
-        <button class="tag mono" id="app-version" type="button" title="Check for updates">-</button>
+        <div class="side-foot-actions">
+          <button class="side-support" type="button" id="side-support"
+                  title="Support Omnix on Tako">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z" />
+              <path d="M16 10h1.5a2.5 2.5 0 0 1 0 5H16" />
+              <path d="M8 3v2M12 3v2" />
+            </svg>
+            <span>Support</span>
+          </button>
+          <button class="tag mono" id="app-version" type="button" title="Check for updates">-</button>
+        </div>
       </div>
     </aside>
 
@@ -100,13 +112,6 @@
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
             <circle cx="12" cy="12" r="3" />
-          </svg>
-        </button>
-        <button class="icon-btn" type="button" id="side-support" title="Support Omnix"
-                aria-label="Support Omnix on Tako">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 1 0-7.1 7.1L12 21l8.8-8.3a5 5 0 0 0 0-7.1z" />
           </svg>
         </button>
       </div>
@@ -350,7 +355,15 @@
                         you can buy the developer a coffee on Tako.</p>
                     </div>
                     <div class="support-actions">
-                      <button class="btn primary" type="button" id="about-support">Support on Tako</button>
+                      <button class="btn primary support-cta" type="button" id="about-support">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                             stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                          <path d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z" />
+                          <path d="M16 10h1.5a2.5 2.5 0 0 1 0 5H16" />
+                          <path d="M8 3v2M12 3v2" />
+                        </svg>
+                        Support on Tako
+                      </button>
                       <button class="btn" type="button" id="about-repo">GitHub</button>
                     </div>
                   </div>
@@ -645,6 +658,41 @@
     </div>
   </div>
 
+  <div id="fallback-modal" class="modal" hidden>
+    <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="fallback-title">
+      <header class="modal-head">
+        <h2 id="fallback-title">Agent Fallback</h2>
+        <button class="icon-btn" type="button" id="fallback-close" aria-label="Close">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="m5 5 8 8M13 5l-8 8" />
+          </svg>
+        </button>
+      </header>
+      <p class="modal-sub" id="fallback-sub">
+        When the primary agent runs out of quota, Omnix can start a fresh session
+        with another agent. The exhausted transcript stays readable.
+      </p>
+      <label class="field-label" for="fallback-agent">Fallback agent</label>
+      <input class="input mono" id="fallback-agent" type="text" placeholder="claude"
+             spellcheck="false" autocomplete="off" />
+      <label class="field-label" for="fallback-command">Or type a command in the live pane</label>
+      <input class="input mono" id="fallback-command" type="text" placeholder="claude --continue"
+             spellcheck="false" autocomplete="off" />
+      <label class="check" for="fallback-auto">
+        <input type="checkbox" id="fallback-auto" />
+        <span>Switch automatically when quota hits 100%</span>
+      </label>
+      <div class="modal-foot">
+        <span class="modal-note" id="fallback-error"></span>
+        <div class="modal-actions">
+          <button class="btn" type="button" id="fallback-cancel">Cancel</button>
+          <button class="btn primary" type="button" id="fallback-save">Save Fallback</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="confirm-modal" class="modal" hidden>
     <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <header class="modal-head">
@@ -689,6 +737,71 @@
         <div class="modal-actions">
           <button class="btn" type="button" id="project-cancel">Cancel</button>
           <button class="btn primary" type="button" id="project-add">Add Project</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="team-modal" class="modal" hidden>
+    <div class="modal-box team-box" role="dialog" aria-modal="true" aria-labelledby="team-title">
+      <header class="modal-head">
+        <h2 id="team-title">Project Team</h2>
+        <button class="icon-btn" type="button" id="team-close" aria-label="Close">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5"
+               stroke-linecap="round" aria-hidden="true">
+            <path d="m5 5 8 8M13 5l-8 8" />
+          </svg>
+        </button>
+      </header>
+      <p class="modal-sub">
+        Limit handoffs to a known set of agents and models, then start the team
+        with one orchestrator and a worker per member.
+      </p>
+      <div class="team-project mono" id="team-project"></div>
+
+      <div class="team-mode" role="radiogroup" aria-label="Team mode">
+        <label class="team-radio">
+          <input type="radio" name="team-mode" value="manual" />
+          <span>Manual handoff</span>
+        </label>
+        <label class="team-radio">
+          <input type="radio" name="team-mode" value="auto" />
+          <span>Auto start</span>
+        </label>
+      </div>
+
+      <div class="team-members" id="team-members"></div>
+      <button class="btn team-add" type="button" id="team-add-member">Add member</button>
+
+      <div class="team-field">
+        <span class="field-label">Orchestrator</span>
+        <div class="team-orch" id="team-orchestrator" role="radiogroup"
+             aria-label="Orchestrator"></div>
+      </div>
+
+      <div class="team-field">
+        <label class="field-label" for="team-on-quota">When quota runs out (Orchestrator &amp; Fallback)</label>
+        <div class="handoff-fallback-row">
+          <select class="select" id="team-on-quota">
+            <option value="orchestrator">Auto notify orchestrator &amp; save WIP (Recommended)</option>
+            <option value="fallback">Auto switch to fallback agent</option>
+            <option value="wait">Wait for quota reset &amp; resume</option>
+            <option value="stop">Stop &amp; report blocked</option>
+          </select>
+          <button class="btn sm" type="button" id="team-fallback-btn">Fallback Agent</button>
+        </div>
+      </div>
+
+      <label class="field-label" for="team-task">Task</label>
+      <textarea class="input team-task" id="team-task" rows="3"
+                placeholder="What should the team build or fix?"></textarea>
+
+      <div class="modal-foot">
+        <span class="modal-note" id="team-error"></span>
+        <div class="modal-actions">
+          <button class="btn" type="button" id="team-cancel">Cancel</button>
+          <button class="btn" type="button" id="team-save">Save</button>
+          <button class="btn primary" type="button" id="team-start">Start team</button>
         </div>
       </div>
     </div>
@@ -931,7 +1044,15 @@
             <p class="hint">Free and open source, built in the open. If it helps,
               you can buy the developer a coffee on Tako.</p>
           </div>
-          <button class="btn" type="button" id="setup-support">Support on Tako</button>
+          <button class="btn support-cta" type="button" id="setup-support">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 9h12v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5V9z" />
+              <path d="M16 10h1.5a2.5 2.5 0 0 1 0 5H16" />
+              <path d="M8 3v2M12 3v2" />
+            </svg>
+            Support on Tako
+          </button>
         </div>
         <p class="hint">Omnix is licensed under GPL-3.0-or-later.</p>
       </section>

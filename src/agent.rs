@@ -4,14 +4,18 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-/// Menu order mirrors Orca: the agents people actually run first.
+/// Menu order mirrors Orca: the agents people actually run first. The tail
+/// holds the newer viral CLIs; the Project Team picker keeps this list behind
+/// a "More" button so every supported agent stays reachable without turning
+/// the dialog into a wall of pills.
 pub const AGENTS: &[&str] = &[
     "opencode2",
     "codex",
     "opencode",
+    "omp",
+    "claude",
     "antigravity",
     "command-code",
-    "claude",
     "cursor",
     "gemini",
     "grok",
@@ -21,6 +25,19 @@ pub const AGENTS: &[&str] = &[
     "kimi",
     "kiro",
     "rovo",
+    "amp",
+    "droid",
+    "crush",
+    "aider",
+    "goose",
+    "openhands",
+    "codebuff",
+    "plandex",
+    "junie",
+    "amazon-q",
+    "continue",
+    "forge",
+    "vibe",
 ];
 
 /// Per-agent launch overrides, persisted as `.omnix/agents.json` under the
@@ -131,6 +148,7 @@ pub fn full_access_flag(agent: &str) -> Option<&'static str> {
     Some(match base_agent(agent) {
         "claude" => "--dangerously-skip-permissions",
         "codex" => "--dangerously-bypass-approvals-and-sandbox",
+        "antigravity" => "--dangerously-skip-permissions",
         "gemini" | "qwen-code" => "--yolo",
         "copilot" => "--allow-all-tools",
         _ => return None,
@@ -185,6 +203,11 @@ pub fn valid_profile(name: &str) -> bool {
 
 pub fn base_agent(agent: &str) -> &str {
     split_agent(agent).map(|(base, _)| base).unwrap_or(agent)
+}
+
+/// True for a built-in agent or a plugin agent, including `name:profile`.
+pub fn known(agent: &str) -> bool {
+    split_agent(agent).is_some()
 }
 
 pub fn profile_of(agent: &str) -> Option<&str> {
@@ -390,6 +413,20 @@ pub fn launch_cmd(agent: &str) -> Option<&'static str> {
         "antigravity" => "agy",
         "rovo" => "rovo",
         "command-code" => "command-code",
+        "omp" => "omp",
+        "amp" => "amp",
+        "droid" => "droid",
+        "crush" => "crush",
+        "aider" => "aider",
+        "goose" => "goose",
+        "openhands" => "openhands",
+        "codebuff" => "codebuff",
+        "plandex" => "plandex",
+        "junie" => "junie",
+        "amazon-q" => "q",
+        "continue" => "cn",
+        "forge" => "forge",
+        "vibe" => "vibe",
         _ => return plugin_launch_cmd(agent),
     })
 }
@@ -526,7 +563,9 @@ pub fn resume_args(agent: &str, session_id: &str) -> Result<Vec<String>> {
     Ok(match base_agent(agent) {
         "codex" => vec!["resume".into(), id],
         "rovo" => vec!["--restore".into(), id],
-        "opencode" | "opencode2" | "pi" | "kimi" => vec!["--session".into(), id],
+        "opencode" | "opencode2" | "pi" | "kimi" | "omp" | "crush" => {
+            vec!["--session".into(), id]
+        }
         "copilot" => vec![format!("--resume={id}")],
         "cline" => vec!["--id".into(), id],
         "antigravity" => vec!["--conversation".into(), id],
@@ -548,6 +587,9 @@ pub struct LaunchOptions {
     pub model: Option<String>,
     pub effort: Option<String>,
     pub mode: Option<String>,
+    /// First turn for CLIs that can take it as an argv value. This is more
+    /// reliable than typing a long brief into a TUI that is still booting.
+    pub prompt: Option<String>,
 }
 
 fn valid_model(value: &str) -> bool {
@@ -583,6 +625,29 @@ pub fn extra_args(agent: &str, options: &LaunchOptions) -> Result<Vec<String>> {
             bail!("--mode must be plan, edit, or full");
         }
     }
+    let base = base_agent(agent);
+    if options.model.is_some()
+        && !matches!(base, "codex" | "claude" | "antigravity" | "opencode" | "opencode2")
+    {
+        bail!("--model is only supported for codex, claude, antigravity, and opencode");
+    }
+    if options.effort.is_some() && !matches!(base, "codex" | "antigravity") {
+        bail!("--effort is only supported for codex and antigravity");
+    }
+    if options.mode.is_some() && base != "antigravity" {
+        bail!("--mode is only supported for antigravity");
+    }
+    if let Some(prompt) = &options.prompt {
+        if prompt.trim().is_empty() {
+            bail!("prompt must not be empty");
+        }
+        if prompt.chars().count() > 20000 {
+            bail!("prompt must be at most 20000 characters");
+        }
+        if !matches!(base_agent(agent), "opencode" | "opencode2") {
+            bail!("--prompt is only supported for opencode");
+        }
+    }
     let mut out = Vec::new();
     match base_agent(agent) {
         "codex" => {
@@ -605,8 +670,13 @@ pub fn extra_args(agent: &str, options: &LaunchOptions) -> Result<Vec<String>> {
                 out.push(effort.clone());
             }
             if let Some(mode) = &options.mode {
+                let mapped = match mode.as_str() {
+                    "edit" => "accept-edits",
+                    "full" => "auto",
+                    other => other,
+                };
                 out.push("--mode".into());
-                out.push(mode.clone());
+                out.push(mapped.into());
             }
         }
         "claude" => {
@@ -615,9 +685,70 @@ pub fn extra_args(agent: &str, options: &LaunchOptions) -> Result<Vec<String>> {
                 out.push(model.clone());
             }
         }
+        "opencode" | "opencode2" => {
+            if let Some(prompt) = &options.prompt {
+                out.push("--prompt".into());
+                out.push(prompt.clone());
+            }
+        }
         _ => {}
     }
     Ok(out)
+}
+
+/// argv for a non-interactive run. Only the four CLIs with a verified
+/// headless mode are accepted; the rest fall back to opening a pane. The
+/// caller redirects stdout/stderr to the handoff log.
+pub fn headless_args(agent: &str, options: &LaunchOptions, brief: &str) -> Result<Vec<String>> {
+    if brief.trim().is_empty() {
+        bail!("headless brief must not be empty");
+    }
+    if brief.chars().count() > 200_000 {
+        bail!("headless brief must be at most 200000 characters");
+    }
+    let extra = extra_args(agent, options)?;
+    let mut out = match base_agent(agent) {
+        "codex" => vec![
+            "exec".to_string(),
+            "--dangerously-bypass-approvals-and-sandbox".to_string(),
+        ],
+        "claude" => vec![
+            "-p".to_string(),
+            brief.to_string(),
+            "--permission-mode".to_string(),
+            "acceptEdits".to_string(),
+        ],
+        "antigravity" => vec![
+            "-p".to_string(),
+            brief.to_string(),
+            "--dangerously-skip-permissions".to_string(),
+            "--output-format".to_string(),
+            "text".to_string(),
+        ],
+        "opencode" | "opencode2" => vec!["run".to_string(), brief.to_string()],
+        other => bail!("{other} has no verified headless mode; open a pane instead"),
+    };
+    out.extend(extra);
+    if base_agent(agent) == "codex" {
+        out.push(brief.to_string());
+    }
+    Ok(out)
+}
+
+/// OpenCode picks its model from config rather than a flag. Setting the
+/// content config for one pane keeps the user's global config untouched while
+/// still pinning the model the project team assigned.
+pub fn model_env(agent: &str, model: Option<&str>) -> Vec<(String, String)> {
+    let Some(model) = model.map(str::trim).filter(|m| !m.is_empty()) else {
+        return Vec::new();
+    };
+    if base_agent(agent) != "opencode" {
+        return Vec::new();
+    }
+    vec![(
+        "OPENCODE_CONFIG_CONTENT".into(),
+        serde_json::json!({ "model": model }).to_string(),
+    )]
 }
 
 /// What `omnix doctor` prints. A desktop launch can miss a binary that is
@@ -802,20 +933,89 @@ mod tests {
         let opts = LaunchOptions {
             model: Some("gpt-5".into()),
             effort: Some("high".into()),
-            mode: Some("edit".into()),
+            mode: None,
+            prompt: None,
         };
         assert_eq!(
             extra_args("codex", &opts).unwrap(),
             vec!["-m", "gpt-5", "-c", "model_reasoning_effort=high"]
         );
+        let antigravity = LaunchOptions {
+            model: Some("gpt-5".into()),
+            effort: Some("high".into()),
+            mode: Some("edit".into()),
+            prompt: None,
+        };
         assert_eq!(
-            extra_args("antigravity", &opts).unwrap(),
-            vec!["--model", "gpt-5", "--effort", "high", "--mode", "edit"]
+            extra_args("antigravity", &antigravity).unwrap(),
+            vec!["--model", "gpt-5", "--effort", "high", "--mode", "accept-edits"]
         );
+        let agy_full = LaunchOptions {
+            mode: Some("full".into()),
+            ..Default::default()
+        };
         assert_eq!(
-            extra_args("claude", &opts).unwrap(),
+            extra_args("antigravity", &agy_full).unwrap(),
+            vec!["--mode", "auto"]
+        );
+        let claude = LaunchOptions {
+            model: Some("gpt-5".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            extra_args("claude", &claude).unwrap(),
             vec!["--model", "gpt-5"]
         );
+        assert!(extra_args("claude", &opts).is_err(), "claude has no effort flag");
+        assert!(
+            extra_args("opencode", &antigravity).is_err(),
+            "opencode has no mode flag"
+        );
+    }
+
+    #[test]
+    fn headless_args_use_each_cli_print_mode() {
+        let opts = LaunchOptions::default();
+        assert_eq!(
+            headless_args("codex", &opts, "do it").unwrap(),
+            vec!["exec", "--dangerously-bypass-approvals-and-sandbox", "do it"]
+        );
+        assert_eq!(
+            headless_args("antigravity", &opts, "do it").unwrap(),
+            vec!["-p", "do it", "--dangerously-skip-permissions", "--output-format", "text"]
+        );
+        assert_eq!(
+            headless_args("opencode", &opts, "do it").unwrap(),
+            vec!["run", "do it"]
+        );
+        assert_eq!(
+            headless_args("claude", &opts, "do it").unwrap(),
+            vec!["-p", "do it", "--permission-mode", "acceptEdits"]
+        );
+        assert!(headless_args("omp", &opts, "do it").is_err());
+        assert!(headless_args("codex", &opts, " ").is_err());
+    }
+
+    #[test]
+    fn opencode_takes_the_first_turn_as_argv() {
+        let opts = LaunchOptions {
+            prompt: Some("Plan the retry cap".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            extra_args("opencode", &opts).unwrap(),
+            vec!["--prompt", "Plan the retry cap"]
+        );
+        assert_eq!(
+            extra_args("opencode2", &opts).unwrap(),
+            vec!["--prompt", "Plan the retry cap"]
+        );
+        assert!(extra_args("codex", &opts).is_err());
+        let long = LaunchOptions {
+            prompt: Some("x".repeat(20001)),
+            ..Default::default()
+        };
+        assert!(extra_args("opencode", &long).is_err());
     }
 
     #[test]
@@ -830,5 +1030,19 @@ mod tests {
             ..Default::default()
         };
         assert!(extra_args("codex", &bad).is_err());
+    }
+
+    #[test]
+    fn opencode_model_is_passed_through_the_content_config() {
+        assert_eq!(
+            model_env("opencode", Some("9router/oc/model")),
+            vec![(
+                "OPENCODE_CONFIG_CONTENT".to_string(),
+                r#"{"model":"9router/oc/model"}"#.to_string()
+            )]
+        );
+        assert!(model_env("claude", Some("sonnet")).is_empty());
+        assert!(model_env("opencode", None).is_empty());
+        assert!(model_env("opencode", Some("  ")).is_empty());
     }
 }

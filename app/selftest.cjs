@@ -101,6 +101,11 @@ const byId = new Map();
   'memory-total', 'memory-ai', 'memory-list', 'memory-ram',
   'handoff-modal', 'handoff-close', 'handoff-cancel', 'handoff-start',
   'handoff-target', 'handoff-source-title', 'handoff-source-sub', 'handoff-cwd',
+  'fallback-modal', 'fallback-close', 'fallback-cancel', 'fallback-save',
+  'fallback-agent', 'fallback-command', 'fallback-auto', 'fallback-error', 'fallback-sub',
+  'team-modal', 'team-close', 'team-cancel', 'team-save', 'team-start', 'team-add-member',
+  'team-members', 'team-orchestrator', 'team-on-quota', 'team-fallback-btn',
+  'team-project', 'team-task', 'team-error',
   'workers', 'workers-list', 'workers-refresh', 'gc-preview',
   'agent-send-modal', 'agent-send-title', 'agent-send-target', 'agent-send-text',
   'agent-send-note', 'agent-send-close', 'agent-send-cancel', 'agent-send-ok',
@@ -1043,7 +1048,7 @@ require('./app.js');
   await tick();
   const handoffSpawn = posted[posted.length - 1];
   assert.strictEqual(handoffSpawn.cmd, 'ptySpawn', 'handoff starts a new agent session');
-  assert.strictEqual(handoffSpawn.args.command, 'codex', 'handoff runs the target CLI');
+  assert.strictEqual(handoffSpawn.args.agent, 'codex', 'handoff runs the target CLI');
   assert.strictEqual(handoffSpawn.args.cwd, '/repo');
   window.__omnix.reply(handoffSpawn.id, true, '{"paneKey":"hf:codex:1","pid":79}');
   await tick();
@@ -1136,7 +1141,7 @@ require('./app.js');
   assert.ok(labels.indexOf('omnix \u00b7 code') >= 0, 'parent project label is disambiguated');
   assert.ok(labels.indexOf('omnix \u00b7 packages') >= 0, 'nested project label is disambiguated');
 
-  const toolsRow = projRows.find((n) => n.title === '/home/you/code/omnix/packages/tools');
+  const toolsRow = projRows.find((n) => String(n.attrs['aria-label'] || '').includes('/home/you/code/omnix/packages/tools'));
   assert.ok(toolsRow, 'nested project row is present');
   const beforeTools = posted.length;
   toolsRow.handlers.click(noop());
@@ -1156,7 +1161,7 @@ require('./app.js');
   await tick();
 
   // new terminals inherit the folder of the project the user is working in
-  const omnixRow = projRows.find((n) => n.title === '/home/you/code/omnix');
+  const omnixRow = projRows.find((n) => String(n.attrs['aria-label'] || '').endsWith('/home/you/code/omnix'));
   assert.ok(omnixRow, 'omnix project row is present');
   const beforeOmnix = posted.length;
   omnixRow.handlers.click(noop());
@@ -1180,7 +1185,7 @@ require('./app.js');
   function wrapFor(path) {
     return projWraps.find((w) => {
       const row = all(w, (n) => String(n.className).split(/\s+/).includes('proj-row'))[0];
-      return row && row.title === path;
+      return row && String(row.attrs['aria-label'] || '').endsWith(' \u2014 ' + path);
     });
   }
   const parentWrap = wrapFor('/home/you/code/omnix');
@@ -1204,7 +1209,7 @@ require('./app.js');
   const activeRows = byClass('workspace-list', 'proj').filter((n) =>
     String(n.className).split(/\s+/).includes('is-active'));
   assert.strictEqual(activeRows.length, 1, 'exactly one project is marked active');
-  assert.ok(activeRows[0].children[0].title === '/home/you/code/omnix',
+  assert.ok(String(activeRows[0].children[0].attrs['aria-label'] || '').endsWith('/home/you/code/omnix'),
     'the active marker follows the clicked project');
 
   // the sidebar spinner turns only while the pane is printing

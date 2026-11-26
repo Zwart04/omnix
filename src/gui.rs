@@ -1,9 +1,9 @@
 use crate::{browser, history, procs, projects, pty, sources, update, usage, workspace};
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
@@ -23,6 +23,15 @@ const ADDON_FIT_JS: &str = include_str!("../app/vendor/addon-fit.js");
 const ADDON_WEBGL_JS: &str = include_str!("../app/vendor/addon-webgl.js");
 const TUTORIAL: &str = include_str!("../tutorial/index.html");
 const ICON: &str = include_str!("../app/icon.svg");
+const AGENT_AMP: &[u8] = include_bytes!("../app/agents/amp.svg");
+const AGENT_AIDER: &[u8] = include_bytes!("../app/agents/aider.svg");
+const AGENT_CONTINUE: &[u8] = include_bytes!("../app/agents/continue.svg");
+const AGENT_DROID: &[u8] = include_bytes!("../app/agents/droid.svg");
+const AGENT_FORGE: &[u8] = include_bytes!("../app/agents/forge.svg");
+const AGENT_GOOSE: &[u8] = include_bytes!("../app/agents/goose.svg");
+const AGENT_JUNIE: &[u8] = include_bytes!("../app/agents/junie.svg");
+const AGENT_OPENHANDS: &[u8] = include_bytes!("../app/agents/openhands.svg");
+const AGENT_VIBE: &[u8] = include_bytes!("../app/agents/vibe.svg");
 const LOGO_PNG: &[u8] = include_bytes!("../app/logo.png");
 const LOGO_RGBA: &[u8] = include_bytes!("../app/logo.rgba");
 const TAKO_PNG: &[u8] = include_bytes!("../app/tako.png");
@@ -163,6 +172,8 @@ struct App {
     ptys: HashMap<String, pty::Pty>,
     pane_procs: HashMap<String, PaneProc>,
     panes: BTreeMap<String, PaneMeta>,
+    pane_tails: HashMap<String, String>,
+    pane_quota_reported: HashSet<String>,
     pending_prompts: HashMap<String, String>,
     ctrl: Option<crate::control::Server>,
     quit: bool,
@@ -193,6 +204,15 @@ fn asset(path: &str) -> Option<(&'static [u8], &'static str)> {
         "/vendor/addon-webgl.js" => (ADDON_WEBGL_JS.as_bytes(), "text/javascript; charset=utf-8"),
         "/tutorial.html" => (TUTORIAL.as_bytes(), "text/html; charset=utf-8"),
         "/icon.svg" => (ICON.as_bytes(), "image/svg+xml"),
+        "/agents/amp.svg" => (AGENT_AMP, "image/svg+xml"),
+        "/agents/aider.svg" => (AGENT_AIDER, "image/svg+xml"),
+        "/agents/continue.svg" => (AGENT_CONTINUE, "image/svg+xml"),
+        "/agents/droid.svg" => (AGENT_DROID, "image/svg+xml"),
+        "/agents/forge.svg" => (AGENT_FORGE, "image/svg+xml"),
+        "/agents/goose.svg" => (AGENT_GOOSE, "image/svg+xml"),
+        "/agents/junie.svg" => (AGENT_JUNIE, "image/svg+xml"),
+        "/agents/openhands.svg" => (AGENT_OPENHANDS, "image/svg+xml"),
+        "/agents/vibe.svg" => (AGENT_VIBE, "image/svg+xml"),
         "/logo.png" => (LOGO_PNG, "image/png"),
         "/tako.png" => (TAKO_PNG, "image/png"),
         _ => return None,
@@ -1242,9 +1262,14 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 model: as_str(&args, "model"),
                 effort: as_str(&args, "effort"),
                 mode: as_str(&args, "mode"),
+                prompt: as_str(&args, "prompt"),
             };
             let extra = match &agent {
                 Some(agent) => crate::agent::extra_args(agent, &options)?,
+                None => Vec::new(),
+            };
+            let extra_env = match &agent {
+                Some(agent) => crate::agent::model_env(agent, options.model.as_deref()),
                 None => Vec::new(),
             };
             let login = args.get("login").and_then(Value::as_bool).unwrap_or(false);
@@ -1263,7 +1288,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                         pty::spawn_command(&line, &cwd)?
                     }
                     (Some(a), s, None) => {
-                        pty::spawn_agent_with(&app.root, &a, s.as_deref(), &cwd, &extra)?
+                        pty::spawn_agent_with(&app.root, &a, s.as_deref(), &cwd, &extra, &extra_env)?
                     }
                     _ => pty::spawn(shell.as_deref(), &cwd, None)?,
                 };
@@ -1389,6 +1414,8 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             }
             app.pane_procs.remove(&key);
             app.panes.remove(&key);
+            app.pane_tails.remove(&key);
+            app.pane_quota_reported.remove(&key);
             persist_panes(app);
             Ok(json!({ "ok": true }))
         })(),
@@ -1624,6 +1651,13 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let cwd = as_str(&args, "cwd")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| app.root.clone());
+            let mut model = as_str(&args, "model").unwrap_or_default();
+            if let Some(root) = crate::team::find_root(&cwd) {
+                let team = crate::team::load_at(&root)?;
+                if let Some(member) = crate::team::resolve(&team, &agent, &model)? {
+                    model = member.model.clone();
+                }
+            }
 
             let (body, title, messages, source_cwd) =
                 if source_agent.is_empty() || session.is_empty() {
@@ -1666,9 +1700,200 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "title": title,
                 "messages": messages,
                 "sourceCwd": source_cwd,
+                "model": model,
                 "preview": text.chars().take(1400).collect::<String>(),
                 "prompt": text,
             }))
+        })(),
+        "fallbackShow" => (|| {
+            let agent = as_str(&args, "agent").unwrap_or_default();
+            Ok(json!({
+                "configured": crate::fallback::get(&app.root, &agent),
+                "candidates": crate::fallback::candidates(&app.root, &agent),
+            }))
+        })(),
+        "fallbackSet" => (|| {
+            let agent = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
+            let target = as_str(&args, "target").unwrap_or_default();
+            let command = as_str(&args, "command");
+            if target.is_empty() && command.is_none() {
+                return Err(anyhow!("pick a fallback agent or type a command"));
+            }
+            let entry = crate::fallback::Fallback {
+                agent: target,
+                command,
+                auto: args.get("auto").and_then(Value::as_bool).unwrap_or(false),
+                enabled: true,
+            };
+            crate::fallback::set(&app.root, &agent, entry.clone())?;
+            Ok(json!({ "ok": true, "fallback": entry }))
+        })(),
+        "fallbackRemove" => (|| {
+            let agent = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
+            crate::fallback::remove(&app.root, &agent)?;
+            Ok(json!({ "ok": true }))
+        })(),
+        "teamGet" => (|| {
+            let project = as_str(&args, "project").ok_or_else(|| anyhow!("project is required"))?;
+            let root = crate::team::find_root(Path::new(&project))
+                .unwrap_or_else(|| PathBuf::from(&project));
+            let team = crate::team::load_at(&root)?;
+            Ok(json!({
+                "project": root.to_string_lossy(),
+                "team": team,
+            }))
+        })(),
+        "teamSave" => (|| {
+            let project = as_str(&args, "project").ok_or_else(|| anyhow!("project is required"))?;
+            let root = crate::team::find_root(Path::new(&project))
+                .unwrap_or_else(|| PathBuf::from(&project));
+            let raw = args
+                .get("team")
+                .cloned()
+                .ok_or_else(|| anyhow!("team is required"))?;
+            let team: crate::team::Team = serde_json::from_value(raw)?;
+            let saved = crate::team::save_at(&root, team)?;
+            Ok(json!({
+                "project": root.to_string_lossy(),
+                "team": saved,
+            }))
+        })(),
+        "teamStart" => (|| {
+            let project = as_str(&args, "project").ok_or_else(|| anyhow!("project is required"))?;
+            let root = crate::team::find_root(Path::new(&project))
+                .unwrap_or_else(|| PathBuf::from(&project));
+            let task = as_str(&args, "task").unwrap_or_default();
+            let task = task.trim();
+            if task.is_empty() {
+                return Err(anyhow!("describe the team task first"));
+            }
+            if task.chars().count() > 4000 {
+                return Err(anyhow!("team task is too long (4000 characters max)"));
+            }
+            let team = crate::team::load_at(&root)?;
+            if team.mode != "auto" {
+                return Err(anyhow!("start is only enabled for auto teams"));
+            }
+            if team.members.len() < 2 {
+                return Err(anyhow!("an auto team needs an orchestrator and at least one worker"));
+            }
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0);
+            let mut names = Vec::new();
+            for (idx, member) in team.members.iter().enumerate() {
+                let base: String = member
+                    .agent
+                    .chars()
+                    .map(|c| {
+                        if c.is_ascii_alphanumeric() {
+                            c.to_ascii_lowercase()
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect();
+                let name = format!("team-{stamp}-{}-{base}", idx + 1);
+                if name.len() > 48 {
+                    return Err(anyhow!("generated team name is too long"));
+                }
+                names.push(name);
+            }
+            let orch_index = team
+                .members
+                .iter()
+                .position(|m| crate::team::member_key(m) == team.orchestrator)
+                .ok_or_else(|| anyhow!("orchestrator is not a member"))?;
+            let orch_name = names[orch_index].clone();
+            let mut workers: Vec<Value> = Vec::new();
+            let mut worker_lines = String::new();
+            for (idx, member) in team.members.iter().enumerate() {
+                if idx == orch_index {
+                    continue;
+                }
+                let name = &names[idx];
+                let model = if member.model.is_empty() {
+                    None
+                } else {
+                    Some(member.model.clone())
+                };
+                let role = crate::team::role_note(&member.role, "implementer");
+                let prompt = format!(
+                    "# Team worker: {name}\n\nProject: {}\nTask: {task}\nRole: {role}\n\nYou report to the orchestrator `{orch_name}`. Wait for a message from the orchestrator before editing. Reply `READY` and stop; do not start on your own. When the assignment arrives, work only in this worktree, run the tests, and summarize the result.\n",
+                    root.display()
+                );
+                let (record, _worktree) = crate::handoff::create_with(
+                    &app.root,
+                    crate::handoff::CreateOptions {
+                        name: name.clone(),
+                        agent: member.agent.clone(),
+                        prompt: prompt.clone(),
+                        repo: Some(root.clone()),
+                        parent: Some(orch_name.clone()),
+                        model: model.clone(),
+                        mode: Some("edit".into()),
+                        on_quota: crate::team::quota_spec(&team, member),
+                        ..Default::default()
+                    },
+                )?;
+                worker_lines.push_str(&format!(
+                    "- `{}` — {} — {} — worktree `{}`\n",
+                    record.name,
+                    member.agent,
+                    model.as_deref().unwrap_or("agent default"),
+                    record.worktree
+                ));
+                workers.push(json!({
+                    "name": record.name,
+                    "agent": member.agent,
+                    "model": model.unwrap_or_default(),
+                    "cwd": record.worktree,
+                    "branch": record.branch,
+                    "brief": record.brief,
+                    "prompt": prompt,
+                    "orchestrator": false,
+                    "parent": record.parent,
+                }));
+            }
+            let orch_member = &team.members[orch_index];
+            let orch_role = crate::team::role_note(&orch_member.role, "planner");
+            let orchestrator_prompt = format!(
+                "# Team orchestrator: {orch_name}\n\nProject: {}\nTask: {task}\nRole: {orch_role}\nQuota policy: {}\n\nWorkers:\n{worker_lines}\nStart by checking `omnix agent status`; wait a few seconds until every worker is listed. Split the task into one assignment per worker and send it with:\n\n  omnix agent send <worker> --text \"...\"\n  omnix agent wait <worker> --until turn-done,needs-approval,exited,quota\n\nIf `agent wait` exits with code 75 (quota exhausted), Omnix saves a WIP commit and sends you a notice automatically; check `omnix events --kind agent-quota-exhausted` and reassign remaining work.\n\nUse the worktree path shown above when you refer to a worker's checkout. Keep the main checkout untouched. When all workers report back, summarize the result and the tests that passed.\n",
+                root.display(),
+                team.on_quota
+            );
+            let orch_model = if orch_member.model.is_empty() {
+                None
+            } else {
+                Some(orch_member.model.clone())
+            };
+            let (record, _worktree) = crate::handoff::create_with(
+                &app.root,
+                crate::handoff::CreateOptions {
+                    name: orch_name.clone(),
+                    agent: orch_member.agent.clone(),
+                    prompt: orchestrator_prompt.clone(),
+                    repo: Some(root.clone()),
+                    model: orch_model.clone(),
+                    mode: Some("edit".into()),
+                    on_quota: crate::team::quota_spec(&team, orch_member),
+                    ..Default::default()
+                },
+            )?;
+            let mut out = workers;
+            out.push(json!({
+                "name": record.name,
+                "agent": orch_member.agent,
+                "model": orch_model.unwrap_or_default(),
+                "cwd": record.worktree,
+                "branch": record.branch,
+                "brief": record.brief,
+                "prompt": orchestrator_prompt,
+                "orchestrator": true,
+                "parent": record.parent,
+            }));
+            Ok(json!({ "project": root.to_string_lossy(), "members": out }))
         })(),
         "selftest" => {
             if std::env::var_os("OMNIX_SELFTEST").is_none() {
@@ -1970,9 +2195,11 @@ fn control_request(
                 model: record.get("model").and_then(Value::as_str).map(str::to_string),
                 effort: record.get("effort").and_then(Value::as_str).map(str::to_string),
                 mode: record.get("mode").and_then(Value::as_str).map(str::to_string),
+                prompt: None,
             };
             let extra = crate::agent::extra_args(agent, &options)?;
-            let spawned = pty::spawn_agent_with(&app.root, agent, None, &cwd, &extra)?;
+            let extra_env = crate::agent::model_env(agent, options.model.as_deref());
+            let spawned = pty::spawn_agent_with(&app.root, agent, None, &cwd, &extra, &extra_env)?;
             let pid = spawned.pid;
             let mut reader = spawned.reader;
             let tx_data = tx.clone();
@@ -2060,6 +2287,8 @@ fn control_request(
             }
             app.pane_procs.remove(&key);
             app.panes.remove(&key);
+            app.pane_tails.remove(&key);
+            app.pane_quota_reported.remove(&key);
             persist_panes(app);
             emit(&app.ui, "paneClosed", &json!({ "paneKey": key.clone() }));
             Ok(json!({ "paneKey": key }))
@@ -2109,6 +2338,152 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                 }
             }
             Msg::PtyData { key, data } => {
+                if !app.pane_quota_reported.contains(&key) {
+                    let is_agent = app
+                        .panes
+                        .get(&key)
+                        .map(|m| !m.agent.trim().is_empty())
+                        .unwrap_or(false);
+                    if is_agent {
+                        let tail = app.pane_tails.entry(key.clone()).or_default();
+                        tail.push_str(&String::from_utf8_lossy(&data));
+                        if tail.len() > 8192 {
+                            let drop_to = tail.len() - 4096;
+                            if let Some(idx) = tail
+                                .char_indices()
+                                .find(|(i, _)| *i >= drop_to)
+                                .map(|(i, _)| i)
+                            {
+                                tail.drain(..idx);
+                            }
+                        }
+                        if let Some(ex) = crate::usage::detect_exhaustion(tail) {
+                            app.pane_quota_reported.insert(key.clone());
+                            let excerpt: String = tail
+                                .lines()
+                                .rev()
+                                .find(|l| !l.trim().is_empty())
+                                .unwrap_or("")
+                                .trim()
+                                .chars()
+                                .take(300)
+                                .collect();
+                            let (handoff_name, agent_name, parent_name, cwd_name, label_name) =
+                                match app.panes.get_mut(&key) {
+                                    Some(meta) => {
+                                        meta.status = "quota".into();
+                                        meta.updated_at = crate::control::epoch();
+                                        (
+                                            meta.handoff.clone(),
+                                            meta.agent.clone(),
+                                            meta.parent.clone(),
+                                            meta.cwd.clone(),
+                                            meta.label.clone(),
+                                        )
+                                    }
+                                    None => Default::default(),
+                                };
+                            let mut wip_sha: Option<String> = None;
+                            if !handoff_name.is_empty() {
+                                if let Some(mut rec) = crate::handoff::find_any(&handoff_name) {
+                                    let rec_model = rec.model.clone();
+                                    let rec_push_wip = rec.push_wip;
+                                    if let Ok(wip) = crate::handoff::save_wip_and_report(
+                                        &mut rec,
+                                        &agent_name,
+                                        rec_model.as_deref(),
+                                        Some(&key),
+                                        &excerpt,
+                                        &ex,
+                                        rec_push_wip,
+                                    ) {
+                                        wip_sha = wip.wip_sha;
+                                    }
+                                }
+                            } else {
+                                let dirty = if !cwd_name.is_empty() {
+                                    crate::handoff::git_dirty_files(Path::new(&cwd_name)).len()
+                                } else {
+                                    0
+                                };
+                                crate::control::event(
+                                    "agent-quota-exhausted",
+                                    json!({
+                                        "agent": agent_name,
+                                        "model": Value::Null,
+                                        "handoff": Value::Null,
+                                        "pane": key,
+                                        "resetAt": ex.reset_at,
+                                        "resetLocal": ex.reset_local,
+                                        "retryable": ex.retryable,
+                                        "confidence": ex.confidence,
+                                        "pesanAsli": excerpt,
+                                        "perubahanBelumCommit": dirty,
+                                    }),
+                                );
+                            }
+                            persist_panes(app);
+                            emit(
+                                &app.ui,
+                                "toast",
+                                &json!({
+                                    "level": "warn",
+                                    "message": format!(
+                                        "Quota exhausted: {} ({})",
+                                        if handoff_name.is_empty() { &label_name } else { &handoff_name },
+                                        agent_name
+                                    )
+                                }),
+                            );
+                            let orch_key = app
+                                .panes
+                                .iter()
+                                .find(|(k, m)| {
+                                    *k != &key
+                                        && app.ptys.contains_key(*k)
+                                        && ((!parent_name.is_empty()
+                                            && (*k == &parent_name || m.handoff == parent_name))
+                                            || m.orchestrator)
+                                })
+                                .map(|(k, _)| k.clone());
+                            if let Some(ok_key) = orch_key {
+                                if let Some(orch_pty) = app.ptys.get_mut(&ok_key) {
+                                    use std::io::Write;
+                                    let who = if handoff_name.is_empty() {
+                                        label_name.as_str()
+                                    } else {
+                                        handoff_name.as_str()
+                                    };
+                                    let notice = format!(
+                                        "\x1b[200~[omnix] worker {who} ({agent_name}) kehabisan kuota{}.{} Periksa `omnix events --kind agent-quota-exhausted` dan teruskan ke cadangan.\x1b[201~\r",
+                                        ex.reset_local
+                                            .as_deref()
+                                            .map(|r| format!(" (pulih {r})"))
+                                            .unwrap_or_default(),
+                                        wip_sha
+                                            .as_deref()
+                                            .map(|s| format!(" WIP commit: {s}."))
+                                            .unwrap_or_default(),
+                                    );
+                                    let _ = orch_pty.writer.write_all(notice.as_bytes());
+                                    let _ = orch_pty.writer.flush();
+                                    crate::control::event(
+                                        "agent-quota-action",
+                                        json!({
+                                            "handoff": if handoff_name.is_empty() { Value::Null } else { json!(handoff_name) },
+                                            "pane": key,
+                                            "agent": agent_name,
+                                            "action": "notify-orchestrator",
+                                            "targetPane": ok_key,
+                                            "wipSha": wip_sha,
+                                            "ok": true,
+                                        }),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 chunks.entry(key).or_default().extend_from_slice(&data);
             }
             Msg::PtyExit { key } => exited.push(key),
@@ -2142,6 +2517,9 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
             let _ = session.child.kill();
         }
         app.pane_procs.remove(&key);
+        app.panes.remove(&key);
+        app.pane_tails.remove(&key);
+        app.pane_quota_reported.remove(&key);
         app.pending_prompts.remove(&key);
         if let Some(meta) = app.panes.get_mut(&key) {
             meta.status = if code == 0 { "done" } else { "failed" }.into();
@@ -2294,6 +2672,8 @@ pub fn run() -> Result<()> {
         ptys: HashMap::new(),
         pane_procs: HashMap::new(),
         panes: BTreeMap::new(),
+        pane_tails: HashMap::new(),
+        pane_quota_reported: HashSet::new(),
         pending_prompts: HashMap::new(),
         ctrl: None,
         quit: false,

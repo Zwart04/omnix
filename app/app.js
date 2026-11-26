@@ -837,6 +837,7 @@
     if (opts.model) args.model = opts.model;
     if (opts.effort) args.effort = opts.effort;
     if (opts.mode) args.mode = opts.mode;
+    if (opts.prompt) args.prompt = opts.prompt;
     if (opts.login) args.login = true;
     return args;
   }
@@ -2990,8 +2991,10 @@
     'claude': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M4.709 15.955l4.72-2.647.08-.23-.08-.128H9.2l-.79-.048-2.698-.073-2.339-.097-2.266-.122-.571-.121L0 11.784l.055-.352.48-.321.686.06 1.52.103 2.278.158 1.652.097 2.449.255h.389l.055-.157-.134-.098-.103-.097-2.358-1.596-2.552-1.688-1.336-.972-.724-.491-.364-.462-.158-1.008.656-.722.881.06.225.061.893.686 1.908 1.476 2.491 1.833.365.304.145-.103.019-.073-.164-.274-1.355-2.446-1.446-2.49-.644-1.032-.17-.619a2.97 2.97 0 01-.104-.729L6.283.134 6.696 0l.996.134.42.364.62 1.414 1.002 2.229 1.555 3.03.456.898.243.832.091.255h.158V9.01l.128-1.706.237-2.095.23-2.695.08-.76.376-.91.747-.492.584.28.48.685-.067.444-.286 1.851-.559 2.903-.364 1.942h.212l.243-.242.985-1.306 1.652-2.064.73-.82.85-.904.547-.431h1.033l.76 1.129-.34 1.166-1.064 1.347-.881 1.142-1.264 1.7-.79 1.36.073.11.188-.02 2.856-.606 1.543-.28 1.841-.315.833.388.091.395-.328.807-1.969.486-2.309.462-3.439.813-.042.03.049.061 1.549.146.662.036h1.622l3.02.225.79.522.474.638-.079.485-1.215.62-1.64-.389-3.829-.91-1.312-.329h-.182v.11l1.093 1.068 2.006 1.81 2.509 2.33.127.578-.322.455-.34-.049-2.205-1.657-.851-.747-1.926-1.62h-.128v.17l.444.649 2.345 3.521.122 1.08-.17.353-.608.213-.668-.122-1.374-1.925-1.415-2.167-1.143-1.943-.14.08-.674 7.254-.316.37-.729.28-.607-.461-.322-.747.322-1.476.389-1.924.315-1.53.286-1.9.17-.632-.012-.042-.14.018-1.434 1.967-2.18 2.945-1.726 1.845-.414.164-.717-.37.067-.662.401-.589 2.388-3.036 1.44-1.882.93-1.086-.006-.158h-.055L4.132 18.56l-1.13.146-.487-.456.061-.746.231-.243 1.908-1.312-.006.006z"></path></svg>`,
     'codex': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path></svg>`,
     'command': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 3.6 8.6 8 4 12.4"/><path d="M9.4 12.4H12.4"/></svg>`,
+    chevron: `<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 4.5 3 3 3-3"/></svg>`,
     'handoff': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8h8"/><path d="m7.5 4.5 3.5 3.5-3.5 3.5"/><path d="M13 3v10"/></svg>`,
     branch: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>`,
+    team: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0"/><circle cx="17.5" cy="10" r="2.5"/><path d="M15 20a5 5 0 0 1 6.5-4.8"/></svg>`,
     chat: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-8 8H7l-4 3v-6a8 8 0 0 1 8-8h2a8 8 0 0 1 8 3z"/><path d="M8 10h8"/><path d="M8 14h5"/></svg>`,
     more: `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>`,
     copy: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`,
@@ -3010,6 +3013,15 @@
     'rovo': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path d="M7.12 11.084a.683.683 0 00-1.16.126L.075 22.974a.703.703 0 00.63 1.018h8.19a.678.678 0 00.63-.39c1.767-3.65.696-9.203-2.406-12.52zM11.434.386a15.515 15.515 0 00-.906 15.317l3.95 7.9a.703.703 0 00.628.388h8.19a.703.703 0 00.63-1.017L12.63.38a.664.664 0 00-1.196.006z"/></svg>`,
     'terminal': `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4.5 6.1 8 3 11.5"/><path d="M8.6 11.5H13"/></svg>`,
     'command-code': `<svg viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd" aria-hidden="true"><path clip-rule="evenodd" d="M19.334 0a4.67 4.67 0 0 0-4.666 4.668v2H9.334v-2A4.67 4.67 0 0 0 4.668 0 4.67 4.67 0 0 0 0 4.668a4.67 4.67 0 0 0 4.668 4.665h2v5.334h-2A4.67 4.67 0 0 0 0 19.334 4.67 4.67 0 0 0 4.668 24a4.67 4.67 0 0 0 4.666-4.666v-2h5.334v2A4.67 4.67 0 0 0 19.334 24 4.67 4.67 0 0 0 24 19.334a4.67 4.67 0 0 0-4.666-4.667h-2V9.333h2A4.67 4.67 0 0 0 24 4.668 4.673 4.673 0 0 0 19.334 0m-2 6.666v-2c0-1.107.893-2 2-2s2 .893 2 2-.893 2-2 2zm-12.668 0c-1.107 0-2-.893-2-2s.893-2 2-2 2 .893 2 2v2zm4.666 8V9.334h5.334v5.334zm10.002 6.667c-1.107 0-2-.893-2-2v-2h2c1.107 0 2 .892 2 2 0 1.107-.893 2-2 2m-14.668 0c-1.107 0-2-.893-2-2 0-1.108.893-2 2-2h2v2c0 1.107-.893 2-2 2"></path></svg>`,
+    'amp': `<img src="/agents/amp.svg" alt="">`,
+    'aider': `<img src="/agents/aider.svg" alt="">`,
+    'continue': `<img src="/agents/continue.svg" alt="" class="is-adaptive">`,
+    'droid': `<img src="/agents/droid.svg" alt="">`,
+    'forge': `<img src="/agents/forge.svg" alt="" class="is-adaptive">`,
+    'goose': `<img src="/agents/goose.svg" alt="" class="is-adaptive">`,
+    'junie': `<img src="/agents/junie.svg" alt="">`,
+    'openhands': `<img src="/agents/openhands.svg" alt="" class="is-adaptive">`,
+    'vibe': `<img src="/agents/vibe.svg" alt="">`,
     gear: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>`,
   };
 
@@ -3023,14 +3035,18 @@
 
   /* One icon node for menus, project chips, and session rows: a brand SVG when
      the agent is known, otherwise the agent's initial in the same 16px box. */
+  var AGENT_MARK = { omp: '\u03c0', openhands: 'OH', codebuff: '{}' };
+
   function iconNode(name, extra) {
-    var mark = ICONS[iconKey(name)];
+    var key = iconKey(name);
+    var mark = ICONS[key];
     var box = el('span', (mark ? 'icon' : 'icon is-mono') + (extra ? ' ' + extra : ''));
     if (mark) {
       box.innerHTML = mark;
       box.setAttribute('aria-hidden', 'true');
     } else {
-      box.textContent = String(name == null ? '?' : name).slice(0, 1).toUpperCase();
+      box.textContent = AGENT_MARK[key] ||
+        String(name == null ? '?' : name).slice(0, 1).toUpperCase();
     }
     return box;
   }
@@ -3040,6 +3056,7 @@
     codex: 'Codex',
     opencode: 'OpenCode',
     opencode2: 'OpenCode 2',
+    omp: 'Oh My Pi',
     cursor: 'Cursor Agent',
     gemini: 'Gemini CLI',
     grok: 'Grok',
@@ -3050,7 +3067,20 @@
     kiro: 'Kiro',
     antigravity: 'Antigravity',
     rovo: 'Rovo',
-    'command-code': 'Command Code'
+    'command-code': 'Command Code',
+    amp: 'Amp',
+    droid: 'Droid',
+    crush: 'Crush',
+    aider: 'Aider',
+    goose: 'Goose',
+    openhands: 'OpenHands',
+    codebuff: 'Codebuff',
+    plandex: 'Plandex',
+    junie: 'Junie',
+    'amazon-q': 'Amazon Q',
+    continue: 'Continue',
+    forge: 'Forge',
+    vibe: 'Mistral Vibe'
   };
 
   function agentLabel(name) {
@@ -3104,6 +3134,18 @@
       if (agentsInfo[i].name === name) return agentsInfo[i].bin || name;
     }
     return name;
+  }
+
+  /* opencode accepts its first turn as an argv value, so the TUI can start
+     working without a bracketed-paste race. Other CLIs still get the paste. */
+  function launchPrompt(agent, prompt) {
+    var text = String(prompt || '');
+    var base = String(agent || '').split(':')[0];
+    var takesArgv = base === 'opencode' || base === 'opencode2';
+    if (takesArgv && text && text.length <= 20000) {
+      return { prompt: text, handoffPrompt: '' };
+    }
+    return { prompt: null, handoffPrompt: text };
   }
 
   function setAgents(list) {
@@ -3259,6 +3301,7 @@
   function hideModal(node) {
     if (!node) return;
     if (node.id === 'handoff-modal') closeHandoffPicker();
+    if (node.id === 'team-modal') closeTeamMenu();
     node.hidden = true;
   }
 
@@ -3305,6 +3348,65 @@
     showModal($('handoff-modal'));
   }
 
+  var fallbackPrimary = '';
+
+  function openFallbackModal(agent) {
+    fallbackPrimary = String(agent || '');
+    var err = $('fallback-error');
+    if (err) err.textContent = '';
+    var sub = $('fallback-sub');
+    if (sub) {
+      sub.textContent = fallbackPrimary
+        ? 'When ' + agentDisplay(fallbackPrimary) +
+          ' runs out of quota, Omnix can start a fresh session with another agent. ' +
+          'The exhausted transcript stays readable.'
+        : 'Pick another agent to take over when the current one runs out of quota.';
+    }
+    var target = $('fallback-agent');
+    var command = $('fallback-command');
+    var auto = $('fallback-auto');
+    if (target) target.value = '';
+    if (command) command.value = '';
+    if (auto) auto.checked = false;
+    showModal($('fallback-modal'));
+    if (!fallbackPrimary) return Promise.resolve(null);
+    return call('fallbackShow', { agent: fallbackPrimary }).then(function (res) {
+      var configured = res && res.configured;
+      if (!configured) return res;
+      if (target) target.value = configured.agent || '';
+      if (command) command.value = configured.command || '';
+      if (auto) auto.checked = !!configured.auto;
+      return res;
+    }, function () { return null; });
+  }
+
+  function saveFallback() {
+    var target = $('fallback-agent');
+    var command = $('fallback-command');
+    var auto = $('fallback-auto');
+    var err = $('fallback-error');
+    var agent = target ? target.value.trim() : '';
+    var cmd = command ? command.value.trim() : '';
+    if (!agent && !cmd) {
+      if (err) err.textContent = 'Pick a fallback agent or type a command.';
+      return Promise.resolve(null);
+    }
+    if (err) err.textContent = '';
+    return call('fallbackSet', {
+      agent: fallbackPrimary,
+      target: agent,
+      command: cmd || null,
+      auto: !!(auto && auto.checked)
+    }).then(function (res) {
+      hideModal($('fallback-modal'));
+      toast('ok', 'Fallback saved');
+      return res;
+    }, function (e) {
+      if (err) err.textContent = message(e);
+      return null;
+    });
+  }
+
   function startHandoff() {
     if (!handoffSource) {
       toast('warn', 'Choose a session from Agents history first.');
@@ -3328,14 +3430,16 @@
       if (start) start.disabled = false;
       if (!res) return null;
       hideModal($('handoff-modal'));
+      var launch = launchPrompt(agent, res.prompt || '');
       createTerminal({
         paneKey: 'hf:' + agent + ':' + Date.now(),
-        command: agentBin(agent),
         agent: agent,
         cwd: res.cwd,
         title: agent + ' handoff',
         handoffBrief: res.brief,
-        handoffPrompt: res.prompt || ''
+        handoffPrompt: launch.handoffPrompt,
+        prompt: launch.prompt,
+        model: res.model || null
       });
       toast('ok', 'Handoff to ' + agent + ' \u00b7 ' + res.messages + ' messages');
       setLast('Handoff brief ready');
@@ -3977,6 +4081,25 @@
     meter.appendChild(el('span', 'usage-window-pct', Math.round(row.used) + '% used'));
     node.appendChild(meter);
 
+    if (row.used >= 99.5) {
+      var swap = el('span', 'usage-fallback', 'Fallback');
+      swap.setAttribute('role', 'button');
+      swap.setAttribute('tabindex', '0');
+      swap.setAttribute('aria-label', 'Set fallback for ' + agentLabel(String(agent.agent || 'agent')));
+      var openFallback = guard(function (ev) {
+        if (ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        }
+        openFallbackModal(String(agent.agent || ''));
+      });
+      swap.addEventListener('click', openFallback);
+      swap.addEventListener('keydown', guard(function (ev) {
+        if (ev.key === 'Enter' || ev.key === ' ') openFallback(ev);
+      }));
+      node.appendChild(swap);
+    }
+
     var chev = el('span', 'usage-chev');
     chev.innerHTML = '<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m4 2 4 4-4 4"/></svg>';
     node.appendChild(chev);
@@ -4107,6 +4230,665 @@
       hideModal($('project-modal'));
     }).catch(function (e) {
       if (err) err.textContent = message(e);
+    });
+  }
+
+  /* ---------- project teams ---------- */
+
+  var teamProjectPath = '';
+  var teamDraft = { mode: 'manual', orchestrator: '', members: [] };
+  var teamStarting = false;
+
+  function teamMemberKey(member) {
+    var agent = String((member && member.agent) || '').trim();
+    var model = String((member && member.model) || '').trim();
+    return model ? agent + '|' + model : agent;
+  }
+
+  /* These four ship no usable brand mark; showing a letter next to a wall of
+     logos looked broken, so the picker omits them. Existing teams and
+     sessions keep working because the backend still supports them. */
+  var TEAM_HIDDEN = { crush: 1, codebuff: 1, plandex: 1, 'amazon-q': 1 };
+
+  function teamAgentChoices() {
+    var out = [];
+    for (var i = 0; i < agentsInfo.length; i++) {
+      var a = agentsInfo[i];
+      if (!a || !a.name || a.enabled === false) continue;
+      if (TEAM_HIDDEN[a.name]) continue;
+      out.push(a);
+    }
+    if (!out.length) out.push({ name: 'opencode', available: true });
+    /* Installed CLIs first; the rest stay reachable at the bottom. */
+    var installed = [];
+    var missing = [];
+    for (var j = 0; j < out.length; j++) {
+      (out[j].available === false ? missing : installed).push(out[j]);
+    }
+    return installed.concat(missing);
+  }
+
+  /* Role presets keep the prompt short and predictable. The same ids are
+     mapped to prompt text by src/team.rs, so a saved team behaves the same
+     after a restart. */
+  var TEAM_ROLES = [
+    { id: 'planner', label: 'Planner',
+      brief: 'Break the task into small steps, list the files and risks, and hand each step to a worker.' },
+    { id: 'implementer', label: 'Implementer',
+      brief: 'Implement the assigned change, run the tests, and report the diff and results.' },
+    { id: 'reviewer', label: 'Reviewer',
+      brief: 'Review the diff for bugs, regressions, and missing tests. Do not rewrite unless asked.' },
+    { id: 'tester', label: 'Tester',
+      brief: 'Write and run tests, reproduce failures, and report coverage gaps.' },
+    { id: 'researcher', label: 'Researcher',
+      brief: 'Investigate APIs and docs, then report findings with file references.' },
+    { id: 'debugger', label: 'Debugger',
+      brief: 'Reproduce the failure, find the root cause, and propose the smallest fix.' },
+    { id: 'documenter', label: 'Documenter',
+      brief: 'Update the README and docs, and keep examples accurate.' }
+  ];
+
+  function teamRolePreset(id) {
+    for (var i = 0; i < TEAM_ROLES.length; i++) {
+      if (TEAM_ROLES[i].id === id) return TEAM_ROLES[i];
+    }
+    return null;
+  }
+
+  function teamRoleIsPreset(role) {
+    var text = String(role || '').trim().toLowerCase();
+    if (text === 'orchestrator' || text === 'coordinator') return true;
+    return !!teamRolePreset(text);
+  }
+
+  function teamRoleId(member) {
+    if (member && member.roleCustom) return 'custom';
+    var text = String((member && member.role) || '').trim().toLowerCase();
+    if (text === 'orchestrator' || text === 'coordinator') return 'planner';
+    if (teamRolePreset(text)) return text;
+    if (text) return 'custom';
+    return teamDraft.orchestrator === teamMemberKey(member) ? 'planner' : 'implementer';
+  }
+
+  /* Model ids are agent-specific: Claude Code takes aliases, Codex takes its
+     own ids, OpenCode uses provider/model. The picker shows the defaults plus
+     the models this agent already used, so it never offers another CLI's id. */
+  var TEAM_MODEL_HINTS = {
+    claude: ['sonnet', 'opus', 'haiku'],
+    codex: ['gpt-5-codex', 'gpt-5'],
+    gemini: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    cursor: ['auto'],
+    copilot: ['gpt-5'],
+    'qwen-code': ['qwen3-coder-plus'],
+    kimi: ['kimi-k2'],
+    grok: ['grok-4']
+  };
+
+  function teamAgentFamily(agent) {
+    var base = String(agent || '').split(':')[0];
+    /* OpenCode 2 runs the same CLI and config as OpenCode. */
+    return base === 'opencode2' ? 'opencode' : base;
+  }
+
+  function teamModelsFor(member) {
+    var agent = String((member && member.agent) || '').trim();
+    var family = teamAgentFamily(agent);
+    var out = [];
+    var seen = Object.create(null);
+    function add(value) {
+      var text = String(value == null ? '' : value).trim();
+      if (seen[text]) return;
+      seen[text] = true;
+      out.push(text);
+    }
+    add('');
+    (TEAM_MODEL_HINTS[family] || []).forEach(add);
+    var sessions = hist && Array.isArray(hist.sessions) ? hist.sessions : [];
+    for (var i = 0; i < sessions.length; i++) {
+      var s = sessions[i] || {};
+      if (teamAgentFamily(s.agent) === family) add(s.model);
+    }
+    add(member && member.model);
+    return out;
+  }
+
+  function teamModelLabel(model) {
+    return String(model || '').trim() || 'Agent default';
+  }
+
+  /* One fixed-position menu serves the agent, model and role pickers. A menu
+     inside the scrollable member list would be clipped, and a native select
+     would open its own X window that can outlive a minimize. */
+  var teamMenuNode = null;
+  var teamMenuAnchor = null;
+
+  function closeTeamMenu() {
+    if (teamMenuNode && teamMenuNode.parentNode) {
+      teamMenuNode.parentNode.removeChild(teamMenuNode);
+    }
+    if (teamMenuAnchor) teamMenuAnchor.setAttribute('aria-expanded', 'false');
+    teamMenuNode = null;
+    teamMenuAnchor = null;
+  }
+
+  function placeTeamMenu(anchor, menu) {
+    var pad = 8;
+    var rect = anchor.getBoundingClientRect();
+    menu.style.minWidth = Math.max(220, rect.width) + 'px';
+    menu.style.maxWidth = Math.min(480, window.innerWidth - pad * 2) + 'px';
+    menu.style.left = '0px';
+    menu.style.top = '0px';
+    var width = menu.offsetWidth;
+    var height = menu.offsetHeight;
+    var left = Math.min(Math.max(pad, rect.left), window.innerWidth - width - pad);
+    var top = rect.bottom + 4;
+    if (top + height > window.innerHeight - pad) {
+      top = Math.max(pad, rect.top - height - 4);
+    }
+    menu.style.left = Math.round(left) + 'px';
+    menu.style.top = Math.round(top) + 'px';
+  }
+
+  function openTeamMenu(anchor, items, onPick) {
+    closeTeamMenu();
+    var menu = el('div', 'team-menu');
+    menu.setAttribute('role', 'listbox');
+    menu.style.visibility = 'hidden';
+    items.forEach(function (item) {
+      var option = el('button', 'team-menu-option' + (item.selected ? ' is-on' : ''));
+      option.type = 'button';
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', item.selected ? 'true' : 'false');
+      var row = el('span', 'team-menu-row');
+      if (item.icon) row.appendChild(iconNode(item.icon));
+      row.appendChild(el('span', 'team-menu-label', item.label));
+      if (item.note) row.appendChild(el('span', 'team-menu-note', item.note));
+      option.appendChild(row);
+      if (item.brief) option.appendChild(el('span', 'team-menu-brief', item.brief));
+      if (item.disabled) option.disabled = true;
+      option.addEventListener('click', guard(function () {
+        closeTeamMenu();
+        onPick(item.value);
+      }));
+      menu.appendChild(option);
+    });
+    menu.addEventListener('keydown', function (ev) {
+      var opts = Array.prototype.slice.call(
+        menu.querySelectorAll('.team-menu-option:not(:disabled)'));
+      if (!opts.length) return;
+      var at = opts.indexOf(document.activeElement);
+      if (ev.key === 'ArrowDown') {
+        ev.preventDefault();
+        opts[Math.min(opts.length - 1, at + 1)].focus();
+      } else if (ev.key === 'ArrowUp') {
+        ev.preventDefault();
+        opts[Math.max(0, at - 1)].focus();
+      } else if (ev.key === 'Home') {
+        ev.preventDefault();
+        opts[0].focus();
+      } else if (ev.key === 'End') {
+        ev.preventDefault();
+        opts[opts.length - 1].focus();
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        closeTeamMenu();
+        if (anchor.focus) anchor.focus();
+      } else if (ev.key === 'Tab') {
+        closeTeamMenu();
+      }
+    });
+    document.body.appendChild(menu);
+    teamMenuNode = menu;
+    teamMenuAnchor = anchor;
+    anchor.setAttribute('aria-expanded', 'true');
+    placeTeamMenu(anchor, menu);
+    menu.style.visibility = 'visible';
+    var selected = menu.querySelector('.team-menu-option.is-on:not(:disabled)') ||
+      menu.querySelector('.team-menu-option:not(:disabled)');
+    if (selected) selected.focus();
+  }
+
+  function teamPickerField(label, kind, onOpen) {
+    var field = el('div', 'team-pick team-pick-' + kind);
+    field.appendChild(el('span', 'team-pick-label', label));
+    var btn = el('button', 'team-picker');
+    btn.type = 'button';
+    btn.setAttribute('aria-haspopup', 'listbox');
+    btn.setAttribute('aria-expanded', 'false');
+    var value = el('span', 'team-picker-value');
+    btn.appendChild(value);
+    var chevron = el('span', 'team-picker-chevron');
+    chevron.innerHTML = ICONS.chevron;
+    chevron.setAttribute('aria-hidden', 'true');
+    btn.appendChild(chevron);
+    btn.addEventListener('click', guard(function () {
+      if (teamMenuNode && teamMenuAnchor === btn) {
+        closeTeamMenu();
+        return;
+      }
+      onOpen();
+    }));
+    field.appendChild(btn);
+    return { field: field, btn: btn, value: value };
+  }
+
+  function teamDefaultAgent() {
+    var list = teamAgentChoices();
+    var prefer = ['opencode', 'codex', 'claude'];
+    for (var p = 0; p < prefer.length; p++) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].name === prefer[p] && list[i].available !== false) return list[i].name;
+      }
+    }
+    for (var j = 0; j < list.length; j++) {
+      if (list[j].available !== false) return list[j].name;
+    }
+    return list[0].name;
+  }
+
+  function normalizeTeam(raw) {
+    var team = raw && typeof raw === 'object' ? raw : {};
+    var members = [];
+    if (Array.isArray(team.members)) {
+      for (var i = 0; i < team.members.length; i++) {
+        var m = team.members[i] || {};
+        var agent = String(m.agent || '').trim();
+        if (!agent) continue;
+        members.push({
+          agent: agent,
+          model: String(m.model || '').trim(),
+          role: String(m.role || '').trim(),
+          roleCustom: !!String(m.role || '').trim() && !teamRoleIsPreset(m.role)
+        });
+      }
+    }
+    if (!members.length) {
+      members.push({ agent: teamDefaultAgent(), model: '', role: '', roleCustom: false });
+    }
+    return {
+      mode: team.mode === 'auto' ? 'auto' : 'manual',
+      orchestrator: String(team.orchestrator || '').trim(),
+      on_quota: String(team.on_quota || 'orchestrator').trim() || 'orchestrator',
+      members: members
+    };
+  }
+
+  function ensureTeamOrchestrator() {
+    var keys = teamDraft.members.map(teamMemberKey);
+    if (keys.indexOf(teamDraft.orchestrator) < 0) {
+      teamDraft.orchestrator = keys[0] || '';
+    }
+  }
+
+  function teamError(text) {
+    var node = $('team-error');
+    if (node) node.textContent = text || '';
+  }
+
+  function teamValidate() {
+    if (!teamDraft.members.length) return 'Add at least one member.';
+    if (teamDraft.members.length > 8) return 'A team can have at most 8 members.';
+    var seen = {};
+    for (var i = 0; i < teamDraft.members.length; i++) {
+      var m = teamDraft.members[i];
+      if (!m.agent) return 'Pick an agent for member ' + (i + 1) + '.';
+      if (m.roleCustom && !String(m.role || '').trim()) {
+        return 'Describe the custom role for member ' + (i + 1) + ', or pick a template.';
+      }
+      if (String(m.role || '').trim().length > 120) {
+        return 'Member ' + (i + 1) + ' role is too long (120 characters max).';
+      }
+      var key = teamMemberKey(m);
+      if (seen[key]) return 'Each member needs a different agent or model.';
+      seen[key] = true;
+    }
+    if (teamDraft.mode === 'auto' && teamDraft.members.length < 2) {
+      return 'Auto start needs an orchestrator and at least one worker.';
+    }
+    var keys = teamDraft.members.map(teamMemberKey);
+    if (keys.indexOf(teamDraft.orchestrator) < 0) return 'Choose an orchestrator.';
+    return '';
+  }
+
+  function teamPayload() {
+    return {
+      mode: teamDraft.mode,
+      orchestrator: teamDraft.orchestrator,
+      on_quota: teamDraft.on_quota || 'orchestrator',
+      members: teamDraft.members.map(function (m) {
+        var role = m.roleCustom ? String(m.role || '').trim() : teamRoleId(m);
+        return {
+          agent: String(m.agent || '').trim(),
+          model: String(m.model || '').trim(),
+          role: role
+        };
+      })
+    };
+  }
+
+  function renderTeamMembers() {
+    var wrap = $('team-members');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    closeTeamMenu();
+    var choices = teamAgentChoices();
+    teamDraft.members.forEach(function (member, index) {
+      var card = el('div', 'team-member');
+
+      var head = el('div', 'team-member-head');
+      head.appendChild(el('span', 'team-member-index', 'Member ' + (index + 1)));
+      var remove = el('button', 'icon-btn team-remove', '\u00d7');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', 'Remove member ' + (index + 1));
+      remove.disabled = teamDraft.members.length <= 1;
+      remove.addEventListener('click', guard(function () {
+        if (teamDraft.members.length <= 1) return;
+        teamDraft.members.splice(index, 1);
+        ensureTeamOrchestrator();
+        renderTeamMembers();
+        renderTeamOrchestrator();
+      }));
+      head.appendChild(remove);
+      card.appendChild(head);
+
+      var fields = el('div', 'team-member-fields');
+
+      var agentField = teamPickerField('Agent', 'agent', function () {
+        openTeamMenu(agentField.btn, choices.map(function (choice) {
+          return {
+            value: choice.name,
+            label: agentDisplay(choice.name),
+            icon: choice.name,
+            note: choice.available === false ? 'not found' : '',
+            selected: member.agent === choice.name,
+            disabled: choice.available === false
+          };
+        }), function (name) {
+          if (name !== member.agent) {
+            var allowed = teamModelsFor({ agent: name, model: '' });
+            member.agent = name;
+            /* Do not carry a model the new CLI does not know. */
+            if (member.model && allowed.indexOf(member.model) < 0) member.model = '';
+            member.customModel = false;
+            ensureTeamOrchestrator();
+            renderTeamMembers();
+            renderTeamOrchestrator();
+          }
+          var again = wrap.querySelectorAll('.team-pick-agent .team-picker')[index];
+          if (again) again.focus();
+        });
+      });
+      agentField.value.appendChild(iconNode(member.agent));
+      agentField.value.appendChild(el('span', 'team-picker-text', agentDisplay(member.agent)));
+      fields.appendChild(agentField.field);
+
+      var modelField = teamPickerField('Model', 'model', function () {
+        var items = teamModelsFor(member).map(function (model) {
+          return {
+            value: model,
+            label: teamModelLabel(model),
+            selected: (member.model || '') === model
+          };
+        });
+        items.push({
+          value: '__custom__',
+          label: 'Custom model\u2026',
+          note: 'type any id',
+          selected: !!member.customModel
+        });
+        openTeamMenu(modelField.btn, items, function (value) {
+          if (value === '__custom__') {
+            member.customModel = true;
+            renderTeamMembers();
+            var input = wrap.querySelectorAll('.team-model-custom')[index];
+            if (input) input.focus();
+            return;
+          }
+          member.customModel = false;
+          member.model = value;
+          ensureTeamOrchestrator();
+          renderTeamMembers();
+          renderTeamOrchestrator();
+          var again = wrap.querySelectorAll('.team-pick-model .team-picker')[index];
+          if (again) again.focus();
+        });
+      });
+      modelField.value.textContent = teamModelLabel(member.model);
+      fields.appendChild(modelField.field);
+      card.appendChild(fields);
+
+      var customModel = member.customModel ||
+        (!!member.model && teamModelsFor({ agent: member.agent, model: '' }).indexOf(member.model) < 0);
+      if (customModel) {
+        var modelInput = el('input', 'input mono team-model-custom');
+        modelInput.type = 'text';
+        modelInput.placeholder = 'provider/model';
+        modelInput.value = member.model || '';
+        modelInput.setAttribute('aria-label', 'Custom model for member ' + (index + 1));
+        modelInput.addEventListener('input', guard(function () {
+          member.model = modelInput.value;
+          member.customModel = true;
+          modelField.value.textContent = teamModelLabel(member.model);
+          ensureTeamOrchestrator();
+          renderTeamOrchestrator();
+        }));
+        modelField.field.appendChild(modelInput);
+      }
+
+      var roleId = teamRoleId(member);
+      var roleField = teamPickerField('Role', 'role', function () {
+        var items = TEAM_ROLES.map(function (preset) {
+          return {
+            value: preset.id,
+            label: preset.label,
+            brief: preset.brief,
+            selected: roleId === preset.id
+          };
+        });
+        items.push({
+          value: '__custom__',
+          label: 'Custom role',
+          brief: 'Describe the role; the text is added to the member prompt.',
+          selected: roleId === 'custom'
+        });
+        openTeamMenu(roleField.btn, items, function (value) {
+          if (value === '__custom__') {
+            if (roleId !== 'custom') member.role = '';
+            member.roleCustom = true;
+            renderTeamMembers();
+            var input = wrap.querySelectorAll('.team-role-custom')[index];
+            if (input) input.focus();
+            return;
+          }
+          member.roleCustom = false;
+          member.role = value;
+          renderTeamMembers();
+          var again = wrap.querySelectorAll('.team-pick-role .team-picker')[index];
+          if (again) again.focus();
+        });
+      });
+      var rolePreset = roleId === 'custom' ? null : (teamRolePreset(roleId) || TEAM_ROLES[0]);
+      roleField.value.textContent = rolePreset ? rolePreset.label : (member.role || 'Custom');
+      card.appendChild(roleField.field);
+
+      if (roleId === 'custom') {
+        var customInput = el('input', 'input team-role-custom');
+        customInput.type = 'text';
+        customInput.placeholder = 'Describe this role in a few words';
+        customInput.maxLength = 120;
+        customInput.value = member.role || '';
+        customInput.setAttribute('aria-label', 'Custom role for member ' + (index + 1));
+        customInput.addEventListener('input', guard(function () {
+          member.role = customInput.value;
+          member.roleCustom = true;
+          roleField.value.textContent = member.role || 'Custom';
+        }));
+        card.appendChild(customInput);
+        card.appendChild(el('p', 'team-role-brief team-role-brief-note',
+          'The brief is added to this member\u2019s prompt.'));
+      } else {
+        var brief = el('div', 'team-role-brief');
+        brief.appendChild(el('span', 'team-role-brief-label', 'Instruction'));
+        brief.appendChild(el('p', null, rolePreset.brief));
+        card.appendChild(brief);
+      }
+
+      wrap.appendChild(card);
+    });
+  }
+
+  function renderTeamOrchestrator() {
+    var wrap = $('team-orchestrator');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    teamDraft.members.forEach(function (member, index) {
+      var key = teamMemberKey(member);
+      var on = key === teamDraft.orchestrator;
+      var btn = el('button', 'team-orch-btn' + (on ? ' is-on' : ''));
+      btn.type = 'button';
+      btn.setAttribute('role', 'radio');
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
+      btn.appendChild(iconNode(member.agent));
+      btn.appendChild(el('span', null, '#' + (index + 1) + ' ' + agentDisplay(member.agent)));
+      btn.addEventListener('click', guard(function () {
+        teamDraft.orchestrator = key;
+        renderTeamOrchestrator();
+      }));
+      wrap.appendChild(btn);
+    });
+  }
+
+  function updateTeamStart() {
+    var start = $('team-start');
+    if (!start) return;
+    var auto = teamDraft.mode === 'auto';
+    start.disabled = teamStarting || !auto;
+    /* No native title: WebKitGTK shows it in its own X window, which can cover
+       the button and swallow the click. The note lives in the modal instead. */
+    start.setAttribute('aria-label', auto
+      ? 'Start one orchestrator and one pane per worker'
+      : 'Switch the team to Auto start first');
+  }
+
+  function renderTeam() {
+    var project = $('team-project');
+    if (project) project.textContent = teamProjectPath || '';
+    var radios = document.querySelectorAll('#team-modal input[name="team-mode"]');
+    for (var i = 0; i < radios.length; i++) {
+      radios[i].checked = radios[i].value === teamDraft.mode;
+    }
+    var add = $('team-add-member');
+    if (add) add.disabled = teamDraft.members.length >= 8;
+    var onQuota = $('team-on-quota');
+    if (onQuota) onQuota.value = teamDraft.on_quota || 'orchestrator';
+    renderTeamMembers();
+    renderTeamOrchestrator();
+    updateTeamStart();
+  }
+
+  function openTeam(project) {
+    var path = String(project || '').trim();
+    if (!path) {
+      toast('warn', 'This project has no folder path.');
+      return Promise.resolve(null);
+    }
+    teamProjectPath = path;
+    teamError('');
+    var task = $('team-task');
+    if (task) task.value = '';
+    return rpc('teamGet', { project: path }, 30000).then(function (res) {
+      teamProjectPath = (res && res.project) || path;
+      teamDraft = normalizeTeam(res && res.team);
+      ensureTeamOrchestrator();
+      renderTeam();
+      showModal($('team-modal'));
+      return res;
+    }, function (err) {
+      toast('error', 'Team: ' + message(err));
+      return null;
+    });
+  }
+
+  function saveTeam() {
+    var problem = teamValidate();
+    if (problem) {
+      teamError(problem);
+      return Promise.reject(new Error(problem));
+    }
+    teamError('');
+    return rpc('teamSave', {
+      project: teamProjectPath,
+      team: teamPayload()
+    }, 30000).then(function (res) {
+      teamDraft = normalizeTeam(res && res.team);
+      ensureTeamOrchestrator();
+      renderTeam();
+      return res;
+    });
+  }
+
+  function startTeam() {
+    if (teamStarting) return Promise.resolve(null);
+    var problem = teamValidate();
+    if (problem) {
+      teamError(problem);
+      return Promise.resolve(null);
+    }
+    var taskNode = $('team-task');
+    var task = taskNode ? String(taskNode.value || '').trim() : '';
+    if (!task) {
+      teamError('Describe the team task first.');
+      return Promise.resolve(null);
+    }
+    teamStarting = true;
+    var save = $('team-save');
+    if (save) save.disabled = true;
+    updateTeamStart();
+    teamError('Starting the team...');
+    return saveTeam().then(function () {
+      return rpc('teamStart', { project: teamProjectPath, task: task }, 180000);
+    }).then(function (res) {
+      teamStarting = false;
+      if (save) save.disabled = false;
+      updateTeamStart();
+      var members = res && Array.isArray(res.members) ? res.members : [];
+      if (!members.length) {
+        teamError('The host did not return any team members.');
+        return null;
+      }
+      hideModal($('team-modal'));
+      /* Start one CLI at a time. Two opencode processes opening the same
+         fresh database at once race on its migration; spacing the launches
+         lets the first one finish before the next one connects. */
+      var delay = 0;
+      members.forEach(function (member) {
+        var launch = launchPrompt(member.agent, member.prompt || '');
+        var opts = {
+          paneKey: 'team:' + member.name,
+          agent: member.agent,
+          cwd: member.cwd,
+          title: member.name,
+          handoff: member.name,
+          handoffBrief: member.brief,
+          handoffPrompt: launch.handoffPrompt,
+          prompt: launch.prompt,
+          model: member.model || null,
+          parent: member.parent || null,
+          orchestrator: !!member.orchestrator
+        };
+        if (delay === 0) createTerminal(opts);
+        else setTimeout(function () { createTerminal(opts); }, delay);
+        delay += 2500;
+      });
+      toast('ok', 'Team started \u00b7 ' + members.length + ' panes');
+      return res;
+    }, function (err) {
+      teamStarting = false;
+      if (save) save.disabled = false;
+      updateTeamStart();
+      teamError(message(err));
+      toast('error', 'Team: ' + message(err));
+      return null;
     });
   }
 
@@ -4471,7 +5253,9 @@
       row.tabIndex = 0;
       row.setAttribute('role', 'button');
       row.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-      row.title = p.path;
+      /* No native title here: WebKitGTK shows it in a separate X window that
+         covers the row and swallows clicks meant for the team/remove buttons. */
+      row.setAttribute('aria-label', name + ' — ' + p.path);
 
       var chev = el('span', 'proj-chev', '\u25b8');
       chev.setAttribute('aria-hidden', 'true');
@@ -4503,6 +5287,12 @@
       body.appendChild(top);
       row.appendChild(body);
 
+      var teamBtn = el('button', 'icon-btn proj-team');
+      teamBtn.type = 'button';
+      teamBtn.setAttribute('aria-label', 'Team settings for ' + name);
+      teamBtn.innerHTML = ICONS.team;
+      row.appendChild(teamBtn);
+
       var remove = el('button', 'icon-btn proj-remove');
       remove.type = 'button';
       remove.title = 'Remove from Sidebar';
@@ -4513,6 +5303,10 @@
       remove.addEventListener('click', guard(function (ev) {
         if (ev && ev.stopPropagation) ev.stopPropagation();
         removeProject(p);
+      }));
+      teamBtn.addEventListener('click', guard(function (ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        openTeam(p.path);
       }));
       row.addEventListener('click', guard(function () { openProject(p); }));
       row.addEventListener('keydown', guard(function (ev) {
@@ -5607,11 +6401,13 @@
     if (key === 'Escape') {
       var pickerMenu = $('handoff-target-menu');
       if (pickerMenu && !pickerMenu.hidden) { take(); closeHandoffPicker(); }
+      else if (teamMenuNode) { take(); closeTeamMenu(); }
       else if (sessionMenuNode) { take(); closeSessionMenu(); }
       else if (!$('confirm-modal').hidden) { take(); settleConfirm(false); }
       else if (paletteVisible()) { take(); paletteClose(); }
       else if (!$('handoff-modal').hidden) { take(); hideModal($('handoff-modal')); }
       else if (!$('project-modal').hidden) { take(); hideModal($('project-modal')); }
+      else if (!$('team-modal').hidden) { take(); hideModal($('team-modal')); }
       else if (!$('cmd-modal').hidden) { take(); hideModal($('cmd-modal')); }
       else if (!$('usage-modal').hidden) { take(); hideModal($('usage-modal')); }
       else if (!$('memory-modal').hidden) { take(); hideModal($('memory-modal')); }
@@ -6156,6 +6952,69 @@
     if (projectClose) projectClose.addEventListener('click', guard(function () {
       hideModal($('project-modal'));
     }));
+
+    var teamClose = $('team-close');
+    if (teamClose) teamClose.addEventListener('click', guard(function () {
+      hideModal($('team-modal'));
+    }));
+    var teamCancel = $('team-cancel');
+    if (teamCancel) teamCancel.addEventListener('click', guard(function () {
+      hideModal($('team-modal'));
+    }));
+    var teamAddMember = $('team-add-member');
+    if (teamAddMember) teamAddMember.addEventListener('click', guard(function () {
+      if (teamDraft.members.length >= 8) {
+        teamError('A team can have at most 8 members.');
+        return;
+      }
+      var used = {};
+      teamDraft.members.forEach(function (m) { used[m.agent] = true; });
+      var choice = teamDefaultAgent();
+      for (var i = 0; i < agentsInfo.length; i++) {
+        var a = agentsInfo[i];
+        if (a && a.name && !used[a.name] && a.available !== false) {
+          choice = a.name;
+          break;
+        }
+      }
+      teamDraft.members.push({ agent: choice, model: '', role: '', roleCustom: false });
+      ensureTeamOrchestrator();
+      renderTeam();
+    }));
+    var teamSave = $('team-save');
+    if (teamSave) teamSave.addEventListener('click', guard(function () {
+      saveTeam().then(function () {
+        hideModal($('team-modal'));
+        toast('ok', 'Team saved for ' + baseName(teamProjectPath));
+      }).catch(function (err) {
+        teamError(message(err));
+      });
+    }));
+    var teamStart = $('team-start');
+    if (teamStart) teamStart.addEventListener('click', guard(startTeam));
+    var teamRadios = document.querySelectorAll('#team-modal input[name="team-mode"]');
+    for (var tr = 0; tr < teamRadios.length; tr++) {
+      teamRadios[tr].addEventListener('change', guard(function (ev) {
+        if (!ev.target || !ev.target.checked) return;
+        teamDraft.mode = ev.target.value === 'auto' ? 'auto' : 'manual';
+        updateTeamStart();
+      }));
+    }
+    var teamOnQuota = $('team-on-quota');
+    if (teamOnQuota) {
+      teamOnQuota.addEventListener('change', guard(function () {
+        teamDraft.on_quota = teamOnQuota.value || 'orchestrator';
+      }));
+    }
+    var teamFallbackBtn = $('team-fallback-btn');
+    if (teamFallbackBtn) {
+      teamFallbackBtn.addEventListener('click', guard(function () {
+        var orch = teamDraft.members.find(function (m) {
+          return teamMemberKey(m) === teamDraft.orchestrator;
+        }) || teamDraft.members[0];
+        openFallbackModal(orch ? orch.agent : '');
+      }));
+    }
     var projectPath = $('project-path');
     if (projectPath) projectPath.addEventListener('keydown', guard(function (ev) {
       if (ev.key === 'Enter') {
@@ -6216,21 +7075,36 @@
       /* A popup left open would otherwise outlive the window it belongs to. */
       closeHandoffPicker();
       closeSessionMenu();
+      closeTeamMenu();
       call('windowMinimize', {});
     }));
+
+    document.addEventListener('pointerdown', function (ev) {
+      if (!teamMenuNode) return;
+      if (teamMenuNode.contains(ev.target)) return;
+      if (teamMenuAnchor && teamMenuAnchor.contains(ev.target)) return;
+      closeTeamMenu();
+    }, true);
+    var teamModal = $('team-modal');
+    if (teamModal) teamModal.addEventListener('scroll', closeTeamMenu, true);
+    var teamMembers = $('team-members');
+    if (teamMembers) teamMembers.addEventListener('scroll', closeTeamMenu);
 
     window.addEventListener('blur', function () {
       closeHandoffPicker();
       closeSessionMenu();
+      closeTeamMenu();
     });
     document.addEventListener('visibilitychange', function () {
       if (!document.hidden) return;
       closeHandoffPicker();
       closeSessionMenu();
+      closeTeamMenu();
     });
     window.addEventListener('resize', function () {
       closeHandoffPicker();
       closeSessionMenu();
+      closeTeamMenu();
     });
     var winMax = $('win-max');
     if (winMax) winMax.addEventListener('click', guard(function () {
@@ -6553,6 +7427,22 @@
       if (ev && ev.target === $('handoff-modal')) hideModal($('handoff-modal'));
     }));
 
+    $('fallback-close').addEventListener('click', guard(function () {
+      hideModal($('fallback-modal'));
+    }));
+    $('fallback-cancel').addEventListener('click', guard(function () {
+      hideModal($('fallback-modal'));
+    }));
+    $('fallback-save').addEventListener('click', guard(saveFallback));
+    $('fallback-modal').addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === $('fallback-modal')) hideModal($('fallback-modal'));
+    }));
+
+    var teamModal = $('team-modal');
+    if (teamModal) teamModal.addEventListener('click', guard(function (ev) {
+      if (ev && ev.target === teamModal) hideModal(teamModal);
+    }));
+
     var handoffTargetButton = $('handoff-target');
     if (handoffTargetButton) {
       handoffTargetButton.addEventListener('click', guard(function (ev) {
@@ -6659,12 +7549,18 @@
       });
       if (!activeTab || activeTab.kind !== 'terminal') return;
       if ($('palette') && !$('palette').hidden) return;
-      var tag = (ev.target && ev.target.tagName || '').toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-      /* Menus, pickers and modals own their arrow keys; pulling focus back to
-         the pty here made keyboard navigation impossible. */
-      if (ev.target && ev.target.closest &&
-          ev.target.closest('[role="menu"], [role="listbox"], .modal, .menu, .picker-menu')) return;
+      /* WebKitGTK can dispatch a keydown with the body as target even while a
+         modal input has focus, so check the focused element too. Without this
+         the pty stole every keystroke typed into a dialog. */
+      var owned = [ev.target, document.activeElement];
+      for (var oi = 0; oi < owned.length; oi++) {
+        var node = owned[oi];
+        if (!node) continue;
+        var tag = (node.tagName || '').toLowerCase();
+        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+        if (node.closest &&
+            node.closest('[role="menu"], [role="listbox"], .modal, .menu, .picker-menu')) return;
+      }
       if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
       focusTerm(activeTab);
     }, true);

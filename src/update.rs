@@ -301,7 +301,7 @@ mod tests {
 
     #[test]
     fn asset_names_stay_in_the_temp_dir() {
-        assert!(safe_name("Omnix-0.7.2-Windows-x64-Setup.exe").is_ok());
+        assert!(safe_name("Omnix-0.8.0-Windows-x64-Setup.exe").is_ok());
         assert!(safe_name("omnix-setup-x64.exe").is_ok());
         assert!(safe_name("../evil").is_err());
         assert!(safe_name("").is_err());
@@ -312,17 +312,17 @@ mod tests {
     fn linux_update_prefers_the_portable_binary() {
         let assets = vec![
             Asset {
-                name: "Omnix-0.7.2-Linux-Debian-Ubuntu-x64.deb".into(),
+                name: "Omnix-0.8.0-Linux-Debian-Ubuntu-x64.deb".into(),
                 browser_download_url: "https://example.invalid/deb".into(),
             },
             Asset {
-                name: "Omnix-0.7.2-Linux-x64".into(),
+                name: "Omnix-0.8.0-Linux-x64".into(),
                 browser_download_url: "https://example.invalid/bin".into(),
             },
         ];
         assert_eq!(
             pick_asset(&assets).map(|asset| asset.name.as_str()),
-            Some("Omnix-0.7.2-Linux-x64")
+            Some("Omnix-0.8.0-Linux-x64")
         );
     }
 

@@ -84,6 +84,21 @@ daemon. Keep the footprint bounded:
   that only needs one of them.
 - A stopped agent is not resumed by Omnix automatically unless the workspace
   state says so; save the session id before closing a pane.
+- When running heavy test suites (like Vitest), pass `--maxWorkers=2`, avoid
+  running a dev server at the same time as full tests, and stop any test
+  server right after verifying.
+
+## Headless runs and WIP commits
+
+When running headless (`agy -p`, `codex exec`, `claude -p`, `opencode run`):
+
+- Do not leave a dev server as an open agent background task (`agy -p` exits
+  with "root agent idle; waiting for background task(s)"). Start, probe, use,
+  and stop the server in **one shell command**, for example:
+  `setsid nohup <cmd> >/tmp/srv.log 2>&1 </dev/null & for i in $(seq 1 30); do curl -fs http://127.0.0.1:PORT/ >/dev/null && break; sleep 0.5; done; <work>; kill $(ss -ltnp | awk '/:PORT/ {match($0,/pid=([0-9]+)/,a); if(a[1]) print a[1]}') 2>/dev/null || true`
+- Commit WIP changes periodically on your handoff branch after each finished
+  step (`git commit -am "WIP: ..."` without pushing), so hitting a provider
+  quota limit mid-run never loses completed work.
 
 ## Files
 

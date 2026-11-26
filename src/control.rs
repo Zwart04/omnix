@@ -233,6 +233,7 @@ pub fn machine_state(status: &str, exit_code: Option<i64>) -> &'static str {
         "working" => "working",
         "approval" => "needs-approval",
         "done" => "turn-done",
+        "quota" => "quota",
         "failed" => "exited",
         "idle" => "unknown",
         _ => "unknown",

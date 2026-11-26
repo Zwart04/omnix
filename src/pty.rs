@@ -134,9 +134,26 @@ fn default_shell() -> String {
     }
 }
 
+/// Put the running binary's folder first on PATH. Agents run `omnix agent
+/// send` from a menu-launched app, whose PATH rarely contains the install
+/// folder (the macOS app bundle and a portable Windows build both need this).
+fn path_with_exe_dir(exe: &Path, current: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+    let dir = exe.parent()?;
+    let mut dirs = vec![dir.to_path_buf()];
+    if let Some(path) = current {
+        dirs.extend(std::env::split_paths(&path));
+    }
+    std::env::join_paths(dirs).ok()
+}
+
 fn open(cmd: CommandBuilder, cwd: &Path) -> Result<Spawned> {
     let mut cmd = cmd;
     cmd.cwd(cwd);
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(path) = path_with_exe_dir(&exe, std::env::var_os("PATH")) {
+            cmd.env("PATH", path);
+        }
+    }
     /* A desktop launch inherits no TERM, and a TUI that sees "dumb" or nothing
        draws monochrome. Every pty we open can do 256 colours and truecolor. */
     cmd.env("TERM", "xterm-256color");
@@ -246,6 +263,7 @@ pub fn spawn_agent_with(
     session: Option<&str>,
     cwd: &Path,
     extra: &[String],
+    extra_env: &[(String, String)],
 ) -> Result<Spawned> {
     let (bin, argv, env) = agent_argv_with(root, name, session, extra)?;
     let mut cmd = CommandBuilder::new(bin);
@@ -253,6 +271,9 @@ pub fn spawn_agent_with(
         cmd.arg(arg);
     }
     for (key, value) in env {
+        cmd.env(key, value);
+    }
+    for (key, value) in extra_env {
         cmd.env(key, value);
     }
     open(cmd, cwd)
@@ -436,6 +457,19 @@ mod tests {
         let other = harness_args(&root, "kiro", &[]).unwrap();
         assert!(other.is_empty(), "unknown CLIs keep their argv: {other:?}");
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn exe_dir_goes_first_on_path() {
+        let exe = Path::new("/opt/omnix/bin/omnix");
+        let current = std::env::join_paths(["/usr/bin", "/bin"]).unwrap();
+        let joined = path_with_exe_dir(exe, Some(current)).unwrap();
+        let dirs: Vec<_> = std::env::split_paths(&joined).collect();
+        assert_eq!(
+            dirs.first().map(|p| p.to_path_buf()),
+            Some(std::path::PathBuf::from("/opt/omnix/bin"))
+        );
+        assert!(dirs.contains(&std::path::PathBuf::from("/usr/bin")));
     }
 
     #[test]

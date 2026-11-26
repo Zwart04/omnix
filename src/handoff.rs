@@ -64,6 +64,38 @@ pub struct Handoff {
     /// Lease ids held by this handoff until `close` releases them.
     #[serde(default)]
     pub locks: Vec<String>,
+    /// Owner-configured replacement when the primary agent runs out of quota.
+    #[serde(default)]
+    pub fallback: Option<crate::fallback::Fallback>,
+    /// Quota handling policy (`stop`, `wait`, `fallback=...`).
+    #[serde(default)]
+    pub on_quota: Option<String>,
+    /// Push WIP commit to remote when quota is exhausted mid-run.
+    #[serde(default)]
+    pub push_wip: bool,
+    /// Commit checkpoint on normal clean finish as well.
+    #[serde(default)]
+    pub checkpoint: bool,
+    /// Headless runner PID, log file, session ID, and exit status.
+    #[serde(default)]
+    pub pid: Option<u32>,
+    #[serde(default)]
+    pub log: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub exit_code: Option<i64>,
+    #[serde(default)]
+    pub wip_commit: Option<String>,
+    #[serde(default)]
+    pub blocked_reason: Option<String>,
+    /// Queue conditions (`--after`, `--at`, `--min-free-mb`).
+    #[serde(default)]
+    pub after: Option<String>,
+    #[serde(default)]
+    pub start_at: Option<u64>,
+    #[serde(default)]
+    pub min_free_mb: Option<u64>,
 }
 
 /// Everything a CLI or the GUI can decide about a handoff. Defaults keep the
@@ -84,6 +116,13 @@ pub struct CreateOptions {
     pub effort: Option<String>,
     pub mode: Option<String>,
     pub paths: Vec<String>,
+    pub fallback: Option<crate::fallback::Fallback>,
+    pub on_quota: Option<String>,
+    pub push_wip: bool,
+    pub checkpoint: bool,
+    pub after: Option<String>,
+    pub start_at: Option<u64>,
+    pub min_free_mb: Option<u64>,
 }
 
 fn now() -> u64 {
@@ -413,6 +452,22 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
     if !matches!(mode.as_str(), "plan" | "edit" | "full") {
         bail!("--mode must be plan, edit, or full");
     }
+    if let Some(fb) = &options.fallback {
+        if fb.agent.is_empty() && fb.command.is_none() {
+            bail!("--fallback needs an agent or --fallback-command");
+        }
+        if !fb.agent.is_empty() && !crate::agent::known(&fb.agent) {
+            bail!("unknown fallback agent '{}'", fb.agent);
+        }
+        if let Some(command) = fb.command.as_deref() {
+            if command.trim().is_empty() || command.contains('\n') || command.len() > 2000 {
+                bail!("--fallback-command must be one non-empty line (max 2000 chars)");
+            }
+        }
+        if fb.agent == agent {
+            bail!("fallback agent must differ from the primary agent");
+        }
+    }
     validate_paths(&options.paths)?;
     if let Some(parent) = &options.parent {
         if !valid_label(parent) {
@@ -448,6 +503,9 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
     };
     if !repo.is_dir() {
         bail!("repo not found: {}", repo.display());
+    }
+    if let Some(fb) = &options.fallback {
+        crate::fallback::set(&repo, &agent, fb.clone())?;
     }
     if let Some(existing) = find_in(&repo, &name) {
         bail!(
@@ -601,6 +659,19 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         pane_key: None,
         queued_reason: None,
         locks: guard.ids(),
+        fallback: options.fallback.clone(),
+        on_quota: options.on_quota,
+        push_wip: options.push_wip,
+        checkpoint: options.checkpoint,
+        pid: None,
+        log: None,
+        session_id: None,
+        exit_code: None,
+        wip_commit: None,
+        blocked_reason: None,
+        after: options.after,
+        start_at: options.start_at,
+        min_free_mb: options.min_free_mb,
     };
     let record_path = write_record(&record)?;
     // The record now owns the lease ids; the guard must not release them.
@@ -668,6 +739,309 @@ pub fn mark_queued(record: &mut Handoff, reason: &str) -> Result<()> {
         serde_json::json!({ "name": record.name, "reason": reason }),
     );
     Ok(())
+}
+
+/// Record the result of a non-interactive run. The transcript stays in the
+/// log file; the record only points at it.
+pub fn mark_headless(record: &mut Handoff, log: &Path, success: bool) -> Result<()> {
+    record.outcome = if success {
+        "delivered-headless".into()
+    } else {
+        "failed".into()
+    };
+    record.receipt.mode = "headless".into();
+    record.receipt.detail = format!(
+        "headless run {} -> {}",
+        if success { "finished" } else { "failed" },
+        log.display()
+    );
+    record.updated_at = now();
+    write_record(record)?;
+    crate::control::event(
+        "handoff-headless",
+        serde_json::json!({ "name": record.name, "ok": success, "log": log }),
+    );
+    Ok(())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FallbackTarget {
+    pub agent: String,
+    pub model: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuotaPolicy {
+    Stop,
+    Wait,
+    Fallback(Vec<FallbackTarget>),
+}
+
+pub fn parse_on_quota(root: &Path, spec: Option<&str>) -> Result<QuotaPolicy> {
+    let Some(raw) = spec.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(QuotaPolicy::Stop);
+    };
+    if raw.eq_ignore_ascii_case("stop") {
+        return Ok(QuotaPolicy::Stop);
+    }
+    if raw.eq_ignore_ascii_case("wait") {
+        return Ok(QuotaPolicy::Wait);
+    }
+    if let Some(list) = raw
+        .strip_prefix("fallback=")
+        .or_else(|| raw.strip_prefix("fallback:"))
+    {
+        let mut targets = Vec::new();
+        for item in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let (agent, model) = crate::usage::split_agent_model(root, item);
+            if !crate::agent::known(&agent) {
+                bail!("unknown fallback agent '{agent}' in --on-quota");
+            }
+            targets.push(FallbackTarget {
+                agent,
+                model: model.filter(|m| !m.is_empty()),
+            });
+        }
+        if targets.is_empty() {
+            bail!("--on-quota fallback= needs at least one agent[:model]");
+        }
+        return Ok(QuotaPolicy::Fallback(targets));
+    }
+    bail!("--on-quota must be stop, wait, or fallback=<agent>:<model>[,...]");
+}
+
+/// Parse `HH:MM` (24-hour local time) into the next matching Unix epoch.
+pub fn parse_at_hhmm(spec: &str) -> Result<u64> {
+    let (h, m) = spec
+        .trim()
+        .split_once(':')
+        .context("--at must be HH:MM (24-hour local time)")?;
+    let hour: i64 = h.parse().context("--at hour must be 00-23")?;
+    let min: i64 = m.parse().context("--at minute must be 00-59")?;
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&min) {
+        bail!("--at must be valid HH:MM (00:00..23:59)");
+    }
+    let now = now();
+    #[cfg(unix)]
+    {
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        let stamp = now as libc::time_t;
+        if !unsafe { libc::localtime_r(&stamp, &mut tm) }.is_null() {
+            let target = hour * 3600 + min * 60;
+            let current = tm.tm_hour as i64 * 3600 + tm.tm_min as i64 * 60 + tm.tm_sec as i64;
+            let mut delta = target - current;
+            if delta <= 0 {
+                delta += 86_400;
+            }
+            return Ok((now as i64 + delta) as u64);
+        }
+    }
+    Ok(now)
+}
+
+pub fn git_dirty_files(worktree: &Path) -> Vec<String> {
+    let Ok(out) = git(worktree, &["status", "--short"]) else {
+        return Vec::new();
+    };
+    out.lines()
+        .map(str::trim_end)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+pub fn commit_wip(worktree: &Path, message: &str, push: bool) -> Result<Option<String>> {
+    let dirty = git_dirty_files(worktree);
+    if dirty.is_empty() {
+        return Ok(None);
+    }
+    git(worktree, &["add", "-A"])?;
+    let has_user = git(worktree, &["config", "user.name"])
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+        && git(worktree, &["config", "user.email"])
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+    if has_user {
+        git(worktree, &["commit", "-m", message])?;
+    } else {
+        git(
+            worktree,
+            &[
+                "-c",
+                "user.name=Omnix",
+                "-c",
+                "user.email=omnix@local",
+                "commit",
+                "-m",
+                message,
+            ],
+        )?;
+    }
+    let sha = git(worktree, &["rev-parse", "--short", "HEAD"])?;
+    if push {
+        let _ = git(worktree, &["push", "origin", "HEAD"]);
+    }
+    Ok(Some(sha))
+}
+
+#[derive(Debug, Clone)]
+pub struct WipQuotaOutcome {
+    pub wip_sha: Option<String>,
+}
+
+/// Commit WIP changes, file a blocked report, and record `agent-quota-exhausted`.
+pub fn save_wip_and_report(
+    record: &mut Handoff,
+    agent: &str,
+    model: Option<&str>,
+    pane: Option<&str>,
+    pesan_asli: &str,
+    ex: &crate::usage::Exhaustion,
+    push_wip: bool,
+) -> Result<WipQuotaOutcome> {
+    let worktree = PathBuf::from(&record.worktree);
+    let dirty_files = git_dirty_files(&worktree);
+    let dirty_count = dirty_files.len();
+    let stamp = crate::control::local_time(now());
+    let wip_msg = format!("WIP [omnix] kuota {agent} habis {stamp}");
+    let wip_sha = if worktree.is_dir() && dirty_count > 0 {
+        commit_wip(&worktree, &wip_msg, push_wip).ok().flatten()
+    } else {
+        None
+    };
+
+    let pesan_trimmed: String = pesan_asli.trim().chars().take(300).collect();
+    let mut body = format!(
+        "# Blocked: kuota {agent} habis\n\n- Handoff: {}\n- Agent: {agent}\n",
+        record.name
+    );
+    if let Some(m) = model.filter(|m| !m.trim().is_empty()) {
+        body.push_str(&format!("- Model: {m}\n"));
+    }
+    if let Some(reset_local) = &ex.reset_local {
+        body.push_str(&format!("- Pulih: {reset_local}\n"));
+    }
+    if let Some(sha) = &wip_sha {
+        body.push_str(&format!("- Komit WIP: {sha}\n"));
+    } else {
+        body.push_str("- Komit WIP: tidak ada perubahan belum commit\n");
+    }
+    body.push_str(&format!("\n## Pesan asli\n\n{pesan_trimmed}\n"));
+    if !dirty_files.is_empty() {
+        body.push_str("\n## Berkas berubah\n\n");
+        for f in &dirty_files {
+            body.push_str(&format!("- {f}\n"));
+        }
+    }
+
+    let repo = PathBuf::from(&record.repo);
+    let reported = report(&repo, &record.name, "blocked", &body)?;
+    record.status = reported.status;
+    record.report = reported.report;
+    record.outcome = "blocked: quota".into();
+    record.blocked_reason = Some("quota".into());
+    if wip_sha.is_some() {
+        record.wip_commit = wip_sha.clone();
+    }
+    record.updated_at = now();
+    write_record(record)?;
+
+    let _ = crate::control::append_event(
+        &crate::control::events_path(),
+        "agent-quota-exhausted",
+        serde_json::json!({
+            "agent": agent,
+            "model": model.filter(|m| !m.trim().is_empty()),
+            "handoff": record.name,
+            "pane": pane.or(record.pane_key.as_deref()),
+            "resetAt": ex.reset_at,
+            "resetLocal": ex.reset_local,
+            "retryable": ex.retryable,
+            "confidence": ex.confidence,
+            "pesanAsli": pesan_trimmed,
+            "perubahanBelumCommit": dirty_count,
+            "wipCommit": wip_sha,
+        }),
+    );
+    Ok(WipQuotaOutcome { wip_sha })
+}
+
+pub fn format_launch_preview(root: &Path, record: &Handoff) -> String {
+    let launch = crate::agent::LaunchOptions {
+        model: record.model.clone(),
+        effort: record.effort.clone(),
+        mode: (crate::agent::base_agent(&record.agent) == "antigravity")
+            .then(|| record.mode.clone())
+            .flatten(),
+        prompt: None,
+    };
+    let extra = crate::agent::extra_args(&record.agent, &launch).unwrap_or_default();
+    let argv = if crate::control::read_control(&crate::control::runtime_dir()).is_none() {
+        crate::agent::headless_args(&record.agent, &launch, "<brief>").unwrap_or(extra)
+    } else {
+        extra
+    };
+    let _ = root;
+    let bin = crate::agent::launch_cmd(&record.agent).unwrap_or(&record.agent);
+    let rendered = argv
+        .iter()
+        .map(|arg| {
+            if arg.contains(' ') || arg.is_empty() {
+                format!("{arg:?}")
+            } else {
+                arg.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if rendered.is_empty() {
+        format!("cd {} && {bin}", record.worktree)
+    } else {
+        format!("cd {} && {bin} {rendered}", record.worktree)
+    }
+}
+
+/// Machine status view for a headless handoff so `agent status` and `agent wait`
+/// also work when the GUI app is not running.
+pub fn headless_pane_row(record: &Handoff) -> serde_json::Value {
+    let state = if record.blocked_reason.as_deref() == Some("quota")
+        || record.outcome == "blocked: quota"
+    {
+        "quota"
+    } else if record.outcome == "queued" {
+        "queued"
+    } else if record.exit_code.is_some()
+        || matches!(
+            record.outcome.as_str(),
+            "delivered-headless" | "failed"
+        )
+    {
+        "exited"
+    } else if record.pid.is_some() {
+        "working"
+    } else {
+        "unknown"
+    };
+    serde_json::json!({
+        "paneKey": record.pane_key.clone().unwrap_or_else(|| format!("ho:{}", record.name)),
+        "label": record.name,
+        "title": record.name,
+        "cwd": record.worktree,
+        "agent": record.agent,
+        "model": record.model,
+        "handoff": record.name,
+        "parent": record.parent,
+        "sessionId": record.session_id.clone().unwrap_or_default(),
+        "status": record.status.clone().unwrap_or_else(|| state.to_string()),
+        "state": state,
+        "pid": record.pid,
+        "log": record.log,
+        "exitCode": record.exit_code,
+        "wipCommit": record.wip_commit,
+        "updatedAt": record.updated_at,
+        "updatedAtLocal": crate::control::local_time(record.updated_at),
+    })
 }
 
 pub fn report(repo: &Path, name: &str, status: &str, text: &str) -> Result<Handoff> {
@@ -986,6 +1360,100 @@ mod tests {
         assert!(err.contains("agent:lain"), "{err}");
         assert!(!target.exists(), "no worktree may be created while leased");
         crate::locks::release(&dir, &resource, None, true).unwrap();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn on_quota_parser_supports_stop_wait_and_fallback_list() {
+        let dir = temp_repo("on-quota");
+        assert_eq!(parse_on_quota(&dir, None).unwrap(), QuotaPolicy::Stop);
+        assert_eq!(parse_on_quota(&dir, Some("stop")).unwrap(), QuotaPolicy::Stop);
+        assert_eq!(parse_on_quota(&dir, Some("wait")).unwrap(), QuotaPolicy::Wait);
+        let fb = parse_on_quota(
+            &dir,
+            Some("fallback=antigravity:gemini-4-neon-high,codex:gpt-6.2-sol"),
+        )
+        .unwrap();
+        assert_eq!(
+            fb,
+            QuotaPolicy::Fallback(vec![
+                FallbackTarget {
+                    agent: "antigravity".into(),
+                    model: Some("gemini-4-neon-high".into()),
+                },
+                FallbackTarget {
+                    agent: "codex".into(),
+                    model: Some("gpt-6.2-sol".into()),
+                },
+            ])
+        );
+        assert!(parse_on_quota(&dir, Some("bogus")).is_err());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn save_wip_and_report_commits_dirty_worktree_and_writes_blocked_report() {
+        let dir = temp_repo("wip-quota");
+        let (mut record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "kuotahabis".into(),
+                agent: "antigravity".into(),
+                model: Some("claude-sonnet-5-5-high".into()),
+                prompt: "kerjakan".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        fs::write(Path::new(&record.worktree).join("wip.txt"), "progress\n").unwrap();
+        let ex = crate::usage::Exhaustion {
+            reset_at: Some(4_070_908_800),
+            reset_local: Some("2099-01-01 07:00 WIB".into()),
+            reset_text: Some("2099-01-01T00:00:00Z".into()),
+            retryable: Some(false),
+            confidence: "high",
+        };
+        let out = save_wip_and_report(
+            &mut record,
+            "antigravity",
+            Some("claude-sonnet-5-5-high"),
+            Some("ho:kuotahabis"),
+            "Your AI credits balance is too low",
+            &ex,
+            false,
+        )
+        .unwrap();
+        let sha = out.wip_sha.expect("wip sha");
+        assert!(!sha.is_empty());
+        assert_eq!(record.status.as_deref(), Some("blocked"));
+        assert_eq!(record.wip_commit.as_deref(), Some(sha.as_str()));
+        let report_body = fs::read_to_string(record.report.as_deref().unwrap()).unwrap();
+        assert!(report_body.contains("Your AI credits balance is too low"));
+        assert!(report_body.contains("wip.txt"));
+        assert!(report_body.contains(&sha));
+        assert!(git_dirty_files(Path::new(&record.worktree)).is_empty());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn launch_preview_includes_model_and_effort_args() {
+        let dir = temp_repo("preview-argv");
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "ujiargv".into(),
+                agent: "codex".into(),
+                model: Some("gpt-6.2-sol".into()),
+                effort: Some("medium".into()),
+                prompt: "do it".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let line = format_launch_preview(&dir, &record);
+        assert!(line.contains("codex"), "{line}");
+        assert!(line.contains("-m gpt-6.2-sol"), "{line}");
+        assert!(line.contains("model_reasoning_effort=medium"), "{line}");
         fs::remove_dir_all(&dir).ok();
     }
 }

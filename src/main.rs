@@ -6,6 +6,7 @@ mod control;
 mod dev;
 #[cfg(all(feature = "gui", target_os = "linux"))]
 mod cookies;
+mod fallback;
 #[cfg(feature = "gui")]
 mod gc;
 #[cfg(feature = "gui")]
@@ -26,6 +27,7 @@ mod selftest;
 mod shot;
 mod setup;
 mod sources;
+mod team;
 mod update;
 mod usage;
 mod workspace;
@@ -55,7 +57,7 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
 
   omnix agent track --agent A --session ID [--cwd PATH] [--pane KEY] [--workspace PATH]
   omnix agent status [--handoff NAME] [--json]
-  omnix agent wait <name|pane> [--until turn-done,needs-approval,exited] [--timeout SEC] [--json]
+  omnix agent wait <name|pane> [--until turn-done,needs-approval,exited,quota] [--timeout SEC] [--json]
   omnix agent send <name|pane> --text TEXT|--file FILE [--force]
   omnix sleep [--workspace PATH]
   omnix resume [--workspace PATH] [--run]
@@ -64,7 +66,13 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
   omnix handoff <name> --repo PATH --prompt-file FILE [--prompt TEXT] [--agent A]
       [--base REF] [--worktree-dir PATH] [--link NAME=SRC] [--model M] [--effort E]
       [--mode plan|edit|full] [--role FILE|NAME] [--parent PANE] [--paths GLOB,...]
-      [--max-parallel N] [--force] [--run]
+      [--on-quota stop|wait|fallback=A:M[,...]] [--push-wip] [--checkpoint]
+      [--after HANDOFF] [--at HH:MM] [--min-free-mb N]
+      [--fallback AGENT] [--fallback-command CMD] [--auto-fallback]
+      [--max-parallel N] [--force] [--run] [--headless] [--foreground]
+  omnix fallback show [--repo PATH]
+  omnix fallback set AGENT --agent B|--command CMD [--auto|--no-auto] [--disable]
+  omnix fallback remove AGENT [--repo PATH]
   omnix handoff report <name> --status done|blocked|failed --file FILE|--text TEXT
   omnix handoff list [--open] [--json]
   omnix handoff close <name>
@@ -73,9 +81,9 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
   omnix lock list [--json] [--prune]
   omnix lock release <resource|id> [--owner NAME] [--force]
 
-  omnix usage [--json]           quota for codex, antigravity, claude
-  omnix doctor [--json]          which agent CLIs Omnix can call
-  omnix events [--limit N] [--kind K] [--json]   recent worker events
+  omnix usage [--json] [--check AGENT[:MODEL]]  quota for codex, antigravity, claude
+  omnix doctor [--json]                         which agent CLIs Omnix can call
+  omnix events [--limit N] [--kind K] [--follow] [--json]  recent or live worker events
   omnix gc [--dry-run]           clean merged worktrees, old briefs, idle browser
 
   omnix browser fetch <url> [--engine native|lightpanda] [--dump markdown|html|semantic_tree_text]
@@ -308,7 +316,45 @@ fn cmd_history(args: &[String]) -> Result<()> {
 }
 
 fn panes() -> Vec<Value> {
-    control::read_panes(&control::runtime_dir())
+    let mut rows = control::read_panes(&control::runtime_dir());
+    for record in handoff::list_all() {
+        if record.closed {
+            continue;
+        }
+        let already = rows.iter().any(|pane| {
+            pane.get("handoff").and_then(Value::as_str) == Some(record.name.as_str())
+                || record
+                    .pane_key
+                    .as_deref()
+                    .is_some_and(|pk| pane.get("paneKey").and_then(Value::as_str) == Some(pk))
+        });
+        if !already && (record.pid.is_some() || record.log.is_some() || record.blocked_reason.is_some() || record.outcome == "queued") {
+            rows.push(handoff::headless_pane_row(&record));
+        }
+    }
+    rows
+}
+
+fn find_quota_event_for(target: &str, since: u64) -> Option<Value> {
+    let raw = std::fs::read_to_string(control::events_path()).ok()?;
+    for line in raw.lines().rev().take(300) {
+        let Ok(row) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if row.get("kind").and_then(Value::as_str) != Some("agent-quota-exhausted") {
+            continue;
+        }
+        let at = row.get("at").and_then(Value::as_u64).unwrap_or(0);
+        if at + 30 < since {
+            continue;
+        }
+        let matched = row.get("handoff").and_then(Value::as_str) == Some(target)
+            || row.get("pane").and_then(Value::as_str) == Some(target);
+        if matched {
+            return Some(row);
+        }
+    }
+    None
 }
 
 fn pane_state(pane: &Value) -> String {
@@ -402,16 +448,26 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                 .transpose()
                 .context("--timeout must be seconds")?
                 .unwrap_or(600);
-            if control::read_control(&control::runtime_dir()).is_none() {
-                bail!("Omnix app is not running; open the app, then retry");
+            let want_quota = until.iter().any(|w| w == "quota");
+            let has_gui = control::read_control(&control::runtime_dir()).is_some();
+            if !has_gui && handoff::find_any(&target).is_none() && panes().iter().all(|p| control::find_pane(std::slice::from_ref(p), &target).is_none()) {
+                bail!("Omnix app is not running and no headless handoff named '{target}' was found");
             }
+            let wait_started_epoch = control::epoch();
             let started = std::time::Instant::now();
             loop {
                 let rows = panes();
                 if let Some(pane) = control::find_pane(&rows, &target) {
                     let state = pane_state(pane);
+                    if state == "quota" && want_quota {
+                        let out = find_quota_event_for(&target, wait_started_epoch)
+                            .unwrap_or_else(|| pane.clone());
+                        println!("{}", serde_json::to_string_pretty(&out)?);
+                        std::process::exit(75);
+                    }
                     let hit = until.iter().any(|want| want == &state)
-                        || (state == "exited" && until.iter().any(|want| want == "turn-done"));
+                        || (state == "exited" && until.iter().any(|want| want == "turn-done"))
+                        || (state == "quota" && until.iter().any(|want| want == "exited"));
                     if hit {
                         if has(args, "--json") {
                             println!("{}", serde_json::to_string_pretty(pane)?);
@@ -423,6 +479,12 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                             );
                         }
                         return Ok(());
+                    }
+                }
+                if want_quota {
+                    if let Some(ev) = find_quota_event_for(&target, wait_started_epoch) {
+                        println!("{}", serde_json::to_string_pretty(&ev)?);
+                        std::process::exit(75);
                     }
                 }
                 if timeout > 0 && started.elapsed().as_secs() >= timeout {
@@ -533,13 +595,29 @@ fn handoff_repo(args: &[String]) -> Result<PathBuf> {
     handoff::main_repo(&base)
 }
 
-fn quota_block(agent: &str, home: &Path, stop: f64) -> Option<String> {
-    let snapshot = usage::snapshot_for(&root(), home);
+fn quota_block(agent: &str, model: Option<&str>, home: &Path, stop: f64, live: bool) -> Option<String> {
+    let snapshot = if live {
+        usage::snapshot_live_sync_for(&root(), home)
+    } else {
+        usage::snapshot_for(&root(), home)
+    };
+    let check = usage::check_quota_in_snapshot(&snapshot, agent, model);
+    if check.exhausted {
+        return Some(check.reason.unwrap_or_else(|| format!("{agent} quota is exhausted")));
+    }
     let entry = snapshot
         .get("agents")
         .and_then(Value::as_array)?
         .iter()
-        .find(|entry| entry.get("agent").and_then(Value::as_str) == Some(agent))?;
+        .find(|entry| entry.get("agent").and_then(Value::as_str) == Some(agent))
+        .or_else(|| {
+            let base = crate::agent::base_agent(agent);
+            snapshot
+                .get("agents")
+                .and_then(Value::as_array)?
+                .iter()
+                .find(|entry| entry.get("agent").and_then(Value::as_str) == Some(base))
+        })?;
     let used = entry
         .get("windows")
         .and_then(Value::as_array)?
@@ -554,41 +632,45 @@ fn quota_block(agent: &str, home: &Path, stop: f64) -> Option<String> {
 }
 
 /// Cheap, invoked-only gate: read live panes from the app, then decide whether
-/// to spawn now or queue the handoff. No background runner.
-fn run_gate(agent: &str, max_parallel: usize) -> Result<Option<String>> {
-    let state = control::request(&control::runtime_dir(), json!({"cmd": "state"}))?;
-    let active = state
-        .get("panes")
-        .and_then(Value::as_array)
-        .map(|panes| {
-            panes
-                .iter()
-                .filter(|pane| {
-                    matches!(
-                        pane.get("state").and_then(Value::as_str),
-                        Some("working" | "needs-approval")
-                    )
-                })
-                .count()
-        })
-        .unwrap_or(0);
-    if active >= max_parallel {
-        return Ok(Some(format!(
-            "{active} worker(s) active (max {max_parallel})"
-        )));
-    }
-    if state
-        .pointer("/memory/over")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return Ok(Some("AI memory budget is full".into()));
+/// to spawn now or queue the handoff. No background runner. A CLI handoff may
+/// run with the app closed, so a missing control socket skips the pane gate
+/// instead of failing the command.
+fn run_gate(agent: &str, model: Option<&str>, max_parallel: usize, live_usage: bool) -> Result<Option<String>> {
+    let state = control::request(&control::runtime_dir(), json!({"cmd": "state"})).ok();
+    if let Some(state) = &state {
+        let active = state
+            .get("panes")
+            .and_then(Value::as_array)
+            .map(|panes| {
+                panes
+                    .iter()
+                    .filter(|pane| {
+                        matches!(
+                            pane.get("state").and_then(Value::as_str),
+                            Some("working" | "needs-approval")
+                        )
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+        if active >= max_parallel {
+            return Ok(Some(format!(
+                "{active} worker(s) active (max {max_parallel})"
+            )));
+        }
+        if state
+            .pointer("/memory/over")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Ok(Some("AI memory budget is full".into()));
+        }
     }
     let stop = env::var("OMNIX_QUOTA_STOP")
         .ok()
         .and_then(|value| value.parse::<f64>().ok())
-        .unwrap_or(90.0);
-    Ok(quota_block(agent, &control::home(), stop))
+        .unwrap_or(99.5);
+    Ok(quota_block(agent, model, &control::home(), stop, live_usage))
 }
 
 fn cmd_handoff(args: &[String]) -> Result<()> {
@@ -659,6 +741,12 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
             let name = value(args, "--name")
                 .or_else(|| pos.first().cloned())
                 .context("usage: omnix handoff close <name>")?;
+            if control::read_control(&control::runtime_dir()).is_some() {
+                let _ = control::request(
+                    &control::runtime_dir(),
+                    json!({ "cmd": "closePane", "target": name }),
+                );
+            }
             let record = match handoff_repo(args) {
                 Ok(repo) => handoff::close_in(&repo, &name)?,
                 Err(_) => handoff::close(&name)?,
@@ -684,6 +772,12 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                     "--parent",
                     "--paths",
                     "--max-parallel",
+                    "--on-quota",
+                    "--after",
+                    "--at",
+                    "--min-free-mb",
+                    "--fallback",
+                    "--fallback-command",
                 ],
             );
             let name = value(args, "--name")
@@ -698,6 +792,28 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                     Ok((key.to_string(), PathBuf::from(path)))
                 })
                 .collect::<Result<Vec<_>>>()?;
+            let on_quota = value(args, "--on-quota");
+            let parsed_policy = handoff::parse_on_quota(&root(), on_quota.as_deref())?;
+            let start_at = value(args, "--at")
+                .map(|spec| handoff::parse_at_hhmm(&spec))
+                .transpose()?;
+            let min_free_mb = value(args, "--min-free-mb")
+                .map(|v| v.parse::<u64>())
+                .transpose()
+                .context("--min-free-mb must be megabytes")?;
+            let after = value(args, "--after");
+            let fallback_agent = value(args, "--fallback");
+            let fallback_command = value(args, "--fallback-command");
+            let fallback = if fallback_agent.is_some() || fallback_command.is_some() {
+                Some(fallback::Fallback {
+                    agent: fallback_agent.unwrap_or_default(),
+                    command: fallback_command,
+                    auto: has(args, "--auto-fallback"),
+                    enabled: true,
+                })
+            } else {
+                None
+            };
             let options = handoff::CreateOptions {
                 name: name.clone(),
                 agent: value(args, "--agent").unwrap_or_else(|| "codex".into()),
@@ -713,24 +829,123 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                 effort: value(args, "--effort"),
                 mode: value(args, "--mode"),
                 paths: csv(&values(args, "--paths")),
+                fallback,
+                on_quota,
+                push_wip: has(args, "--push-wip"),
+                checkpoint: has(args, "--checkpoint"),
+                after,
+                start_at,
+                min_free_mb,
             };
             let (mut record, record_path) = handoff::create_with(&root(), options)?;
             handoff::remember(&record_path)?;
-            if has(args, "--run") {
-                let reason = if has(args, "--force") {
-                    None
-                } else {
+            if has(args, "--run") || has(args, "--headless") {
+                if !has(args, "--force") {
+                    let check = usage::check_quota(
+                        &root(),
+                        &control::home(),
+                        &record.agent,
+                        record.model.as_deref(),
+                        false,
+                    );
+                    if check.exhausted {
+                        if let handoff::QuotaPolicy::Fallback(targets) = &parsed_policy {
+                            if let Some(next_target) =
+                                pick_available_fallback(&root(), &control::home(), &record.name, &record.agent, targets)
+                            {
+                                println!(
+                                    "fallback: {} -> {}{}",
+                                    record.agent,
+                                    next_target.agent,
+                                    next_target
+                                        .model
+                                        .as_deref()
+                                        .map(|m| format!(":{m}"))
+                                        .unwrap_or_default()
+                                );
+                                record.agent = next_target.agent;
+                                record.model = next_target.model;
+                                record.effort = None;
+                                record.mode = None;
+                                handoff::save(&record)?;
+                            } else {
+                                bail!(
+                                    "{} and all fallback targets are exhausted (pass --force to override)",
+                                    check.reason.unwrap_or_else(|| "quota exhausted".into())
+                                );
+                            }
+                        } else {
+                            bail!(
+                                "{} (pass --on-quota fallback=... or --force)",
+                                check.reason.unwrap_or_else(|| "quota exhausted".into())
+                            );
+                        }
+                    }
+
                     let max_parallel = value(args, "--max-parallel")
                         .map(|text| text.parse::<usize>())
                         .transpose()
                         .context("--max-parallel must be a number")?
                         .unwrap_or(2);
-                    run_gate(&record.agent, max_parallel)?
-                };
-                if let Some(reason) = reason {
-                    handoff::mark_queued(&mut record, &reason)?;
-                    println!("outcome: queued");
-                    println!("reason:  {reason}");
+                    if let Some(reason) =
+                        run_gate(&record.agent, record.model.as_deref(), max_parallel, false)?
+                    {
+                        let chosen = crate::fallback::get(&root(), &record.agent)
+                            .filter(|fb| fb.auto && !fb.agent.is_empty())
+                            .filter(|fb| crate::agent::resolve(&fb.agent).is_some());
+                        match chosen {
+                            Some(fb) => {
+                                println!("fallback: {} -> {}", record.agent, fb.agent);
+                                record.agent = fb.agent;
+                                record.model = None;
+                                record.effort = None;
+                                record.mode = None;
+                                handoff::save(&record)?;
+                            }
+                            None => {
+                                handoff::mark_queued(&mut record, &reason)?;
+                                println!("outcome: queued");
+                                println!("reason:  {reason}");
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                let gui_up = control::read_control(&control::runtime_dir()).is_some();
+                let force_headless = has(args, "--headless")
+                    || !gui_up
+                    || record.after.is_some()
+                    || record.start_at.is_some()
+                    || record.min_free_mb.is_some();
+                if force_headless {
+                    if has(args, "--foreground") {
+                        run_headless_worker(&record_path, has(args, "--force"))?;
+                        if let Ok(bytes) = std::fs::read(&record_path) {
+                            if let Ok(updated) = serde_json::from_slice::<handoff::Handoff>(&bytes) {
+                                record = updated;
+                            }
+                        }
+                    } else {
+                        spawn_detached_worker(&record_path, has(args, "--force"))?;
+                        for _ in 0..20 {
+                            std::thread::sleep(std::time::Duration::from_millis(80));
+                            if let Ok(bytes) = std::fs::read(&record_path) {
+                                if let Ok(updated) = serde_json::from_slice::<handoff::Handoff>(&bytes) {
+                                    if updated.pid.is_some() || updated.log.is_some() || updated.outcome == "queued" {
+                                        record = updated;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        println!("mode:     headless (detached)");
+                        if let Some(pid) = record.pid {
+                            println!("pid:      {pid}");
+                        }
+                        if let Some(log) = &record.log {
+                            println!("log:      {log}");
+                        }
+                    }
                 } else {
                     let reply = control::request(
                         &control::runtime_dir(),
@@ -738,13 +953,7 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                             "cmd": "spawnHandoff",
                             "record": record,
                         }),
-                    )
-                    .with_context(|| {
-                        format!(
-                            "handoff saved at {}; open the Omnix app to run it",
-                            record_path.display()
-                        )
-                    })?;
+                    )?;
                     let pane = reply
                         .get("paneKey")
                         .and_then(Value::as_str)
@@ -761,12 +970,49 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
             println!("brief:    {}", record.brief);
             println!("record:   {}", record_path.display());
             if record.outcome == "not-delivered" {
-                println!("launch:   cd {} && {}", record.worktree, record.agent);
+                println!("launch:   {}", handoff::format_launch_preview(&root(), &record));
             }
             if let Some(warning) = record.warning {
                 println!("warning:  {warning}");
             }
         }
+    }
+    Ok(())
+}
+
+fn cmd_fallback(args: &[String]) -> Result<()> {
+    let sub = args.first().map(String::as_str).unwrap_or("");
+    let pos = positional(&args[1..], &["--repo", "--agent", "--command"]);
+    let repo = value(args, "--repo")
+        .map(PathBuf::from)
+        .unwrap_or_else(root);
+    match sub {
+        "show" => {
+            println!("{}", serde_json::to_string_pretty(&fallback::load(&repo))?);
+        }
+        "set" => {
+            let exhausted = pos
+                .first()
+                .cloned()
+                .context("usage: omnix fallback set AGENT --agent B|--command CMD")?;
+            let entry = fallback::Fallback {
+                agent: value(args, "--agent").unwrap_or_default(),
+                command: value(args, "--command"),
+                auto: has(args, "--auto"),
+                enabled: !has(args, "--disable"),
+            };
+            fallback::set(&repo, &exhausted, entry)?;
+            println!("fallback for {exhausted} saved");
+        }
+        "remove" => {
+            let exhausted = pos
+                .first()
+                .cloned()
+                .context("usage: omnix fallback remove AGENT")?;
+            fallback::remove(&repo, &exhausted)?;
+            println!("fallback for {exhausted} removed");
+        }
+        _ => bail!("usage: omnix fallback show|set|remove"),
     }
     Ok(())
 }
@@ -846,15 +1092,48 @@ fn cmd_lock(args: &[String]) -> Result<()> {
 }
 
 fn cmd_usage(args: &[String]) -> Result<()> {
-    let mut snapshot = usage::snapshot_live_for(&root(), &control::home());
+    let mut snapshot = usage::snapshot_live_sync_for(&root(), &control::home());
     if let Value::Object(map) = &mut snapshot {
         map.insert("at".into(), json!(control::epoch()));
         map.insert("atLocal".into(), json!(control::local_time(control::epoch())));
+    }
+    if let Some(target) = value(args, "--check") {
+        let (agent, model) = usage::split_agent_model(&root(), &target);
+        let check = usage::check_quota_in_snapshot(&snapshot, &agent, model.as_deref());
+        if has(args, "--json") {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "agent": check.agent,
+                    "model": check.model,
+                    "exhausted": check.exhausted,
+                    "known": check.known,
+                    "reason": check.reason,
+                    "resetAt": check.reset_at,
+                    "resetLocal": check.reset_local,
+                }))?
+            );
+        } else if check.exhausted {
+            let mut msg = check.reason.unwrap_or_else(|| format!("{agent} exhausted"));
+            if let Some(local) = check.reset_local {
+                msg.push_str(&format!(" (pulih {local})"));
+            }
+            println!("exhausted: {msg}");
+        } else if check.known {
+            println!("ok: {agent} tersedia");
+        } else {
+            println!("unknown: {agent} tidak diketahui (diizinkan mencoba)");
+        }
+        if check.exhausted {
+            std::process::exit(75);
+        }
+        return Ok(());
     }
     if has(args, "--json") {
         println!("{}", serde_json::to_string_pretty(&snapshot)?);
         return Ok(());
     }
+    let now_epoch = control::epoch();
     let mut lines = Vec::new();
     for entry in snapshot
         .get("agents")
@@ -863,20 +1142,57 @@ fn cmd_usage(args: &[String]) -> Result<()> {
         .unwrap_or_default()
     {
         let agent = entry.get("agent").and_then(Value::as_str).unwrap_or("?");
-        let used = entry
+        let windows = entry
             .get("windows")
             .and_then(Value::as_array)
-            .map(|windows| {
-                windows
-                    .iter()
-                    .filter_map(|w| w.get("usedPercent").and_then(Value::as_f64))
-                    .fold(0.0f64, f64::max)
-            })
-            .unwrap_or(0.0);
-        lines.push(format!("{agent:<12} {used:.0}% used"));
+            .cloned()
+            .unwrap_or_default();
+        if windows.is_empty() {
+            let state = entry.get("state").and_then(Value::as_str).unwrap_or("tidak diketahui");
+            let reset = entry
+                .get("resetLocal")
+                .and_then(Value::as_str)
+                .map(|r| format!(" (pulih {r})"))
+                .unwrap_or_default();
+            lines.push(format!("{agent:<12} {state}{reset}"));
+            continue;
+        }
+        let mut parts = Vec::new();
+        for w in &windows {
+            let minutes = w.get("windowMinutes").and_then(Value::as_i64).unwrap_or(0);
+            let label = w
+                .get("label")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    if minutes == 300 || w.get("kind").and_then(Value::as_str) == Some("primary") {
+                        "5 jam".to_string()
+                    } else if minutes == 10080 || w.get("kind").and_then(Value::as_str) == Some("secondary") {
+                        "mingguan".to_string()
+                    } else {
+                        w.get("kind").and_then(Value::as_str).unwrap_or("quota").to_string()
+                    }
+                });
+            let used = w.get("usedPercent").and_then(Value::as_f64).unwrap_or(0.0);
+            let reset_secs = w.get("resetsInSeconds").and_then(Value::as_i64).unwrap_or(0);
+            let reset_text = if reset_secs > 0 {
+                format!(" (pulih {})", control::local_time(now_epoch + reset_secs as u64))
+            } else {
+                String::new()
+            };
+            parts.push(format!("{label}: {used:.0}% used{reset_text}"));
+        }
+        lines.push(format!("{agent:<12} {}", parts.join(" | ")));
     }
-    if lines.is_empty() {
-        lines.push("no quota data (codex/antigravity not logged in?)".into());
+    for unknown in snapshot
+        .get("unknown")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+    {
+        if let Some(name) = unknown.as_str() {
+            lines.push(format!("{name:<12} tidak diketahui"));
+        }
     }
     if let Some(ram) = snapshot.get("ram") {
         lines.push(format!(
@@ -885,7 +1201,7 @@ fn cmd_usage(args: &[String]) -> Result<()> {
             bytes(ram.get("totalBytes").and_then(Value::as_u64).unwrap_or(0))
         ));
     }
-    lines.push(format!("at           {}", control::local_time(control::epoch())));
+    lines.push(format!("at           {}", control::local_time(now_epoch)));
     for line in lines {
         println!("{line}");
     }
@@ -949,30 +1265,78 @@ fn cmd_doctor(args: &[String]) -> Result<()> {
 }
 
 fn cmd_events(args: &[String]) -> Result<()> {
+    use std::io::{Read, Seek, SeekFrom, Write};
     let limit = value(args, "--limit")
         .map(|text| text.parse::<usize>())
         .transpose()
         .context("--limit must be a number")?
         .unwrap_or(20);
     let kinds = value(args, "--kind").map(|text| csv(&[text]));
-    let raw = std::fs::read_to_string(control::events_path()).unwrap_or_default();
+    let follow = has(args, "--follow");
+    let matches_kind = |row: &Value| -> bool {
+        kinds
+            .as_ref()
+            .map(|wanted| {
+                row.get("kind")
+                    .and_then(Value::as_str)
+                    .map(|kind| wanted.iter().any(|want| want == kind))
+                    .unwrap_or(false)
+            })
+            .unwrap_or(true)
+    };
+    let events_file = control::events_path();
+    let raw = std::fs::read_to_string(&events_file).unwrap_or_default();
+    let mut offset = raw.len() as u64;
     let mut rows: Vec<Value> = raw
         .lines()
         .filter_map(|line| serde_json::from_str(line).ok())
-        .filter(|row: &Value| {
-            kinds
-                .as_ref()
-                .map(|wanted| {
-                    row.get("kind")
-                        .and_then(Value::as_str)
-                        .map(|kind| wanted.iter().any(|want| want == kind))
-                        .unwrap_or(false)
-                })
-                .unwrap_or(true)
-        })
+        .filter(|row: &Value| matches_kind(row))
         .collect();
     let start = rows.len().saturating_sub(limit);
     rows.drain(..start);
+    if follow {
+        for row in &rows {
+            println!("{}", serde_json::to_string(row)?);
+        }
+        let _ = std::io::stdout().flush();
+        let mut partial = String::new();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let Ok(mut f) = std::fs::File::open(&events_file) else {
+                continue;
+            };
+            let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+            if len < offset {
+                offset = 0;
+                partial.clear();
+            }
+            if len == offset {
+                continue;
+            }
+            if f.seek(SeekFrom::Start(offset)).is_err() {
+                continue;
+            }
+            let mut chunk = String::new();
+            if f.read_to_string(&mut chunk).is_err() {
+                continue;
+            }
+            offset += chunk.len() as u64;
+            partial.push_str(&chunk);
+            while let Some(pos) = partial.find('\n') {
+                let line = partial[..pos].trim().to_string();
+                partial.drain(..=pos);
+                if line.is_empty() {
+                    continue;
+                }
+                if let Ok(row) = serde_json::from_str::<Value>(&line) {
+                    if matches_kind(&row) {
+                        println!("{}", serde_json::to_string(&row)?);
+                        let _ = std::io::stdout().flush();
+                    }
+                }
+            }
+        }
+    }
     if has(args, "--json") {
         println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
@@ -1600,6 +1964,553 @@ fn bytes(value: u64) -> String {
     }
 }
 
+fn pick_available_fallback(
+    root_dir: &Path,
+    home_dir: &Path,
+    handoff_name: &str,
+    from_agent: &str,
+    targets: &[handoff::FallbackTarget],
+) -> Option<handoff::FallbackTarget> {
+    let snapshot = usage::snapshot_for(root_dir, home_dir);
+    for target in targets {
+        if agent::resolve(&target.agent).is_none() {
+            control::event(
+                "agent-quota-action",
+                json!({
+                    "handoff": handoff_name,
+                    "agent": from_agent,
+                    "action": "skip-unavailable",
+                    "targetAgent": target.agent,
+                    "targetModel": target.model,
+                    "reason": "binary not found",
+                }),
+            );
+            continue;
+        }
+        let check = usage::check_quota_in_snapshot(&snapshot, &target.agent, target.model.as_deref());
+        if check.exhausted {
+            control::event(
+                "agent-quota-action",
+                json!({
+                    "handoff": handoff_name,
+                    "agent": from_agent,
+                    "action": "skip-exhausted",
+                    "targetAgent": target.agent,
+                    "targetModel": target.model,
+                    "reason": check.reason,
+                }),
+            );
+            continue;
+        }
+        return Some(target.clone());
+    }
+    None
+}
+
+fn spawn_detached_worker(record_path: &Path, force: bool) -> Result<()> {
+    let exe = env::current_exe().context("resolve current omnix executable")?;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("_headless-worker")
+        .arg("--record")
+        .arg(record_path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    if force {
+        cmd.arg("--force");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    cmd.spawn().context("spawn detached headless worker")?;
+    Ok(())
+}
+
+fn cmd_headless_worker(args: &[String]) -> Result<()> {
+    let record_path = value(args, "--record").context("--record is required")?;
+    run_headless_worker(Path::new(&record_path), has(args, "--force"))
+}
+
+fn extract_session_id(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    for needle in ["session id:", "session_id:", "conversation_id:"] {
+        if let Some(pos) = lower.find(needle) {
+            let rest = line[pos + needle.len()..].trim();
+            let token: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+                .collect();
+            if token.len() >= 6 {
+                return Some(token);
+            }
+        }
+    }
+    None
+}
+
+fn free_ram_mb() -> Option<u64> {
+    let info = usage::ram()?;
+    let used = info.get("usedBytes").and_then(Value::as_u64)?;
+    let total = info.get("totalBytes").and_then(Value::as_u64)?;
+    Some(total.saturating_sub(used) / (1024 * 1024))
+}
+
+fn wait_for_queue_conditions(record: &mut handoff::Handoff) -> Result<()> {
+    if record.after.is_none() && record.start_at.is_none() && record.min_free_mb.is_none() {
+        return Ok(());
+    }
+    loop {
+        let mut waiting = Vec::new();
+        if let Some(after_name) = &record.after {
+            let done = handoff::list_all()
+                .into_iter()
+                .find(|h| &h.name == after_name)
+                .map(|h| {
+                    h.closed
+                        || h.status.as_deref() == Some("done")
+                        || matches!(h.outcome.as_str(), "delivered-headless" | "failed" | "blocked: quota")
+                        || h.exit_code.is_some()
+                })
+                .unwrap_or(false);
+            if !done {
+                waiting.push(format!("after:{after_name}"));
+            }
+        }
+        if let Some(at) = record.start_at {
+            let now = control::epoch();
+            if now < at {
+                waiting.push(format!("at:{}", control::local_time(at)));
+            }
+        }
+        if let Some(need_mb) = record.min_free_mb {
+            if let Some(avail) = free_ram_mb() {
+                if avail < need_mb {
+                    waiting.push(format!("ram:{avail}MB<{need_mb}MB"));
+                }
+            }
+        }
+        if waiting.is_empty() {
+            record.queued_reason = None;
+            handoff::save(record)?;
+            return Ok(());
+        }
+        let reason = waiting.join(", ");
+        if record.outcome != "queued" || record.queued_reason.as_deref() != Some(&reason) {
+            handoff::mark_queued(record, &reason)?;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(3));
+    }
+}
+
+fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
+    use std::io::{BufRead, BufReader, Write};
+
+    let bytes = std::fs::read(record_path)
+        .with_context(|| format!("read handoff record {}", record_path.display()))?;
+    let mut record: handoff::Handoff = serde_json::from_slice(&bytes)?;
+    wait_for_queue_conditions(&mut record)?;
+
+    let log_path = PathBuf::from(&record.repo)
+        .join(".omnix")
+        .join("logs")
+        .join(format!("handoff-{}.log", record.name));
+    if let Some(dir) = log_path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    record.log = Some(log_path.to_string_lossy().into_owned());
+
+    let policy = handoff::parse_on_quota(&root(), record.on_quota.as_deref())?;
+    let base_brief = std::fs::read_to_string(&record.brief)
+        .with_context(|| format!("read {}", record.brief))?;
+    let mut next_prompt = base_brief.clone();
+    let mut fallback_idx = 0usize;
+    let stall_secs = env::var("OMNIX_STALL_SECONDS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(600);
+
+    for attempt in 0..16 {
+        if !force && attempt == 0 {
+            let check = usage::check_quota(
+                &root(),
+                &control::home(),
+                &record.agent,
+                record.model.as_deref(),
+                false,
+            );
+            if check.exhausted {
+                if let handoff::QuotaPolicy::Fallback(targets) = &policy {
+                    if let Some(next_t) = pick_available_fallback(
+                        &root(),
+                        &control::home(),
+                        &record.name,
+                        &record.agent,
+                        &targets[fallback_idx..],
+                    ) {
+                        record.agent = next_t.agent;
+                        record.model = next_t.model;
+                        record.effort = None;
+                        record.mode = None;
+                    }
+                }
+            }
+        }
+
+        let launch = agent::LaunchOptions {
+            model: record.model.clone(),
+            effort: record.effort.clone(),
+            mode: (agent::base_agent(&record.agent) == "antigravity")
+                .then(|| record.mode.clone())
+                .flatten(),
+            prompt: None,
+        };
+        let mut argv = agent::headless_args(&record.agent, &launch, &next_prompt)?;
+        #[cfg(feature = "gui")]
+        if agent::base_agent(&record.agent) != "claude" && agent::base_agent(&record.agent) != "codex" {
+            if let Ok(hargs) = pty::harness_args(&PathBuf::from(&record.repo), &record.agent, &argv) {
+                argv.extend(hargs);
+            }
+        }
+        let bin = agent::resolve(&record.agent)
+            .with_context(|| format!("{} is not installed", record.agent))?;
+
+        let mut command = std::process::Command::new(&bin);
+        command
+            .args(&argv)
+            .current_dir(&record.worktree)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        for (key, val) in agent::prepare_profile(&PathBuf::from(&record.repo), &record.agent)? {
+            command.env(key, val);
+        }
+        for (key, val) in agent::model_env(&record.agent, record.model.as_deref()) {
+            command.env(key, val);
+        }
+
+        let mut child = command.spawn().context("start headless agent")?;
+        record.pid = Some(child.id());
+        record.outcome = "working".into();
+        record.blocked_reason = None;
+        record.exit_code = None;
+        record.updated_at = control::epoch();
+        handoff::save(&record)?;
+        control::event(
+            "agent-started",
+            json!({
+                "pane": format!("ho:{}", record.name),
+                "handoff": record.name,
+                "agent": record.agent,
+                "model": record.model,
+                "pid": record.pid,
+                "root": "headless",
+            }),
+        );
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();
+        let spawn_reader = |stream: Option<Box<dyn std::io::Read + Send>>, tx: std::sync::mpsc::Sender<String>| {
+            if let Some(reader) = stream {
+                std::thread::spawn(move || {
+                    let buf = BufReader::new(reader);
+                    for line in buf.lines().map_while(Result::ok) {
+                        if tx.send(line).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        };
+        if let Some(out) = stdout {
+            let tx = line_tx.clone();
+            std::thread::spawn(move || {
+                let buf = BufReader::new(out);
+                for line in buf.lines().map_while(Result::ok) {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        if let Some(err) = stderr {
+            let tx = line_tx.clone();
+            std::thread::spawn(move || {
+                let buf = BufReader::new(err);
+                for line in buf.lines().map_while(Result::ok) {
+                    if tx.send(line).is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        drop(line_tx);
+        let _ = spawn_reader;
+
+        let mut log_file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .with_context(|| format!("write {}", log_path.display()))?;
+        let mut tail_lines: Vec<String> = Vec::new();
+        let mut tail_buf = String::new();
+        let mut last_output = std::time::Instant::now();
+        let mut stall_emitted = false;
+        let mut detected_quota: Option<(usage::Exhaustion, String)> = None;
+
+        loop {
+            match line_rx.recv_timeout(std::time::Duration::from_millis(250)) {
+                Ok(line) => {
+                    last_output = std::time::Instant::now();
+                    let _ = writeln!(log_file, "{line}");
+                    let _ = log_file.flush();
+                    if record.session_id.is_none() {
+                        if let Some(sid) = extract_session_id(&line) {
+                            record.session_id = Some(sid);
+                            let _ = handoff::save(&record);
+                        }
+                    }
+                    tail_lines.push(line.clone());
+                    if tail_lines.len() > 25 {
+                        tail_lines.remove(0);
+                    }
+                    tail_buf.push_str(&line);
+                    tail_buf.push('\n');
+                    if tail_buf.len() > 8192 {
+                        let drop_to = tail_buf.len() - 4096;
+                        if let Some(idx) = tail_buf.char_indices().find(|(i, _)| *i >= drop_to).map(|(i, _)| i) {
+                            tail_buf.drain(..idx);
+                        }
+                    }
+                    if detected_quota.is_none() {
+                        if let Some(ex) = usage::detect_exhaustion(&tail_buf) {
+                            detected_quota = Some((ex, line.clone()));
+                        }
+                    }
+                    if !stall_emitted {
+                        if let Some(stall_msg) = usage::detect_stalled_output(&line) {
+                            stall_emitted = true;
+                            control::event(
+                                "agent-stalled",
+                                json!({
+                                    "agent": record.agent,
+                                    "model": record.model,
+                                    "handoff": record.name,
+                                    "pane": format!("ho:{}", record.name),
+                                    "reason": stall_msg,
+                                }),
+                            );
+                        }
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    if !stall_emitted && last_output.elapsed().as_secs() >= stall_secs {
+                        stall_emitted = true;
+                        control::event(
+                            "agent-stalled",
+                            json!({
+                                "agent": record.agent,
+                                "model": record.model,
+                                "handoff": record.name,
+                                "pane": format!("ho:{}", record.name),
+                                "reason": format!("idle for {}s without output", last_output.elapsed().as_secs()),
+                            }),
+                        );
+                    }
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+
+        let status = child.wait().context("wait for headless agent")?;
+        let ok = status.success();
+        let exit_code = status.code().map(|c| c as i64).unwrap_or(if ok { 0 } else { 1 });
+        record.exit_code = Some(exit_code);
+
+        if !ok && detected_quota.is_none() {
+            if let Some(ex) = usage::detect_exhaustion(&tail_buf) {
+                detected_quota = Some((ex, tail_lines.last().cloned().unwrap_or_default()));
+            }
+        }
+
+        if let Some((ex, raw_line)) = detected_quota {
+            let current_agent = record.agent.clone();
+            let current_model = record.model.clone();
+            let push_wip = record.push_wip;
+            let pane_name = format!("ho:{}", record.name);
+            let wip_out = handoff::save_wip_and_report(
+                &mut record,
+                &current_agent,
+                current_model.as_deref(),
+                Some(&pane_name),
+                &raw_line,
+                &ex,
+                push_wip,
+            )?;
+
+            match &policy {
+                handoff::QuotaPolicy::Stop => {
+                    control::event(
+                        "agent-quota-action",
+                        json!({
+                            "handoff": record.name,
+                            "pane": pane_name,
+                            "agent": current_agent,
+                            "model": current_model,
+                            "action": "stop",
+                            "wipSha": wip_out.wip_sha,
+                            "resetAt": ex.reset_at,
+                            "ok": true,
+                        }),
+                    );
+                    return Ok(());
+                }
+                handoff::QuotaPolicy::Wait => {
+                    let now = control::epoch() as i64;
+                    let wait_until = ex
+                        .reset_at
+                        .map(|t| t + 120)
+                        .unwrap_or(now + 300)
+                        .max(now + 10);
+                    let wait_secs = (wait_until - now) as u64;
+                    control::event(
+                        "agent-quota-action",
+                        json!({
+                            "handoff": record.name,
+                            "pane": pane_name,
+                            "agent": current_agent,
+                            "model": current_model,
+                            "action": "wait",
+                            "waitSeconds": wait_secs,
+                            "resetAt": ex.reset_at,
+                            "wipSha": wip_out.wip_sha,
+                            "ok": true,
+                        }),
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(wait_secs));
+                    let wip_note = wip_out
+                        .wip_sha
+                        .as_deref()
+                        .map(|sha| format!("Lanjutkan dari komit WIP {sha}."))
+                        .unwrap_or_else(|| "Lanjutkan dari kondisi terakhir di worktree.".into());
+                    next_prompt = format!("{wip_note}\n\n{base_brief}");
+                    control::event(
+                        "agent-quota-action",
+                        json!({
+                            "handoff": record.name,
+                            "pane": pane_name,
+                            "agent": current_agent,
+                            "model": current_model,
+                            "action": "resume",
+                            "wipSha": wip_out.wip_sha,
+                            "ok": true,
+                        }),
+                    );
+                    continue;
+                }
+                handoff::QuotaPolicy::Fallback(targets) => {
+                    let next = targets.get(fallback_idx..).and_then(|slice| {
+                        pick_available_fallback(
+                            &root(),
+                            &control::home(),
+                            &record.name,
+                            &current_agent,
+                            slice,
+                        )
+                    });
+                    if let Some(next_t) = next {
+                        if let Some(pos) = targets[fallback_idx..]
+                            .iter()
+                            .position(|t| t.agent == next_t.agent && t.model == next_t.model)
+                        {
+                            fallback_idx += pos + 1;
+                        }
+                        let wip_note = wip_out
+                            .wip_sha
+                            .as_deref()
+                            .map(|sha| format!("Pekerja sebelumnya ({current_agent}) kehabisan kuota. Lanjutkan dari komit WIP {sha}."))
+                            .unwrap_or_else(|| format!("Pekerja sebelumnya ({current_agent}) kehabisan kuota. Lanjutkan pekerjaan di worktree ini."));
+                        next_prompt = format!("{wip_note}\n\n{base_brief}");
+                        record.agent = next_t.agent.clone();
+                        record.model = next_t.model.clone();
+                        record.effort = None;
+                        record.mode = None;
+                        handoff::save(&record)?;
+                        control::event(
+                            "agent-quota-action",
+                            json!({
+                                "handoff": record.name,
+                                "pane": pane_name,
+                                "agent": current_agent,
+                                "model": current_model,
+                                "action": "fallback",
+                                "targetAgent": next_t.agent,
+                                "targetModel": next_t.model,
+                                "wipSha": wip_out.wip_sha,
+                                "ok": true,
+                            }),
+                        );
+                        continue;
+                    }
+                    control::event(
+                        "agent-quota-action",
+                        json!({
+                            "handoff": record.name,
+                            "pane": pane_name,
+                            "agent": current_agent,
+                            "model": current_model,
+                            "action": "fallback-exhausted",
+                            "wipSha": wip_out.wip_sha,
+                            "ok": false,
+                        }),
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
+        if ok && record.checkpoint {
+            let msg = format!("WIP [omnix] checkpoint {}", record.name);
+            let _ = handoff::commit_wip(Path::new(&record.worktree), &msg, record.push_wip);
+        }
+        if record.report.is_none() {
+            let repo = PathBuf::from(&record.repo);
+            let summary = if tail_lines.is_empty() {
+                format!("headless exit {exit_code}")
+            } else {
+                tail_lines.join("\n")
+            };
+            if let Ok(rep) = handoff::report(&repo, &record.name, if ok { "done" } else { "failed" }, &summary) {
+                record.status = rep.status;
+                record.report = rep.report;
+            }
+        }
+        handoff::mark_headless(&mut record, &log_path, ok)?;
+        control::event(
+            "agent-exited",
+            json!({
+                "pane": format!("ho:{}", record.name),
+                "handoff": record.name,
+                "agent": record.agent,
+                "model": record.model,
+                "code": exit_code,
+                "live": false,
+            }),
+        );
+        return Ok(());
+    }
+    Ok(())
+}
+
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.first().map(String::as_str) {
@@ -1609,6 +2520,8 @@ fn run() -> Result<()> {
         Some("resume") => cmd_resume(&args[1..]),
         Some("status") => cmd_status(&args[1..]),
         Some("handoff") => cmd_handoff(&args[1..]),
+        Some("_headless-worker") => cmd_headless_worker(&args[1..]),
+        Some("fallback") => cmd_fallback(&args[1..]),
         Some("lock") => cmd_lock(&args[1..]),
         Some("usage") => cmd_usage(&args[1..]),
         Some("doctor") => cmd_doctor(&args[1..]),
