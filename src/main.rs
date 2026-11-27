@@ -402,11 +402,35 @@ fn cmd_agent(args: &[String]) -> Result<()> {
             println!("resume: {}", record.resume_command);
         }
         Some("status") => {
-            let rows = filter_panes(
+            let mut rows = filter_panes(
                 &panes(),
                 value(args, "--handoff").as_deref(),
                 value(args, "--workspace").as_deref(),
             );
+            // Sessions registered with `agent track` have no live pane; show
+            // them here so a tracked session is never invisible.
+            for ws in workspace::list(&root()).unwrap_or_default() {
+                for s in ws.sessions {
+                    if rows
+                        .iter()
+                        .any(|r| r.get("paneKey").and_then(Value::as_str) == Some(s.pane_key.as_str()))
+                    {
+                        continue;
+                    }
+                    rows.push(json!({
+                        "paneKey": s.pane_key,
+                        "agent": s.agent,
+                        "sessionId": s.session_id,
+                        "cwd": s.cwd,
+                        "resumeCommand": s.resume_command,
+                        "handoff": Value::Null,
+                        "label": s.agent,
+                        "state": "tracked",
+                        "status": "tracked",
+                        "updatedAt": s.saved_at,
+                    }));
+                }
+            }
             if has(args, "--json") {
                 println!(
                     "{}",
@@ -536,7 +560,49 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                 reply.get("state").and_then(Value::as_str).unwrap_or("unknown")
             );
         }
-        _ => bail!("usage: omnix agent track|status|wait|send"),
+        Some("adopt") => {
+            let agent = value(args, "--agent").context("--agent is required")?;
+            if crate::agent::launch_cmd(&agent).is_none() {
+                bail!("unknown agent '{agent}'");
+            }
+            let cwd = value(args, "--cwd").map(PathBuf::from).unwrap_or_else(root);
+            if !cwd.is_dir() {
+                bail!("cwd is not a directory: {}", cwd.display());
+            }
+            let session = value(args, "--session");
+            let title = value(args, "--title").unwrap_or_else(|| format!("adopt {agent}"));
+            if control::read_control(&control::runtime_dir()).is_some() {
+                let key = format!(
+                    "adopt:{}:{}",
+                    crate::agent::base_agent(&agent),
+                    control::epoch()
+                );
+                let reply = control::request(
+                    &control::runtime_dir(),
+                    json!({
+                        "cmd": "ptySpawn",
+                        "paneKey": key,
+                        "agent": agent,
+                        "sessionId": session,
+                        "cwd": cwd.to_string_lossy(),
+                        "title": title,
+                    }),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&reply)?);
+            } else if let Some(sid) = session.as_deref() {
+                let cwd_text = cwd.to_string_lossy().into_owned();
+                let child = crate::agent::spawn(&agent, Some(sid), &cwd_text)
+                    .with_context(|| format!("resume {agent} in {}", cwd.display()))?;
+                println!(
+                    "resumed {agent} {sid} (pid {}) in {}",
+                    child.id(),
+                    cwd.display()
+                );
+            } else {
+                bail!("Omnix app is not running; pass --session <id> to resume a finished run");
+            }
+        }
+        _ => bail!("usage: omnix agent track|status|wait|send|adopt"),
     }
     Ok(())
 }
@@ -761,6 +827,7 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                     "--prompt",
                     "--prompt-file",
                     "--base",
+                    "--branch",
                     "--name",
                     "--repo",
                     "--worktree-dir",
@@ -821,6 +888,7 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                 prompt_file: value(args, "--prompt-file").map(PathBuf::from),
                 repo: value(args, "--repo").map(PathBuf::from),
                 base: value(args, "--base"),
+                branch: value(args, "--branch"),
                 worktree_dir: value(args, "--worktree-dir").map(PathBuf::from),
                 links,
                 role: value(args, "--role"),
@@ -836,6 +904,7 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                 after,
                 start_at,
                 min_free_mb,
+                orchestrator: false,
             };
             // Every argument and quota gate runs before the worktree exists, so a
             // rejected handoff leaves nothing behind for the next attempt.
@@ -2046,23 +2115,6 @@ fn cmd_headless_worker(args: &[String]) -> Result<()> {
     run_headless_worker(Path::new(&record_path), has(args, "--force"))
 }
 
-fn extract_session_id(line: &str) -> Option<String> {
-    let lower = line.to_ascii_lowercase();
-    for needle in ["session id:", "session_id:", "conversation_id:"] {
-        if let Some(pos) = lower.find(needle) {
-            let rest = line[pos + needle.len()..].trim();
-            let token: String = rest
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
-                .collect();
-            if token.len() >= 6 {
-                return Some(token);
-            }
-        }
-    }
-    None
-}
-
 fn free_ram_mb() -> Option<u64> {
     let info = usage::ram()?;
     let used = info.get("usedBytes").and_then(Value::as_u64)?;
@@ -2180,6 +2232,14 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
             prompt: None,
         };
         let mut argv = agent::headless_args(&record.agent, &launch, &next_prompt)?;
+        if record.session_id.is_none() {
+            let sid = agent::new_session_id();
+            let extra = agent::new_session_args(&record.agent, &sid);
+            if !extra.is_empty() {
+                argv.extend(extra);
+                record.session_id = Some(sid);
+            }
+        }
         #[cfg(feature = "gui")]
         if agent::base_agent(&record.agent) != "claude" && agent::base_agent(&record.agent) != "codex" {
             if let Ok(hargs) = pty::harness_args(&PathBuf::from(&record.repo), &record.agent, &argv) {
@@ -2280,7 +2340,7 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
                     let _ = writeln!(log_file, "{line}");
                     let _ = log_file.flush();
                     if record.session_id.is_none() {
-                        if let Some(sid) = extract_session_id(&line) {
+                        if let Some(sid) = agent::extract_session_id(&line) {
                             record.session_id = Some(sid);
                             let _ = handoff::save(&record);
                         }
@@ -2540,6 +2600,10 @@ fn run() -> Result<()> {
         Some("diagnostics") => cmd_diagnostics(&args[1..]),
         Some("update") => cmd_update(&args[1..]),
         Some("app") => start_app(),
+        Some("-V" | "--version" | "version") => {
+            println!("omnix {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Some("-h" | "--help" | "help") => {
             print!("{HELP}");
             Ok(())

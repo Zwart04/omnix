@@ -1268,6 +1268,15 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 Some(agent) => crate::agent::extra_args(agent, &options)?,
                 None => Vec::new(),
             };
+            let mut extra = extra;
+            let generated_session = match (&agent, &session) {
+                (Some(a), None) if crate::agent::base_agent(a) == "claude" => {
+                    let sid = crate::agent::new_session_id();
+                    extra.extend(crate::agent::new_session_args(a, &sid));
+                    Some(sid)
+                }
+                _ => None,
+            };
             let extra_env = match &agent {
                 Some(agent) => crate::agent::model_env(agent, options.model.as_deref()),
                 None => Vec::new(),
@@ -1335,6 +1344,9 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             if let (Some(agent), Some(session)) = (agent.as_deref(), session.as_deref()) {
                 let _ = workspace::track(&app.root, &cwd, agent, session, &cwd, &key);
             }
+            if let (Some(agent), Some(sid)) = (agent.as_deref(), generated_session.as_deref()) {
+                let _ = workspace::track(&app.root, &cwd, agent, sid, &cwd, &key);
+            }
             let handoff = as_str(&args, "handoff").unwrap_or_default();
             let title = as_str(&args, "title").unwrap_or_else(|| label.clone());
             let meta = PaneMeta {
@@ -1344,7 +1356,10 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 agent: as_str(&args, "agent").unwrap_or_default(),
                 handoff: handoff.clone(),
                 parent: as_str(&args, "parent").unwrap_or_default(),
-                session_id: as_str(&args, "sessionId").unwrap_or_default(),
+                session_id: generated_session
+                    .clone()
+                    .or_else(|| as_str(&args, "sessionId"))
+                    .unwrap_or_default(),
                 status: "working".into(),
                 exit_code: None,
                 orchestrator: as_bool(&args, "orchestrator"),
@@ -1878,6 +1893,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     model: orch_model.clone(),
                     mode: Some("edit".into()),
                     on_quota: crate::team::quota_spec(&team, orch_member),
+                    orchestrator: true,
                     ..Default::default()
                 },
             )?;
@@ -2199,7 +2215,20 @@ fn control_request(
                     .flatten(),
                 prompt: None,
             };
-            let extra = crate::agent::extra_args(agent, &options)?;
+            let mut extra = crate::agent::extra_args(agent, &options)?;
+            let generated_session = if crate::agent::base_agent(agent) == "claude" {
+                let sid = crate::agent::new_session_id();
+                extra.extend(crate::agent::new_session_args(agent, &sid));
+                Some(sid)
+            } else {
+                None
+            };
+            if let Some(sid) = &generated_session {
+                if let Some(mut rec) = crate::handoff::find_any(name) {
+                    rec.session_id = Some(sid.clone());
+                    let _ = crate::handoff::save(&rec);
+                }
+            }
             let extra_env = crate::agent::model_env(agent, options.model.as_deref());
             let spawned = pty::spawn_agent_with(&app.root, agent, None, &cwd, &extra, &extra_env)?;
             let pid = spawned.pid;
@@ -2250,10 +2279,13 @@ fn control_request(
                 agent: agent.to_string(),
                 handoff: name.to_string(),
                 parent,
-                session_id: String::new(),
+                session_id: generated_session.clone().unwrap_or_default(),
                 status: "working".into(),
                 exit_code: None,
-                orchestrator: false,
+                orchestrator: record
+                    .get("orchestrator")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
                 updated_at: crate::control::epoch(),
             };
             app.panes.insert(key.clone(), meta.clone());
@@ -2347,8 +2379,22 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                         .map(|m| !m.agent.trim().is_empty() && !m.orchestrator)
                         .unwrap_or(false);
                     if is_agent {
+                        let text_data = String::from_utf8_lossy(&data).into_owned();
+                        let needs_id = app
+                            .panes
+                            .get(&key)
+                            .map(|m| m.session_id.is_empty() && !m.agent.trim().is_empty())
+                            .unwrap_or(false);
+                        if needs_id {
+                            if let Some(sid) = crate::agent::extract_session_id(&text_data) {
+                                if let Some(meta) = app.panes.get_mut(&key) {
+                                    meta.session_id = sid;
+                                }
+                                persist_panes(app);
+                            }
+                        }
                         let tail = app.pane_tails.entry(key.clone()).or_default();
-                        tail.push_str(&String::from_utf8_lossy(&data));
+                        tail.push_str(&text_data);
                         if tail.len() > 8192 {
                             let drop_to = tail.len() - 4096;
                             if let Some(idx) = tail

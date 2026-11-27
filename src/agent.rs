@@ -580,6 +580,75 @@ pub fn resume_command(agent: &str, session_id: &str) -> Result<String> {
     Ok(format!("{base} {}", args.join(" ")))
 }
 
+/// A UUID v4 generated in-process so Omnix never shells out to `uuidgen`,
+/// which is missing on stock laptops.
+pub fn new_session_id() -> String {
+    let mut bytes = [0u8; 16];
+    let filled = std::fs::File::open("/dev/urandom")
+        .and_then(|mut file| {
+            use std::io::Read;
+            file.read_exact(&mut bytes)
+        })
+        .is_ok();
+    if !filled {
+        let mut state = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+            ^ ((std::process::id() as u64) << 32)
+            ^ 0x9E37_79B9_7F4A_7C15;
+        for chunk in bytes.chunks_mut(8) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let le = state.to_le_bytes();
+            for (dst, src) in chunk.iter_mut().zip(le.iter()) {
+                *dst = *src;
+            }
+        }
+    }
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = |slice: &[u8]| slice.iter().map(|b| format!("{b:02x}")).collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        hex(&bytes[0..4]),
+        hex(&bytes[4..6]),
+        hex(&bytes[6..8]),
+        hex(&bytes[8..10]),
+        hex(&bytes[10..16])
+    )
+}
+
+/// Claude accepts `--session-id <uuid>` to name a fresh conversation, so the
+/// pane can record its id before the first reply arrives.
+pub fn new_session_args(agent: &str, session_id: &str) -> Vec<String> {
+    match base_agent(agent) {
+        "claude" if valid_id(session_id) => {
+            vec!["--session-id".to_string(), session_id.to_string()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Pull a session id a CLI prints on its own line (`session id: <token>`).
+pub fn extract_session_id(line: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    for needle in ["session id:", "session_id:", "conversation_id:"] {
+        if let Some(pos) = lower.find(needle) {
+            let rest = line[pos + needle.len()..].trim();
+            let token: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+                .collect();
+            if token.len() >= 6 {
+                return Some(token);
+            }
+        }
+    }
+    None
+}
+
 /// Per-handoff model knobs. Values are validated as single argv tokens before
 /// they ever reach a spawn, so a model name cannot become a second flag.
 #[derive(Debug, Default, Clone)]
@@ -941,6 +1010,34 @@ mod tests {
         assert!(resume_args("codex", "-rf /").is_err());
         assert!(resume_args("codex", "a\nb").is_err());
         assert!(resume_args("codex", "").is_err());
+    }
+
+    #[test]
+    fn session_ids_are_generated_in_process_as_uuid_v4() {
+        let first = new_session_id();
+        let second = new_session_id();
+        assert_ne!(first, second);
+        let parts: Vec<&str> = first.split('-').collect();
+        assert_eq!(
+            parts.iter().map(|p| p.len()).collect::<Vec<_>>(),
+            vec![8, 4, 4, 4, 12]
+        );
+        assert!(first.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+        assert_eq!(&first[14..15], "4", "version: {first}");
+        assert!(
+            matches!(&first[19..20], "8" | "9" | "a" | "b"),
+            "variant: {first}"
+        );
+        assert_eq!(
+            new_session_args("claude", &first),
+            vec!["--session-id".to_string(), first.clone()]
+        );
+        assert!(new_session_args("codex", &first).is_empty());
+        assert_eq!(
+            extract_session_id("session id: abc-123").as_deref(),
+            Some("abc-123")
+        );
+        assert!(extract_session_id("no id here").is_none());
     }
 
     #[test]

@@ -96,6 +96,10 @@ pub struct Handoff {
     pub start_at: Option<u64>,
     #[serde(default)]
     pub min_free_mb: Option<u64>,
+    /// True when this handoff is the team orchestrator, so the GUI can mark
+    /// its tab and the quota watcher can ignore its chat text.
+    #[serde(default)]
+    pub orchestrator: bool,
 }
 
 /// Everything a CLI or the GUI can decide about a handoff. Defaults keep the
@@ -109,6 +113,8 @@ pub struct CreateOptions {
     pub repo: Option<PathBuf>,
     pub base: Option<String>,
     pub worktree_dir: Option<PathBuf>,
+    /// Explicit `--branch`; wins over the repo prefix and the role default.
+    pub branch: Option<String>,
     pub links: Vec<(String, PathBuf)>,
     pub role: Option<String>,
     pub parent: Option<String>,
@@ -123,6 +129,7 @@ pub struct CreateOptions {
     pub after: Option<String>,
     pub start_at: Option<u64>,
     pub min_free_mb: Option<u64>,
+    pub orchestrator: bool,
 }
 
 fn now() -> u64 {
@@ -169,6 +176,70 @@ fn valid_label(value: &str) -> bool {
         && value.len() <= 64
         && !value.starts_with('-')
         && !value.chars().any(char::is_control)
+}
+
+fn valid_branch(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 200
+        && !value.starts_with('-')
+        && !value.starts_with('/')
+        && !value.ends_with('/')
+        && !value.ends_with(".lock")
+        && !value.contains("..")
+        && !value.contains("//")
+        && !value.contains("@{")
+        && !value.chars().any(|c| {
+            c.is_control()
+                || c.is_whitespace()
+                || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        })
+}
+
+/// Branch prefix from `.omnix/config` (`branch_prefix`) else derived from the
+/// role name. Plain `omnix/` stays the fallback.
+fn branch_prefix(repo: &Path, role: Option<&str>) -> String {
+    let configured = fs::read_to_string(repo.join(".omnix").join("config"))
+        .ok()
+        .and_then(|text| {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) {
+                return value
+                    .get("branch_prefix")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+            }
+            text.lines().find_map(|line| {
+                let line = line.trim();
+                if line.starts_with('#') {
+                    return None;
+                }
+                let (key, value) = line.split_once('=')?;
+                (key.trim() == "branch_prefix")
+                    .then(|| value.trim().trim_matches('"').to_string())
+            })
+        })
+        .filter(|p| !p.trim().is_empty());
+    let prefix = configured.unwrap_or_else(|| {
+        let role = role.unwrap_or("").to_ascii_lowercase();
+        if role.contains("perbaikan") || role.contains("fix") || role.contains("debug") {
+            "fix/".into()
+        } else if role.contains("fitur") || role.contains("feature") {
+            "fitur/".into()
+        } else if role.contains("desain") || role.contains("design") {
+            "desain/".into()
+        } else if role.contains("server") || role.contains("infra") {
+            "server/".into()
+        } else {
+            "omnix/".into()
+        }
+    });
+    let prefix = prefix.trim().trim_start_matches('/').to_string();
+    if prefix.is_empty() {
+        "omnix/".into()
+    } else if prefix.ends_with('/') {
+        prefix
+    } else {
+        format!("{prefix}/")
+    }
 }
 
 fn read_capped(path: &Path, limit: usize, what: &str) -> Result<String> {
@@ -552,7 +623,16 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         Some(base) => base.clone(),
         None => git(&repo, &["rev-parse", "--short", "HEAD"])?,
     };
-    let branch = format!("omnix/{name}");
+    let branch = match options.branch.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => {
+            let raw = raw.trim();
+            if !valid_branch(raw) {
+                bail!("--branch must be a valid git branch name");
+            }
+            raw.to_string()
+        }
+        _ => format!("{}{name}", branch_prefix(&repo, options.role.as_deref())),
+    };
     let worktree = match &options.worktree_dir {
         Some(path) => {
             if path.is_absolute() {
@@ -720,6 +800,7 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         after: options.after,
         start_at: options.start_at,
         min_free_mb: options.min_free_mb,
+        orchestrator: options.orchestrator,
     };
     let record_path = write_record(&record)?;
     rollback.record = Some(record_path.clone());
@@ -1307,6 +1388,73 @@ mod tests {
         assert!(find_in(&dir, "probe").is_none(), "record must be rolled back");
         let branch = git(&dir, &["branch", "--list", "omnix/probe"]).unwrap();
         assert!(branch.trim().is_empty(), "branch must be rolled back: {branch}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn branch_prefix_follows_role_config_and_explicit_flag() {
+        let dir = temp_repo("branch");
+        let role = dir.join("perbaikan.md");
+        fs::write(&role, "# Role\nfix things\n").unwrap();
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "a".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                role: Some(role.to_string_lossy().into_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.branch, "fix/a");
+
+        fs::create_dir_all(dir.join(".omnix")).unwrap();
+        fs::write(dir.join(".omnix/config"), "branch_prefix = fitur/\n").unwrap();
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "b".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.branch, "fitur/b");
+
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "c".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                branch: Some("hotfix/c".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.branch, "hotfix/c");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn orchestrator_flag_survives_the_record() {
+        let dir = temp_repo("orchestrator");
+        let (record, path) = create_with(
+            &dir,
+            CreateOptions {
+                name: "orch".into(),
+                agent: "claude".into(),
+                prompt: "x".into(),
+                orchestrator: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(record.orchestrator);
+        let raw = fs::read_to_string(path).unwrap();
+        assert!(raw.contains("\"orchestrator\": true"));
         fs::remove_dir_all(&dir).ok();
     }
 
