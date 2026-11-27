@@ -289,7 +289,13 @@ impl Manifest {
                             bail!("duplicate command contribution '{name}'");
                         }
                     }
-                    Contribution::Agent { name, bin, args, env, resume } => {
+                    Contribution::Agent {
+                        name,
+                        bin,
+                        args,
+                        env,
+                        resume,
+                    } => {
                         if !valid_name(name) {
                             bail!("agent contribution name must be a-z, 0-9, '-'");
                         }
@@ -383,6 +389,7 @@ impl Manifest {
             .collect()
     }
 
+    #[allow(dead_code)] // plugin browser-tool bridge, wired on demand
     pub fn browser_tools(&self) -> Vec<&Contribution> {
         self.contributions
             .iter()
@@ -394,9 +401,7 @@ impl Manifest {
 fn valid_env_key(key: &str) -> bool {
     !key.is_empty()
         && !key.starts_with(|c: char| c.is_ascii_digit())
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -565,7 +570,10 @@ fn copy_tree(src: &Path, dest: &Path) -> Result<()> {
         let item = item?;
         let meta = fs::symlink_metadata(item.path())?;
         if meta.file_type().is_symlink() {
-            bail!("plugin bundles may not contain symlinks ({})", item.path().display());
+            bail!(
+                "plugin bundles may not contain symlinks ({})",
+                item.path().display()
+            );
         }
         let target = dest.join(item.file_name());
         if meta.is_dir() {
@@ -729,7 +737,9 @@ fn install_source(source: &Path, expected_sha: Option<&str>, source_label: &str)
         enabled: true,
         grants,
     };
-    state.plugins.insert(manifest.name.clone(), installed.clone());
+    state
+        .plugins
+        .insert(manifest.name.clone(), installed.clone());
     save_state(&state)?;
     if cleanup {
         let _ = fs::remove_dir_all(&temp);
@@ -772,7 +782,7 @@ fn read_url(url: &str) -> Result<String> {
         if std::env::var_os("OMNIX_PLUGIN_CATALOG").is_none() {
             bail!("file:// catalogs are only allowed through OMNIX_PLUGIN_CATALOG");
         }
-        return Ok(fs::read_to_string(path).with_context(|| format!("read {path}"))?);
+        return fs::read_to_string(path).with_context(|| format!("read {path}"));
     }
     if !url.starts_with("https://") {
         bail!("refusing to fetch a non-https catalog: {url}");
@@ -859,7 +869,10 @@ pub fn search(query: &str) -> Result<Value> {
 
 fn download_catalog_entry(entry: &CatalogEntry) -> Result<Value> {
     if !entry.url.starts_with("https://") {
-        bail!("refusing to download a plugin over non-https: {}", entry.url);
+        bail!(
+            "refusing to download a plugin over non-https: {}",
+            entry.url
+        );
     }
     let response = ureq::get(&entry.url)
         .set("User-Agent", "omnix-plugin")
@@ -876,11 +889,16 @@ fn download_catalog_entry(entry: &CatalogEntry) -> Result<Value> {
         bail!("empty plugin download");
     }
     verify_sha256(&bytes, &entry.sha256)?;
-    let dir = std::env::temp_dir().join(format!("omnix-plugin-dl-{}-{}", std::process::id(), now()));
+    let dir =
+        std::env::temp_dir().join(format!("omnix-plugin-dl-{}-{}", std::process::id(), now()));
     fs::create_dir_all(&dir)?;
     let path = dir.join("plugin.tar.gz");
     fs::write(&path, &bytes)?;
-    let result = install_source(&path, Some(&entry.sha256), &format!("catalog:{}", entry.name));
+    let result = install_source(
+        &path,
+        Some(&entry.sha256),
+        &format!("catalog:{}", entry.name),
+    );
     let _ = fs::remove_dir_all(&dir);
     result
 }
@@ -973,7 +991,10 @@ pub fn revoke(name: &str, keys: &[String]) -> Result<Value> {
         .get_mut(name)
         .ok_or_else(|| anyhow::anyhow!("plugin '{name}' is not installed"))?;
     for key in keys {
-        if !matches!(key.as_str(), "read" | "write" | "network" | "agents" | "history") {
+        if !matches!(
+            key.as_str(),
+            "read" | "write" | "network" | "agents" | "history"
+        ) {
             bail!("unknown permission '{key}'");
         }
         if !installed.grants.contains_key(key) {
@@ -993,7 +1014,10 @@ pub fn grant(name: &str, keys: &[String]) -> Result<Value> {
         .get_mut(name)
         .ok_or_else(|| anyhow::anyhow!("plugin '{name}' is not installed"))?;
     for key in keys {
-        if !matches!(key.as_str(), "read" | "write" | "network" | "agents" | "history") {
+        if !matches!(
+            key.as_str(),
+            "read" | "write" | "network" | "agents" | "history"
+        ) {
             bail!("unknown permission '{key}'");
         }
         if !installed.grants.contains_key(key) {
@@ -1206,11 +1230,7 @@ fn spawn_request(
 ) -> Result<Value> {
     let program = resolve_entry(dir, entry)?;
     let mut command = Command::new(&program);
-    if program.components().count() > 1 || program.is_absolute() {
-        command.args(&entry[1..]);
-    } else {
-        command.args(&entry[1..]);
-    }
+    command.args(&entry[1..]);
     command.current_dir(dir);
     command.env_clear();
     for key in allowed_env() {
@@ -1266,7 +1286,9 @@ fn spawn_request(
         Err(_) => {
             let _ = child.kill();
             let _ = child.wait();
-            let tail = err_rx.recv_timeout(Duration::from_millis(200)).unwrap_or_default();
+            let tail = err_rx
+                .recv_timeout(Duration::from_millis(200))
+                .unwrap_or_default();
             bail!(
                 "plugin '{}' timed out after {} ms{}",
                 dir.file_name().and_then(|n| n.to_str()).unwrap_or("?"),
@@ -1282,7 +1304,9 @@ fn spawn_request(
     let _ = child.kill();
     let _ = child.wait();
     if reply.trim().is_empty() {
-        let tail = err_rx.recv_timeout(Duration::from_millis(200)).unwrap_or_default();
+        let tail = err_rx
+            .recv_timeout(Duration::from_millis(200))
+            .unwrap_or_default();
         bail!(
             "plugin exited without a response{}",
             if tail.trim().is_empty() {
@@ -1323,7 +1347,10 @@ pub fn invoke(name: &str, method: &str, params: Value) -> Result<Value> {
     let mut env = BTreeMap::new();
     env.insert("OMNIX_PLUGIN_NAME".into(), manifest.name.clone());
     env.insert("OMNIX_PLUGIN_API".into(), API_VERSION.to_string());
-    env.insert("OMNIX_PLUGIN_DIR".into(), entry.path.to_string_lossy().into_owned());
+    env.insert(
+        "OMNIX_PLUGIN_DIR".into(),
+        entry.path.to_string_lossy().into_owned(),
+    );
     env.insert("OMNIX_PLUGIN_PERMISSIONS".into(), permissions);
     env.insert(
         "OMNIX_PLUGIN_DATA".into(),
@@ -1439,6 +1466,7 @@ pub fn dispatch_hooks(kind: &str, event: &Value) {
     }
 }
 
+#[allow(dead_code)] // plugin browser-tool bridge, wired on demand
 pub fn browser_tools() -> Vec<Value> {
     let mut rows = Vec::new();
     for entry in entries() {
@@ -1446,7 +1474,12 @@ pub fn browser_tools() -> Vec<Value> {
             continue;
         };
         for tool in manifest.browser_tools() {
-            if let Contribution::BrowserTool { name, description, input_schema } = tool {
+            if let Contribution::BrowserTool {
+                name,
+                description,
+                input_schema,
+            } = tool
+            {
                 rows.push(json!({
                     "name": format!("plugin__{}", name),
                     "plugin": manifest.name,
@@ -1460,8 +1493,15 @@ pub fn browser_tools() -> Vec<Value> {
     rows
 }
 
-pub fn call_browser_tool(plugin: &str, tool: &str, arguments: Value, endpoint: Option<&str>) -> Result<Value> {
-    let entry = entry(plugin).ok_or_else(|| anyhow::anyhow!("plugin '{plugin}' is not installed"))?;
+#[allow(dead_code)] // plugin browser-tool bridge, wired on demand
+pub fn call_browser_tool(
+    plugin: &str,
+    tool: &str,
+    arguments: Value,
+    endpoint: Option<&str>,
+) -> Result<Value> {
+    let entry =
+        entry(plugin).ok_or_else(|| anyhow::anyhow!("plugin '{plugin}' is not installed"))?;
     let (manifest, _) = callable(&entry)?;
     if !manifest.browser_tools().iter().any(|contribution| {
         matches!(contribution, Contribution::BrowserTool { name, .. } if name == tool)
@@ -1480,11 +1520,19 @@ pub fn call_browser_tool(plugin: &str, tool: &str, arguments: Value, endpoint: O
     )
 }
 
+#[allow(dead_code)] // plugin agent bridge, wired on demand
 pub fn agent_contribution(name: &str) -> Option<(String, String)> {
     for entry in entries() {
         let manifest = entry.manifest.ok()?;
         for contribution in manifest.agents() {
-            if let Contribution::Agent { name: agent, bin, args, env, resume } = contribution {
+            if let Contribution::Agent {
+                name: agent,
+                bin,
+                args,
+                env,
+                resume,
+            } = contribution
+            {
                 if agent == name {
                     return Some((
                         manifest.name.clone(),
@@ -1511,7 +1559,10 @@ pub fn agent_bin(name: &str) -> Option<String> {
             continue;
         };
         for contribution in manifest.agents() {
-            if let Contribution::Agent { name: agent, bin, .. } = contribution {
+            if let Contribution::Agent {
+                name: agent, bin, ..
+            } = contribution
+            {
                 if agent == name {
                     return Some(bin.clone());
                 }
@@ -1534,7 +1585,14 @@ pub fn agent_profile(name: &str) -> Option<PluginAgent> {
     for entry in entries() {
         let (manifest, _) = callable(&entry).ok()?;
         for contribution in manifest.agents() {
-            if let Contribution::Agent { name: agent, bin, args, env, resume } = contribution {
+            if let Contribution::Agent {
+                name: agent,
+                bin,
+                args,
+                env,
+                resume,
+            } = contribution
+            {
                 if agent == name {
                     return Some(PluginAgent {
                         bin: bin.clone(),
@@ -1564,7 +1622,14 @@ pub fn agent_rows() -> Vec<Value> {
             continue;
         };
         for contribution in manifest.agents() {
-            if let Contribution::Agent { name, bin, args, env, .. } = contribution {
+            if let Contribution::Agent {
+                name,
+                bin,
+                args,
+                env,
+                ..
+            } = contribution
+            {
                 let path = PathBuf::from(bin);
                 let available = if path.is_absolute() {
                     path.is_file()
@@ -1621,7 +1686,8 @@ pub fn panel_list() -> Vec<Value> {
 }
 
 pub fn panel_info(plugin: &str, panel: Option<&str>) -> Result<Value> {
-    let entry = entry(plugin).ok_or_else(|| anyhow::anyhow!("plugin '{plugin}' is not installed"))?;
+    let entry =
+        entry(plugin).ok_or_else(|| anyhow::anyhow!("plugin '{plugin}' is not installed"))?;
     let (manifest, _) = callable(&entry)?;
     let panels = manifest.panels();
     let selected = match panel {
@@ -1645,7 +1711,8 @@ pub fn panel_info(plugin: &str, panel: Option<&str>) -> Result<Value> {
 /// Resolve a file requested by a panel. The result must stay under the plugin
 /// folder; symlinks are refused.
 pub fn panel_file(plugin: &str, rel: &str) -> Result<(PathBuf, String)> {
-    let entry = entry(plugin).ok_or_else(|| anyhow::anyhow!("plugin '{plugin}' is not installed"))?;
+    let entry =
+        entry(plugin).ok_or_else(|| anyhow::anyhow!("plugin '{plugin}' is not installed"))?;
     let (manifest, _) = callable(&entry)?;
     let panels = manifest.panels();
     if panels.is_empty() {
@@ -1718,7 +1785,9 @@ pub fn scaffold(name: &str, kind: &str, dir: Option<PathBuf>) -> Result<Value> {
             "<!doctype html>\n<meta charset=\"utf-8\">\n<title>Plugin panel</title>\n<style>body{font:14px system-ui;padding:18px;color:#ddd;background:#18191c}</style>\n<h1>Plugin panel</h1>\n<p id=\"out\">Waiting for the host...</p>\n<script>\nparent.postMessage({omnixPanel:true, ready:true}, '*');\nwindow.addEventListener('message', function (ev) {\n  if (!ev.data || !ev.data.omnixPanelReply) return;\n  document.getElementById('out').textContent = JSON.stringify(ev.data.result);\n});\nparent.postMessage({omnixPanel:true, method:'status', params:{}}, '*');\n</script>\n",
         )?;
     }
-    Ok(json!({"ok": true, "path": target.to_string_lossy(), "kind": kind, "next": "read docs/plugin-api.md"}))
+    Ok(
+        json!({"ok": true, "path": target.to_string_lossy(), "kind": kind, "next": "read docs/plugin-api.md"}),
+    )
 }
 
 const SCAFFOLD_RUNTIME: &str = r#"#!/usr/bin/env python3
@@ -1783,11 +1852,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(
-                dir.join("plugin.sh"),
-                fs::Permissions::from_mode(0o755),
-            )
-            .unwrap();
+            fs::set_permissions(dir.join("plugin.sh"), fs::Permissions::from_mode(0o755)).unwrap();
         }
     }
 
@@ -1804,7 +1869,9 @@ mod tests {
 
     #[test]
     fn shipped_examples_have_valid_manifests() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples").join("plugins");
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("examples")
+            .join("plugins");
         let hello = Manifest::load(&root.join("hello-command")).unwrap();
         assert_eq!(hello.name, "hello-command");
         assert_eq!(hello.commands()[0].0, "hello");
@@ -1818,7 +1885,12 @@ mod tests {
         let mut text = manifest_text("hello", "");
         assert!(Manifest::parse(&text).is_ok());
         text = text.replace("api = 1", "api = 99");
-        assert!(Manifest::parse(&text).unwrap_err().to_string().contains("API"));
+        assert!(
+            Manifest::parse(&text)
+                .unwrap_err()
+                .to_string()
+                .contains("API")
+        );
         let text = manifest_text("Bad_Name", "");
         assert!(Manifest::parse(&text).is_err());
         let text = manifest_text("hello", "").replace("\"0.1.0\"", "\"one\"");
@@ -1885,7 +1957,9 @@ mod tests {
         install_source(&src, None, "test").unwrap();
         assert!(invoke("reader", "command", json!({})).is_ok());
         revoke("reader", &["read".into()]).unwrap();
-        let error = invoke("reader", "command", json!({})).unwrap_err().to_string();
+        let error = invoke("reader", "command", json!({}))
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("revoked"));
         fs::remove_dir_all(&home).ok();
         fs::remove_dir_all(&src).ok();
@@ -1907,7 +1981,9 @@ mod tests {
             "[[contributions]]\nkind = \"command\"\nname = \"crasher\"\n",
         );
         install_source(&src, None, "test").unwrap();
-        let error = invoke("crasher", "command", json!({})).unwrap_err().to_string();
+        let error = invoke("crasher", "command", json!({}))
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("without a response") || error.contains("boom"));
         fs::remove_dir_all(&home).ok();
         fs::remove_dir_all(&src).ok();
@@ -1924,7 +2000,9 @@ mod tests {
         );
         install_source(&src, None, "test").unwrap();
         let started = std::time::Instant::now();
-        let error = invoke("slow", "command", json!({})).unwrap_err().to_string();
+        let error = invoke("slow", "command", json!({}))
+            .unwrap_err()
+            .to_string();
         assert!(error.contains("timed out"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(4));
         fs::remove_dir_all(&home).ok();

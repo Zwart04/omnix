@@ -243,8 +243,7 @@ fn serve_plugin_panel(path: &str) -> Option<wry::http::Response<std::borrow::Cow
     let rel = percent_decode(rel)?;
     let (file, kind) = crate::plugin::panel_file(&plugin, &rel).ok()?;
     let body = std::fs::read(file).ok()?;
-    Some(
-        wry::http::Response::builder()
+    wry::http::Response::builder()
             .header("Content-Type", kind)
             .header("Cache-Control", "no-store")
             .header(
@@ -253,8 +252,7 @@ fn serve_plugin_panel(path: &str) -> Option<wry::http::Response<std::borrow::Cow
             )
             .header("X-Content-Type-Options", "nosniff")
             .body(std::borrow::Cow::Owned(body))
-            .ok()?,
-    )
+            .ok()
 }
 
 fn serve(req: wry::http::Request<Vec<u8>>) -> wry::http::Response<std::borrow::Cow<'static, [u8]>> {
@@ -346,7 +344,7 @@ fn url_allowed(url: &str) -> bool {
     (lower.starts_with("http://") || lower.starts_with("https://")) && !url.contains(' ')
 }
 
-fn history_db(root: &PathBuf) -> PathBuf {
+fn history_db(root: &Path) -> PathBuf {
     root.join(".omnix").join("history.sqlite")
 }
 
@@ -483,11 +481,7 @@ fn native_pick_folder(_app: &App, _start: Option<PathBuf>) -> Result<Option<Stri
 }
 
 fn persist_panes(app: &App) {
-    let rows: Vec<Value> = app
-        .panes
-        .iter()
-        .map(|(key, meta)| meta.json(key))
-        .collect();
+    let rows: Vec<Value> = app.panes.iter().map(|(key, meta)| meta.json(key)).collect();
     let _ = crate::control::write_panes(&crate::control::runtime_dir(), &rows);
 }
 
@@ -499,15 +493,11 @@ fn find_pane_key(app: &App, target: &str) -> Option<String> {
     app.panes
         .iter()
         .find(|(key, _)| key.as_str() == target)
+        .or_else(|| app.panes.iter().find(|(_, meta)| meta.handoff == target))
         .or_else(|| {
             app.panes
                 .iter()
-                .find(|(_, meta)| meta.handoff == target)
-        })
-        .or_else(|| {
-            app.panes.iter().find(|(_, meta)| {
-                meta.label == target || meta.title == target
-            })
+                .find(|(_, meta)| meta.label == target || meta.title == target)
         })
         .map(|(key, _)| key.clone())
 }
@@ -536,9 +526,17 @@ fn log_state(app: &App, key: &str, meta: &PaneMeta, old: &str, new: &str) {
         }),
     );
     if new == "done" || new == "approval" {
-        let who = if meta.handoff.is_empty() { &meta.title } else { &meta.handoff };
+        let who = if meta.handoff.is_empty() {
+            &meta.title
+        } else {
+            &meta.handoff
+        };
         crate::control::notify(
-            if new == "done" { "Worker finished" } else { "Worker needs approval" },
+            if new == "done" {
+                "Worker finished"
+            } else {
+                "Worker needs approval"
+            },
             who,
         );
     }
@@ -569,8 +567,13 @@ fn ai_memory(app: &App) -> Value {
     })
 }
 
-fn pty_spawn(app: &mut App, args: &Value, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) -> Result<Value> {
-    let key = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
+fn pty_spawn(
+    app: &mut App,
+    args: &Value,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+) -> Result<Value> {
+    let key = as_str(args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
     if key.len() > 64
         || !key
             .chars()
@@ -578,14 +581,14 @@ fn pty_spawn(app: &mut App, args: &Value, tx: &Sender<Msg>, proxy: &EventLoopPro
     {
         return Err(anyhow!("invalid paneKey"));
     }
-    let cwd = as_str(&args, "cwd")
+    let cwd = as_str(args, "cwd")
         .map(PathBuf::from)
         .unwrap_or_else(|| app.root.clone());
-    let shell = as_str(&args, "shell");
-    let agent = as_str(&args, "agent");
-    let session = as_str(&args, "sessionId");
-    let command = as_str(&args, "command");
-    let label = as_str(&args, "label")
+    let shell = as_str(args, "shell");
+    let agent = as_str(args, "agent");
+    let session = as_str(args, "sessionId");
+    let command = as_str(args, "command");
+    let label = as_str(args, "label")
         .or_else(|| agent.clone())
         .or_else(|| {
             command
@@ -597,10 +600,10 @@ fn pty_spawn(app: &mut App, args: &Value, tx: &Sender<Msg>, proxy: &EventLoopPro
         .unwrap_or_else(|| "terminal".into());
     let label: String = label.chars().filter(|c| !c.is_control()).take(48).collect();
     let options = crate::agent::LaunchOptions {
-        model: as_str(&args, "model"),
-        effort: as_str(&args, "effort"),
-        mode: as_str(&args, "mode"),
-        prompt: as_str(&args, "prompt"),
+        model: as_str(args, "model"),
+        effort: as_str(args, "effort"),
+        mode: as_str(args, "mode"),
+        prompt: as_str(args, "prompt"),
     };
     let extra = match &agent {
         Some(agent) => crate::agent::extra_args(agent, &options)?,
@@ -685,22 +688,22 @@ fn pty_spawn(app: &mut App, args: &Value, tx: &Sender<Msg>, proxy: &EventLoopPro
     if let (Some(agent), Some(sid)) = (agent.as_deref(), generated_session.as_deref()) {
         let _ = workspace::track(&app.root, &cwd, agent, sid, &cwd, &key);
     }
-    let handoff = as_str(&args, "handoff").unwrap_or_default();
-    let title = as_str(&args, "title").unwrap_or_else(|| label.clone());
+    let handoff = as_str(args, "handoff").unwrap_or_default();
+    let title = as_str(args, "title").unwrap_or_else(|| label.clone());
     let meta = PaneMeta {
         label: label.clone(),
         title: title.chars().filter(|c| !c.is_control()).take(80).collect(),
         cwd: cwd.to_string_lossy().into_owned(),
-        agent: as_str(&args, "agent").unwrap_or_default(),
+        agent: as_str(args, "agent").unwrap_or_default(),
         handoff: handoff.clone(),
-        parent: as_str(&args, "parent").unwrap_or_default(),
+        parent: as_str(args, "parent").unwrap_or_default(),
         session_id: generated_session
             .clone()
-            .or_else(|| as_str(&args, "sessionId"))
+            .or_else(|| as_str(args, "sessionId"))
             .unwrap_or_default(),
         status: "working".into(),
         exit_code: None,
-        orchestrator: as_bool(&args, "orchestrator"),
+        orchestrator: as_bool(args, "orchestrator"),
         updated_at: crate::control::epoch(),
     };
     if !handoff.is_empty() {
@@ -747,12 +750,14 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let engine_version = browser::version();
             let mut agents = crate::agent::AGENTS
                 .iter()
-                .map(|a| json!({
-                    "name": a,
-                    "bin": crate::agent::launch_cmd(a),
-                    "available": crate::agent::available(a),
-                    "enabled": saved.get(*a).map(|c| c.enabled).unwrap_or(true),
-                }))
+                .map(|a| {
+                    json!({
+                        "name": a,
+                        "bin": crate::agent::launch_cmd(a),
+                        "available": crate::agent::available(a),
+                        "enabled": saved.get(*a).map(|c| c.enabled).unwrap_or(true),
+                    })
+                })
                 .collect::<Vec<_>>();
             agents.extend(crate::agent::profile_rows(&app.root));
             agents.extend(crate::plugin::agent_rows());
@@ -868,7 +873,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             &app.root,
             &crate::control::home(),
         )),
-        "agentSettings" => (|| {
+        "agentSettings" => {
             let saved = crate::agent::load_settings(&app.root);
             let defaults = crate::agent::load_defaults(&app.root);
             Ok(json!({
@@ -892,7 +897,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     .chain(crate::plugin::agent_rows())
                     .collect::<Vec<_>>(),
             }))
-        })(),
+        }
         "agentSettingsSave" => (|| {
             let name = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
             if crate::agent::split_agent(&name).is_none() {
@@ -982,7 +987,12 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let names = args
                 .get("names")
                 .and_then(Value::as_array)
-                .map(|rows| rows.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>())
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
             if matches!(action.as_str(), "install" | "update" | "search" | "doctor") {
                 let tx = tx.clone();
@@ -995,7 +1005,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 });
                 return;
             }
-            (|| match action.as_str() {
+            match action.as_str() {
                 "remove" => crate::plugin::remove(&name),
                 "enable" => crate::plugin::set_enabled(&name, true),
                 "disable" => crate::plugin::set_enabled(&name, false),
@@ -1003,7 +1013,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "grant" => crate::plugin::grant(&name, &names),
                 "list" => Ok(json!({ "plugins": crate::plugin::list() })),
                 _ => Err(anyhow!("unknown plugin action '{action}'")),
-            })()
+            }
         }
         "pluginRun" => {
             let name = match as_str(&args, "name") {
@@ -1017,7 +1027,12 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let forwarded = args
                 .get("args")
                 .and_then(Value::as_array)
-                .map(|rows| rows.iter().filter_map(Value::as_str).map(str::to_string).collect::<Vec<_>>())
+                .map(|rows| {
+                    rows.iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default();
             let tx = tx.clone();
             let proxy = proxy.clone();
@@ -1046,7 +1061,9 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let params = args.get("params").cloned().unwrap_or_else(|| json!({}));
             let tx = tx.clone();
             let proxy = proxy.clone();
-            reply_later(id, tx, proxy, move || crate::plugin::invoke(&name, &method, params));
+            reply_later(id, tx, proxy, move || {
+                crate::plugin::invoke(&name, &method, params)
+            });
             return;
         }
         "devStatus" => Ok(crate::dev::status()),
@@ -1111,15 +1128,15 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             reply_later(id, tx, proxy, move || crate::dev::test(workspace, true));
             return;
         }
-        "devRun" => (|| {
+        "devRun" => {
             let build = as_str(&args, "build");
             crate::dev::run(build.as_deref())
-        })(),
-        "devInstall" => (|| {
+        }
+        "devInstall" => {
             let build = as_str(&args, "build");
             crate::dev::install(build.as_deref(), false)
-        })(),
-        "devRestore" => (|| crate::dev::restore(false))(),
+        }
+        "devRestore" => crate::dev::restore(false),
         "agentDefaultsSave" => (|| {
             let full_access = args
                 .get("fullAccess")
@@ -1321,8 +1338,8 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
         })(),
         "historyDeleteSession" => (|| {
             let agent = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
-            let session = as_str(&args, "sessionId")
-                .ok_or_else(|| anyhow!("sessionId is required"))?;
+            let session =
+                as_str(&args, "sessionId").ok_or_else(|| anyhow!("sessionId is required"))?;
             let conn = history::open(&history_db(&app.root))?;
             let removed = history::remove_session(&conn, &agent, &session)?;
             Ok(json!({ "removed": removed }))
@@ -1476,7 +1493,9 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             }
             let exit = app.panes.get(&key).and_then(|meta| meta.exit_code);
             persist_panes(app);
-            Ok(json!({ "ok": true, "paneKey": key, "state": crate::control::machine_state(&new, exit) }))
+            Ok(
+                json!({ "ok": true, "paneKey": key, "state": crate::control::machine_state(&new, exit) }),
+            )
         })(),
         "paneMoveWorktree" => (|| {
             let key = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
@@ -1540,7 +1559,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             let dry = args.get("dryRun").and_then(Value::as_bool).unwrap_or(true);
             crate::gc::run(&app.root, dry)
         }
-        "memory" => (|| {
+        "memory" => {
             let table = procs::snapshot();
             let pid = std::process::id();
             let (app_rss, app_count) = table.sum_tree(pid);
@@ -1568,7 +1587,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     }),
                 ));
             }
-            rows.sort_by(|a, b| b.0.cmp(&a.0));
+            rows.sort_by_key(|row| std::cmp::Reverse(row.0));
             let panes: Vec<Value> = rows.into_iter().map(|(_, row)| row).collect();
             let limit = std::env::var("OMNIX_AI_RAM_MB")
                 .ok()
@@ -1593,7 +1612,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "conflicts": pane_conflicts(app),
                 "ram": usage::ram(),
             }))
-        })(),
+        }
         "browserOpen" => (|| {
             let url = as_str(&args, "url").ok_or_else(|| anyhow!("url is required"))?;
             if !url_allowed(&url) {
@@ -1637,11 +1656,11 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             }
             Ok(json!({ "ok": true }))
         })(),
-        "browserClose" => (|| {
+        "browserClose" => {
             app.content = None;
             app.content_visible = false;
             Ok(json!({ "ok": true }))
-        })(),
+        }
         "browserStop" => (|| {
             let value = browser::stop(None, false)?;
             Ok(value)
@@ -1722,13 +1741,13 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 "prompt": text,
             }))
         })(),
-        "fallbackShow" => (|| {
+        "fallbackShow" => {
             let agent = as_str(&args, "agent").unwrap_or_default();
             Ok(json!({
                 "configured": crate::fallback::get(&app.root, &agent),
                 "candidates": crate::fallback::candidates(&app.root, &agent),
             }))
-        })(),
+        }
         "fallbackSet" => (|| {
             let agent = as_str(&args, "agent").ok_or_else(|| anyhow!("agent is required"))?;
             let target = as_str(&args, "target").unwrap_or_default();
@@ -1792,7 +1811,9 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 return Err(anyhow!("start is only enabled for auto teams"));
             }
             if team.members.len() < 2 {
-                return Err(anyhow!("an auto team needs an orchestrator and at least one worker"));
+                return Err(anyhow!(
+                    "an auto team needs an orchestrator and at least one worker"
+                ));
             }
             let stamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -2211,10 +2232,21 @@ fn control_request(
                 return Err(anyhow!("handoff pane already open: {key}"));
             }
             let options = crate::agent::LaunchOptions {
-                model: record.get("model").and_then(Value::as_str).map(str::to_string),
-                effort: record.get("effort").and_then(Value::as_str).map(str::to_string),
+                model: record
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                effort: record
+                    .get("effort")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
                 mode: matches!(crate::agent::base_agent(agent), "antigravity" | "claude")
-                    .then(|| record.get("mode").and_then(Value::as_str).map(str::to_string))
+                    .then(|| {
+                        record
+                            .get("mode")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
                     .flatten(),
                 prompt: None,
             };
@@ -2737,25 +2769,18 @@ pub fn run() -> Result<()> {
 
     let control_tx = tx.clone();
     let control_proxy = std::sync::Arc::new(std::sync::Mutex::new(proxy.clone()));
-    match crate::control::start(
-        &crate::control::runtime_dir(),
-        &app.root,
-        move |request| {
-            let (reply_tx, reply_rx) = channel::<Value>();
-            if control_tx
-                .send(Msg::Control(request, reply_tx))
-                .is_err()
-            {
-                return json!({ "ok": false, "error": "window is closing" });
-            }
-            if let Ok(proxy) = control_proxy.lock() {
-                let _ = proxy.send_event(UserEvent::Wake);
-            }
-            reply_rx
-                .recv_timeout(Duration::from_secs(60))
-                .unwrap_or_else(|_| json!({ "ok": false, "error": "control timed out" }))
-        },
-    ) {
+    match crate::control::start(&crate::control::runtime_dir(), &app.root, move |request| {
+        let (reply_tx, reply_rx) = channel::<Value>();
+        if control_tx.send(Msg::Control(request, reply_tx)).is_err() {
+            return json!({ "ok": false, "error": "window is closing" });
+        }
+        if let Ok(proxy) = control_proxy.lock() {
+            let _ = proxy.send_event(UserEvent::Wake);
+        }
+        reply_rx
+            .recv_timeout(Duration::from_secs(60))
+            .unwrap_or_else(|_| json!({ "ok": false, "error": "control timed out" }))
+    }) {
         Ok(server) => app.ctrl = Some(server),
         Err(err) => eprintln!("omnix: control socket disabled: {err}"),
     }

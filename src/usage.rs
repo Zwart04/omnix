@@ -1,8 +1,8 @@
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 /// One rate-limit window reported by an agent CLI.
@@ -33,7 +33,9 @@ pub fn parse_codex_line(line: &str) -> Option<(Vec<Window>, Option<String>)> {
     let now = unix_now();
     let mut windows = Vec::new();
     for kind in ["primary", "secondary"] {
-        let Some(win) = limits.get(kind) else { continue };
+        let Some(win) = limits.get(kind) else {
+            continue;
+        };
         let Some(used) = win.get("used_percent").and_then(Value::as_f64) else {
             continue;
         };
@@ -91,7 +93,9 @@ fn newest_codex_rollout_at(dir: &Path) -> Option<PathBuf> {
             if !name.starts_with("rollout-") || !name.ends_with(".jsonl") {
                 continue;
             }
-            let Ok(modified) = meta.modified() else { continue };
+            let Ok(modified) = meta.modified() else {
+                continue;
+            };
             if best.as_ref().map(|(t, _)| modified > *t).unwrap_or(true) {
                 *best = Some((modified, path));
             }
@@ -112,7 +116,7 @@ pub fn codex_quota_at(config: &Path) -> Option<Value> {
     use std::io::{Read, Seek, SeekFrom};
     let path = newest_codex_rollout_at(&config.join("sessions"))?;
     /* Rollouts grow to megabytes; the newest rate-limit snapshot is always in
-       the tail, so read the last 256 KiB instead of the whole transcript. */
+    the tail, so read the last 256 KiB instead of the whole transcript. */
     let mut file = std::fs::File::open(&path).ok()?;
     let len = file.metadata().ok()?.len();
     let start = len.saturating_sub(256 * 1024);
@@ -121,7 +125,7 @@ pub fn codex_quota_at(config: &Path) -> Option<Value> {
     file.read_to_end(&mut bytes).ok()?;
     let text = String::from_utf8_lossy(&bytes);
     /* resets_in_seconds was true when the line was written; age it so a stale
-       snapshot cannot claim a reset window that already passed. */
+    snapshot cannot claim a reset window that already passed. */
     let age = std::fs::metadata(&path)
         .and_then(|m| m.modified())
         .ok()
@@ -180,8 +184,7 @@ pub fn parse_antigravity_output(text: &str) -> Option<Value> {
             continue;
         };
         for bucket in buckets {
-            let Some(remaining) = bucket.get("remaining_fraction").and_then(Value::as_f64)
-            else {
+            let Some(remaining) = bucket.get("remaining_fraction").and_then(Value::as_f64) else {
                 continue;
             };
             let window = bucket.get("window").and_then(Value::as_str).unwrap_or("");
@@ -236,7 +239,7 @@ fn strip_ansi(text: &str) -> String {
     while let Some(ch) = chars.next() {
         if ch == '\u{1b}' && chars.peek() == Some(&'[') {
             chars.next();
-            while let Some(next) = chars.next() {
+            for next in chars.by_ref() {
                 if ('@'..='~').contains(&next) {
                     break;
                 }
@@ -314,7 +317,8 @@ pub fn detect_exhaustion(text: &str) -> Option<Exhaustion> {
     let confidence = if strong.iter().any(|needle| lower.contains(needle)) {
         "high"
     } else if medium.iter().any(|needle| lower.contains(needle))
-        || (lower.contains("429") && (lower.contains("quota") || lower.contains("rate") || lower.contains("agy_error")))
+        || (lower.contains("429")
+            && (lower.contains("quota") || lower.contains("rate") || lower.contains("agy_error")))
     {
         "medium"
     } else if lower.contains("quota") && lower.contains("limit") {
@@ -392,8 +396,8 @@ fn parse_reset(text: &str) -> Option<(i64, String)> {
     }
 
     for unit in ["second", "minute", "hour", "day"] {
-        for needle in [format!("in "), format!("after ")] {
-            let pattern = format!("{needle}");
+        for needle in ["in ".to_string(), "after ".to_string()] {
+            let pattern = needle.to_string();
             let mut from = 0;
             while let Some(pos) = lower[from..].find(&pattern) {
                 let idx = from + pos + pattern.len();
@@ -449,7 +453,9 @@ fn find_clock(text: &str) -> Option<(u32, u32)> {
             while i < bytes.len() && bytes[i].is_ascii_digit() {
                 i += 1;
             }
-            if i < bytes.len() && bytes[i] == b':' && i + 3 <= bytes.len()
+            if i < bytes.len()
+                && bytes[i] == b':'
+                && i + 3 <= bytes.len()
                 && bytes[i + 1].is_ascii_digit()
                 && bytes[i + 2].is_ascii_digit()
             {
@@ -491,7 +497,7 @@ fn next_local_clock(hour: u32, minute: u32) -> Option<i64> {
         if delta <= 0 {
             delta += 86_400;
         }
-        return Some(now + delta);
+        Some(now + delta)
     }
     #[cfg(not(unix))]
     {
@@ -510,7 +516,12 @@ fn parse_iso_seconds(text: &str) -> Option<i64> {
     let hour = number(11..13)?;
     let minute = number(14..16)?;
     let second = number(17..19)?;
-    if month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 60 {
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
         return None;
     }
     let y = if month <= 2 { year - 1 } else { year };
@@ -620,7 +631,6 @@ fn query_antigravity(home: &Path) -> Option<Value> {
 }
 
 /// System memory in bytes. Linux reads /proc, macOS shells out to sysctl and
-
 /// vm_stat, Windows reads the Win32 memory counters via PowerShell.
 pub fn ram() -> Option<Value> {
     #[cfg(target_os = "linux")]
@@ -753,9 +763,16 @@ fn parse_claude_usage(body: &str, plan: Option<&str>) -> Option<Value> {
         ("five_hour", "session", "5h", 300_i64),
         ("seven_day", "weekly", "Weekly", 10080_i64),
         ("seven_day_opus", "weekly-opus", "Weekly (Opus)", 10080_i64),
-        ("seven_day_sonnet", "weekly-sonnet", "Weekly (Sonnet)", 10080_i64),
+        (
+            "seven_day_sonnet",
+            "weekly-sonnet",
+            "Weekly (Sonnet)",
+            10080_i64,
+        ),
     ] {
-        let Some(entry) = value.get(key) else { continue };
+        let Some(entry) = value.get(key) else {
+            continue;
+        };
         let used = entry
             .get("utilization")
             .or_else(|| entry.get("used_percentage"))
@@ -1167,7 +1184,10 @@ pub fn check_quota_in_snapshot(snapshot: &Value, agent: &str, model: Option<&str
             .or_else(|| w.get("kind"))
             .and_then(Value::as_str)
             .unwrap_or("quota");
-        let used = w.get("usedPercent").and_then(Value::as_f64).unwrap_or(100.0);
+        let used = w
+            .get("usedPercent")
+            .and_then(Value::as_f64)
+            .unwrap_or(100.0);
         let reset_at = w
             .get("resetAt")
             .and_then(Value::as_i64)
@@ -1229,7 +1249,13 @@ pub fn check_quota_in_snapshot(snapshot: &Value, agent: &str, model: Option<&str
     }
 }
 
-pub fn check_quota(root: &Path, home: &Path, agent: &str, model: Option<&str>, live: bool) -> QuotaCheck {
+pub fn check_quota(
+    root: &Path,
+    home: &Path,
+    agent: &str,
+    model: Option<&str>,
+    live: bool,
+) -> QuotaCheck {
     let snapshot = if live {
         snapshot_live_sync_for(root, home)
     } else {
@@ -1389,8 +1415,8 @@ mod tests {
         let clock = detect_exhaustion("quota exceeded; try again at 3:14 PM").expect("clock");
         assert!(clock.reset_at.expect("reset") > unix_now());
 
-        let iso = detect_exhaustion("usage limit reached, resets at 2099-01-01T00:00:00Z")
-            .expect("iso");
+        let iso =
+            detect_exhaustion("usage limit reached, resets at 2099-01-01T00:00:00Z").expect("iso");
         assert_eq!(iso.reset_at, Some(4_070_908_800));
     }
 
@@ -1471,14 +1497,14 @@ mod tests {
         assert_eq!(agy.retryable, Some(false));
 
         let future = unix_now() + 7200;
-        let claude = detect_exhaustion(&format!("Claude AI usage limit reached|{future}"))
-            .expect("claude");
+        let claude =
+            detect_exhaustion(&format!("Claude AI usage limit reached|{future}")).expect("claude");
         assert_eq!(claude.confidence, "high");
         assert_eq!(claude.reset_at, Some(future));
         assert!(claude.reset_local.is_some());
 
-        let codex = detect_exhaustion("You've hit your usage limit. Try again at 6:47 PM.")
-            .expect("codex");
+        let codex =
+            detect_exhaustion("You've hit your usage limit. Try again at 6:47 PM.").expect("codex");
         assert_eq!(codex.confidence, "high");
         assert!(codex.reset_at.is_some());
 

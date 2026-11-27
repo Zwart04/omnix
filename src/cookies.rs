@@ -7,11 +7,13 @@
 
 use anyhow::{Context, Result, bail};
 use gtk::prelude::*;
-use webkit2gtk::{CookieManagerExt, WebContextExt, WebViewExt};
-use wry::{WebViewBuilderExtUnix, WebViewExtUnix};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
+use webkit2gtk::{CookieManagerExt, WebContextExt, WebViewExt};
+use wry::{WebViewBuilderExtUnix, WebViewExtUnix};
+
+type CallbackResult = std::rc::Rc<std::cell::RefCell<Option<Result<Vec<CookieRow>, String>>>>;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -112,8 +114,7 @@ fn read_native_cookies(domain: &str) -> Result<Vec<CookieRow>> {
         .and_then(|context| context.cookie_manager())
         .context("WebKit has no cookie manager")?;
 
-    let result: std::rc::Rc<std::cell::RefCell<Option<Result<Vec<CookieRow>, String>>>> =
-        std::rc::Rc::new(std::cell::RefCell::new(None));
+    let result: CallbackResult = std::rc::Rc::new(std::cell::RefCell::new(None));
     let main = gtk::glib::MainLoop::new(None, false);
     let callback_result = std::rc::Rc::clone(&result);
     let callback_main = main.clone();
@@ -134,7 +135,10 @@ fn read_native_cookies(domain: &str) -> Result<Vec<CookieRow>> {
                         name,
                         value,
                         domain: cookie_domain.trim_start_matches('.').to_ascii_lowercase(),
-                        path: cookie.path().map(|v| v.to_string()).unwrap_or_else(|| "/".into()),
+                        path: cookie
+                            .path()
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "/".into()),
                         expires: cookie.expires().map(|time| time.to_unix()).unwrap_or(-1),
                         http_only: cookie.is_http_only(),
                         secure: cookie.is_secure(),
@@ -146,7 +150,6 @@ fn read_native_cookies(domain: &str) -> Result<Vec<CookieRow>> {
                         },
                     });
                 }
-                let mut rows = rows;
                 keep_domain(&mut rows, &wanted);
                 Ok(rows)
             }
@@ -190,12 +193,7 @@ fn write_cookies(path: &Path, rows: &[CookieRow]) -> Result<()> {
     Ok(())
 }
 
-pub fn import(
-    root: &Path,
-    domain: &str,
-    out: Option<&str>,
-    yes: bool,
-) -> Result<Value> {
+pub fn import(root: &Path, domain: &str, out: Option<&str>, yes: bool) -> Result<Value> {
     let domain = normalize_domain(domain)?;
     if !yes && !confirm(&domain)? {
         bail!("cookie import cancelled");
@@ -236,8 +234,14 @@ mod tests {
 
     #[test]
     fn domains_are_one_host_only() {
-        assert_eq!(normalize_domain(" App.Example.com ").unwrap(), "app.example.com");
-        assert_eq!(normalize_domain(".app.example.com").unwrap(), "app.example.com");
+        assert_eq!(
+            normalize_domain(" App.Example.com ").unwrap(),
+            "app.example.com"
+        );
+        assert_eq!(
+            normalize_domain(".app.example.com").unwrap(),
+            "app.example.com"
+        );
         assert!(normalize_domain("https://app.example.com").is_err());
         assert!(normalize_domain("*.example.com").is_err());
         assert!(cookie_allowed("app.example.com", "app.example.com"));

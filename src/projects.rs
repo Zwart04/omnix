@@ -38,9 +38,8 @@ fn canonical(path: &str) -> Result<PathBuf> {
     if !given.is_absolute() {
         bail!("project path must be absolute");
     }
-    let real = std::fs::canonicalize(&given).map_err(|err| {
-        anyhow::anyhow!("cannot open {}: {err}", given.display())
-    })?;
+    let real = std::fs::canonicalize(&given)
+        .map_err(|err| anyhow::anyhow!("cannot open {}: {err}", given.display()))?;
     if !real.is_dir() {
         bail!("not a directory: {}", real.display());
     }

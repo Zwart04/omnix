@@ -83,16 +83,10 @@ impl Default for AgentConfig {
 /// App-wide launch defaults, persisted next to the per-agent settings. The
 /// permissions switch mirrors Orca: a new agent either asks or starts with the
 /// agent's own full-access flag.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct AgentDefaults {
     #[serde(default)]
     pub full_access: bool,
-}
-
-impl Default for AgentDefaults {
-    fn default() -> Self {
-        Self { full_access: false }
-    }
 }
 
 impl AgentConfig {
@@ -113,9 +107,7 @@ impl AgentConfig {
 fn valid_env_key(key: &str) -> bool {
     !key.is_empty()
         && !key.starts_with(|c: char| c.is_ascii_digit())
-        && key
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 pub fn settings_path(root: &Path) -> PathBuf {
@@ -249,9 +241,7 @@ fn expand_dir(value: &str, home: &Path) -> Option<PathBuf> {
 pub fn profile_dir_at(home: &Path, root: &Path, agent: &str) -> Option<PathBuf> {
     let (base, profile) = split_agent(agent)?;
     let profile = profile?;
-    if profile_env_var(base).is_none() {
-        return None;
-    }
+    profile_env_var(base)?;
     let cfg = load_settings(root).remove(agent).unwrap_or_default();
     Some(expand_dir(&cfg.config_dir, home).unwrap_or_else(|| {
         home.join(".omnix")
@@ -280,11 +270,7 @@ fn link_shared(target: &Path, link: &Path) -> Result<()> {
 
 /// Create the profile folder and the Claude rule symlinks, then return the env
 /// that points the CLI at it. Tokens are never read or copied.
-pub fn prepare_profile_at(
-    home: &Path,
-    root: &Path,
-    agent: &str,
-) -> Result<Vec<(String, String)>> {
+pub fn prepare_profile_at(home: &Path, root: &Path, agent: &str) -> Result<Vec<(String, String)>> {
     let Some((base, Some(_profile))) = split_agent(agent) else {
         return Ok(Vec::new());
     };
@@ -532,8 +518,12 @@ pub fn resolve(agent: &str) -> Option<PathBuf> {
         .map(|path| std::env::split_paths(&path).collect())
         .unwrap_or_default();
     dirs.extend(extra_dirs());
-    dirs.into_iter()
-        .find_map(|dir| names.iter().map(|name| dir.join(name)).find(|p| executable(p)))
+    dirs.into_iter().find_map(|dir| {
+        names
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|p| executable(p))
+    })
 }
 
 /// True when the agent CLI resolves on PATH. The menu lists only these.
@@ -665,9 +655,9 @@ fn valid_model(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 80
         && !value.starts_with('-')
-        && value
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '@' | '+' | '-'))
+        && value.chars().all(|c| {
+            c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '/' | '@' | '+' | '-')
+        })
 }
 
 /// Validate and build the extra argv for the three CLIs the orchestrator
@@ -696,7 +686,10 @@ pub fn extra_args(agent: &str, options: &LaunchOptions) -> Result<Vec<String>> {
     }
     let base = base_agent(agent);
     if options.model.is_some()
-        && !matches!(base, "codex" | "claude" | "antigravity" | "opencode" | "opencode2")
+        && !matches!(
+            base,
+            "codex" | "claude" | "antigravity" | "opencode" | "opencode2"
+        )
     {
         bail!("--model is only supported for codex, claude, antigravity, and opencode");
     }
@@ -856,7 +849,6 @@ pub fn version(agent: &str) -> Option<String> {
     Some("installed".into())
 }
 
-
 /// Spawn without touching a shell, so session ids cannot inject commands.
 pub fn spawn(agent: &str, session_id: Option<&str>, cwd: &str) -> Result<Child> {
     let base = launch_cmd(agent).ok_or_else(|| anyhow::anyhow!("unknown agent '{agent}'"))?;
@@ -901,10 +893,7 @@ mod tests {
 
     #[test]
     fn parses_profile_suffix_and_rejects_bad_ids() {
-        assert_eq!(
-            split_agent("codex:akun2"),
-            Some(("codex", Some("akun2")))
-        );
+        assert_eq!(split_agent("codex:akun2"), Some(("codex", Some("akun2"))));
         assert_eq!(split_agent("codex"), Some(("codex", None)));
         assert!(split_agent("codex:").is_none());
         assert!(split_agent("codex:Akun").is_none());
@@ -973,9 +962,11 @@ mod tests {
     fn profile_requires_a_supported_isolation_var() {
         let base = std::env::temp_dir().join(format!("omnix-profile-agy-{}", std::process::id()));
         std::fs::create_dir_all(base.join(".omnix")).unwrap();
-        assert!(prepare_profile_at(&base, &base, "antigravity:akun2")
-            .unwrap()
-            .is_empty());
+        assert!(
+            prepare_profile_at(&base, &base, "antigravity:akun2")
+                .unwrap()
+                .is_empty()
+        );
         assert!(profile_dir_at(&base, &base, "antigravity:akun2").is_none());
         std::fs::remove_dir_all(&base).ok();
     }
@@ -1063,7 +1054,14 @@ mod tests {
         };
         assert_eq!(
             extra_args("antigravity", &antigravity).unwrap(),
-            vec!["--model", "gpt-5", "--effort", "high", "--mode", "accept-edits"]
+            vec![
+                "--model",
+                "gpt-5",
+                "--effort",
+                "high",
+                "--mode",
+                "accept-edits"
+            ]
         );
         let agy_full = LaunchOptions {
             mode: Some("full".into()),
@@ -1116,11 +1114,21 @@ mod tests {
         let opts = LaunchOptions::default();
         assert_eq!(
             headless_args("codex", &opts, "do it").unwrap(),
-            vec!["exec", "--dangerously-bypass-approvals-and-sandbox", "do it"]
+            vec![
+                "exec",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "do it"
+            ]
         );
         assert_eq!(
             headless_args("antigravity", &opts, "do it").unwrap(),
-            vec!["-p", "do it", "--dangerously-skip-permissions", "--output-format", "text"]
+            vec![
+                "-p",
+                "do it",
+                "--dangerously-skip-permissions",
+                "--output-format",
+                "text"
+            ]
         );
         assert_eq!(
             headless_args("opencode", &opts, "do it").unwrap(),

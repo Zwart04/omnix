@@ -14,8 +14,8 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub fn epoch() -> u64 {
@@ -154,7 +154,9 @@ pub fn held(text: &str) -> Option<String> {
                 .map(str::to_string),
         );
     }
-    patterns.into_iter().find(|pattern| text.contains(pattern.as_str()))
+    patterns
+        .into_iter()
+        .find(|pattern| text.contains(pattern.as_str()))
 }
 
 /// Also invoked only: desktop notifications need `OMNIX_NOTIFY_DESKTOP=1`,
@@ -256,15 +258,11 @@ pub fn find_pane<'a>(panes: &'a [Value], target: &str) -> Option<&'a Value> {
     panes
         .iter()
         .find(|pane| field(pane, "paneKey") == target)
+        .or_else(|| panes.iter().find(|pane| field(pane, "handoff") == target))
         .or_else(|| {
             panes
                 .iter()
-                .find(|pane| field(pane, "handoff") == target)
-        })
-        .or_else(|| {
-            panes.iter().find(|pane| {
-                field(pane, "label") == target || field(pane, "title") == target
-            })
+                .find(|pane| field(pane, "label") == target || field(pane, "title") == target)
         })
 }
 
@@ -281,7 +279,10 @@ pub fn read_control(dir: &Path) -> Option<ControlInfo> {
     Some(ControlInfo {
         port: value.get("port").and_then(Value::as_u64)? as u16,
         token: value.get("token").and_then(Value::as_str)?.to_string(),
-        version: value.get("version").and_then(Value::as_str).map(str::to_string),
+        version: value
+            .get("version")
+            .and_then(Value::as_str)
+            .map(str::to_string),
     })
 }
 
@@ -336,7 +337,10 @@ where
         "root": root.to_string_lossy(),
         "version": env!("CARGO_PKG_VERSION"),
     });
-    write_private(&control_file(dir), serde_json::to_vec_pretty(&info)?.as_slice())?;
+    write_private(
+        &control_file(dir),
+        serde_json::to_vec_pretty(&info)?.as_slice(),
+    )?;
 
     let handler = Arc::new(handler);
     let expected = token.clone();
@@ -505,7 +509,10 @@ mod tests {
         assert_eq!(hits.load(Ordering::SeqCst), 1);
         let port = server.port;
         drop(server);
-        assert!(read_control(&dir).is_none(), "drop removes the control file");
+        assert!(
+            read_control(&dir).is_none(),
+            "drop removes the control file"
+        );
         // Shutdown is refuse-only after the wake connection; give the accept
         // thread a bounded moment to close the listener.
         let closed = (0..100).any(|_| {
@@ -522,7 +529,10 @@ mod tests {
 
     #[test]
     fn version_mismatch_only_reports_a_different_running_app() {
-        assert_eq!(version_mismatch("0.9.0", Some("0.8.0")), Some("0.8.0".into()));
+        assert_eq!(
+            version_mismatch("0.9.0", Some("0.8.0")),
+            Some("0.8.0".into())
+        );
         assert_eq!(version_mismatch("0.9.0", Some("0.9.0")), None);
         assert_eq!(version_mismatch("0.9.0", None), None);
     }

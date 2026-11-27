@@ -115,7 +115,7 @@ pub fn session_list(root: &Path) -> Vec<Session> {
             let _ = std::fs::remove_file(path);
         }
     }
-    out.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+    out.sort_by_key(|a| a.created_at);
     out
 }
 
@@ -353,7 +353,9 @@ fn wait_until_listening(pid: u32, port: u16) -> Result<()> {
     let start = Instant::now();
     loop {
         if !alive(pid) {
-            bail!("lightpanda exited before listening on 127.0.0.1:{port}; is the port already in use?");
+            bail!(
+                "lightpanda exited before listening on 127.0.0.1:{port}; is the port already in use?"
+            );
         }
         if TcpStream::connect_timeout(&addr, Duration::from_millis(100)).is_ok() {
             // The socket may belong to some other process; only trust it if

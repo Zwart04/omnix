@@ -116,8 +116,8 @@ pub fn load_launch(root: &Path) -> Result<Vec<LaunchConfig>> {
             path.display()
         )
     })?;
-    let value: Value = serde_json::from_slice(&bytes)
-        .with_context(|| format!("parse {}", path.display()))?;
+    let value: Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("parse {}", path.display()))?;
     let list = value
         .get("configurations")
         .and_then(Value::as_array)
@@ -166,10 +166,7 @@ pub fn load_launch(root: &Path) -> Result<Vec<LaunchConfig>> {
         if port == 0 {
             bail!("preview '{name}' has an invalid port");
         }
-        let cwd = item
-            .get("cwd")
-            .and_then(Value::as_str)
-            .map(str::to_string);
+        let cwd = item.get("cwd").and_then(Value::as_str).map(str::to_string);
         let mut env = BTreeMap::new();
         if let Some(map) = item.get("env").and_then(Value::as_object) {
             for (key, value) in map {
@@ -232,7 +229,7 @@ fn port_open(port: u16) -> bool {
 /// Scanning starts just above the configured port so the default keeps
 /// working, and falls back to an OS-assigned port when the range is crowded.
 fn pick_port(root: &Path, start: u16) -> Result<u16> {
-    let last = start.saturating_add(100).min(65535);
+    let last = start.saturating_add(100);
     for port in start.saturating_add(1)..=last {
         if port == 0 || port_open(port) {
             continue;
@@ -354,7 +351,10 @@ fn find_config(root: &Path, name: &str) -> Result<LaunchConfig> {
             let names: Vec<String> = load_launch(root)
                 .map(|list| list.into_iter().map(|c| c.name).collect())
                 .unwrap_or_default();
-            format!("no preview '{name}' in .claude/launch.json (have: {})", names.join(", "))
+            format!(
+                "no preview '{name}' in .claude/launch.json (have: {})",
+                names.join(", ")
+            )
         })
 }
 
@@ -378,9 +378,9 @@ fn read_all_states(root: &Path) -> Vec<(PathBuf, PreviewState)> {
 
 fn locate(root: &Path, name: &str) -> Option<(PathBuf, PreviewState)> {
     let wanted = slug(name);
-    read_all_states(root)
-        .into_iter()
-        .find(|(path, state)| state.name == name || path.file_stem().and_then(|s| s.to_str()) == Some(wanted.as_str()))
+    read_all_states(root).into_iter().find(|(path, state)| {
+        state.name == name || path.file_stem().and_then(|s| s.to_str()) == Some(wanted.as_str())
+    })
 }
 
 pub fn start(root: &Path, name: &str, keep: bool) -> Result<Value> {
@@ -530,7 +530,10 @@ pub fn start(root: &Path, name: &str, keep: bool) -> Result<Value> {
 
 pub fn stop(root: &Path, name: &str) -> Result<Value> {
     let Some((path, state)) = locate(root, name) else {
-        bail!("no preview named '{name}' in {}", preview_dir(root).display());
+        bail!(
+            "no preview named '{name}' in {}",
+            preview_dir(root).display()
+        );
     };
     kill_tree(state.pid);
     let _ = fs::remove_file(&path);
@@ -551,7 +554,10 @@ pub fn stop(root: &Path, name: &str) -> Result<Value> {
 
 pub fn logs(root: &Path, name: &str, errors_only: bool) -> Result<String> {
     let Some((_, state)) = locate(root, name) else {
-        bail!("no preview named '{name}' in {}", preview_dir(root).display());
+        bail!(
+            "no preview named '{name}' in {}",
+            preview_dir(root).display()
+        );
     };
     let text = fs::read_to_string(&state.log)
         .with_context(|| format!("read preview log {}", state.log))?;
@@ -766,7 +772,10 @@ mod tests {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert_eq!(with_port(&eq, 3000, 3100), vec!["--port=3100", "-p", "3100"]);
+        assert_eq!(
+            with_port(&eq, 3000, 3100),
+            vec!["--port=3100", "-p", "3100"]
+        );
         // A different explicit port is the user's choice and stays untouched.
         let other: Vec<String> = ["--port", "4000"].iter().map(|s| s.to_string()).collect();
         assert_eq!(with_port(&other, 3000, 3100), other);

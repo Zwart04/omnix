@@ -229,7 +229,7 @@ fn install_asset(name: &str, bytes: &[u8], version: &str, restart: bool) -> Resu
         if let Ok(exe) = replace_exe(bytes) {
             if restart {
                 /* current_exe() after the rename reports "... (deleted)", so
-                   relaunch the path captured before the swap. */
+                relaunch the path captured before the swap. */
                 let _ = Command::new(&exe).spawn();
             }
             return Ok(json!({

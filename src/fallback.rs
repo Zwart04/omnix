@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -35,9 +35,7 @@ pub fn load(root: &Path) -> BTreeMap<String, Fallback> {
 }
 
 pub fn get(root: &Path, agent: &str) -> Option<Fallback> {
-    load(root)
-        .remove(agent)
-        .filter(|fallback| fallback.enabled)
+    load(root).remove(agent).filter(|fallback| fallback.enabled)
 }
 
 pub fn set(root: &Path, agent: &str, fallback: Fallback) -> Result<()> {

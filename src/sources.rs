@@ -8,7 +8,8 @@
 //! - OpenCode: `~/.local/share/opencode/opencode.db` (sessions + messages)
 
 use crate::history::{self, Entry, TranscriptLine};
-use anyhow::{Context, Result};use rusqlite::{Connection, OpenFlags, params};
+use anyhow::{Context, Result};
+use rusqlite::{Connection, OpenFlags, params};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
@@ -229,9 +230,12 @@ fn parse_codex(path: &Path) -> Option<Parsed> {
                 let payload = &value["payload"];
                 if payload.get("type").and_then(Value::as_str) == Some("token_count") {
                     /* Codex writes the running total after every turn; the
-                       last snapshot is the session's usage. */
+                    last snapshot is the session's usage. */
                     if let Some(total) = payload.pointer("/info/total_token_usage") {
-                        let input = total.get("input_tokens").and_then(Value::as_i64).unwrap_or(0);
+                        let input = total
+                            .get("input_tokens")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0);
                         let cached = total
                             .get("cached_input_tokens")
                             .and_then(Value::as_i64)
@@ -239,7 +243,10 @@ fn parse_codex(path: &Path) -> Option<Parsed> {
                         usage.input = (input - cached).max(0);
                         usage.cache_read = cached;
                         usage.cache_write = 0;
-                        usage.output = total.get("output_tokens").and_then(Value::as_i64).unwrap_or(0);
+                        usage.output = total
+                            .get("output_tokens")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0);
                     }
                     continue;
                 }
@@ -335,7 +342,10 @@ fn parse_claude(path: &Path) -> Option<Parsed> {
         let message = &value["message"];
         if kind == "assistant" {
             if let Some(reported) = message.get("usage") {
-                usage.input += reported.get("input_tokens").and_then(Value::as_i64).unwrap_or(0);
+                usage.input += reported
+                    .get("input_tokens")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
                 usage.cache_write += reported
                     .get("cache_creation_input_tokens")
                     .and_then(Value::as_i64)
@@ -344,7 +354,10 @@ fn parse_claude(path: &Path) -> Option<Parsed> {
                     .get("cache_read_input_tokens")
                     .and_then(Value::as_i64)
                     .unwrap_or(0);
-                usage.output += reported.get("output_tokens").and_then(Value::as_i64).unwrap_or(0);
+                usage.output += reported
+                    .get("output_tokens")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(0);
             }
             if let Some(model) = message.get("model").and_then(Value::as_str) {
                 if !model.is_empty() {
@@ -490,8 +503,8 @@ fn opencode_scan(conn: &mut Connection, db: &Path, report: &mut ScanReport) -> R
 
 fn is_fresh(conn: &Connection, key: &str, updated_at: i64) -> bool {
     /* OpenCode stores the model on each assistant message, not in its session
-       row. Older indexes were written before we read it, so a row without a
-       model is refreshed once instead of being treated as complete. */
+    row. Older indexes were written before we read it, so a row without a
+    model is refreshed once instead of being treated as complete. */
     let needs_model = key.starts_with("opencode://");
     conn.query_row(
         "SELECT updated_at, model FROM sessions WHERE file_path = ?1 AND message_count > 0",

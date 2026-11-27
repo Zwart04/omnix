@@ -64,7 +64,7 @@ impl Table {
                 }
             }
         }
-        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found.sort_by_key(|row| std::cmp::Reverse(row.0));
         let mut names = Vec::new();
         for (_, name) in found {
             let leaf = name.rsplit('/').next().unwrap_or(&name).to_string();
@@ -126,7 +126,7 @@ impl Table {
                 }
             }
         }
-        found.sort_by(|a, b| b.rss.cmp(&a.rss));
+        found.sort_by_key(|row| std::cmp::Reverse(row.rss));
         found
     }
 

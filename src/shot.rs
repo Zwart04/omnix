@@ -25,11 +25,36 @@ pub struct Viewport {
 }
 
 pub const VIEWPORTS: &[Viewport] = &[
-    Viewport { name: "laptop", width: 1366, height: 768, mobile: false },
-    Viewport { name: "laptop-hd", width: 1280, height: 800, mobile: false },
-    Viewport { name: "iphone-se", width: 375, height: 812, mobile: true },
-    Viewport { name: "iphone", width: 390, height: 844, mobile: true },
-    Viewport { name: "pixel", width: 412, height: 915, mobile: true },
+    Viewport {
+        name: "laptop",
+        width: 1366,
+        height: 768,
+        mobile: false,
+    },
+    Viewport {
+        name: "laptop-hd",
+        width: 1280,
+        height: 800,
+        mobile: false,
+    },
+    Viewport {
+        name: "iphone-se",
+        width: 375,
+        height: 812,
+        mobile: true,
+    },
+    Viewport {
+        name: "iphone",
+        width: 390,
+        height: 844,
+        mobile: true,
+    },
+    Viewport {
+        name: "pixel",
+        width: 412,
+        height: 915,
+        mobile: true,
+    },
 ];
 
 pub fn viewport(name: &str) -> Option<Viewport> {
@@ -106,13 +131,10 @@ struct SnapState {
     main: glib::MainLoop,
 }
 
-unsafe extern "C" fn snapshot_done(
-    view: *mut c_void,
-    result: *mut c_void,
-    user_data: *mut c_void,
-) {
+unsafe extern "C" fn snapshot_done(view: *mut c_void, result: *mut c_void, user_data: *mut c_void) {
     let state = unsafe { Box::from_raw(user_data as *mut SnapState) };
-    let surface = unsafe { ffi::webkit_web_view_get_snapshot_finish(view, result, std::ptr::null_mut()) };
+    let surface =
+        unsafe { ffi::webkit_web_view_get_snapshot_finish(view, result, std::ptr::null_mut()) };
     if surface.is_null() {
         *state.outcome.borrow_mut() = Some(Err("WebKit returned an empty snapshot".into()));
         state.main.quit();
@@ -156,7 +178,10 @@ fn force_unscaled_output() {
         .and_then(|rest| rest.split('.').next())
         .and_then(|n| n.parse::<u32>().ok());
     if let Some(number) = number {
-        if Path::new("/tmp/.X11-unix").join(format!("X{number}")).exists() {
+        if Path::new("/tmp/.X11-unix")
+            .join(format!("X{number}"))
+            .exists()
+        {
             // SAFETY: screenshots run in their own short-lived CLI process,
             // before any GTK call, so changing the backend cannot race a thread.
             unsafe {
@@ -186,8 +211,8 @@ pub fn capture(opts: &ShotOptions) -> Result<Value> {
     // WebKitGTK 2.54 has no `WebKitSettings:prefers-color-scheme`; it derives
     // the CSS media query from the GTK dark-theme preference. Setting this
     // before the view is created is therefore the supported path.
-    let old_dark_pref = gtk::Settings::default()
-        .map(|settings| settings.is_gtk_application_prefer_dark_theme());
+    let old_dark_pref =
+        gtk::Settings::default().map(|settings| settings.is_gtk_application_prefer_dark_theme());
     if let Some(settings) = gtk::Settings::default() {
         settings.set_gtk_application_prefer_dark_theme(opts.dark);
     }
@@ -297,7 +322,9 @@ pub fn capture(opts: &ShotOptions) -> Result<Value> {
 
 #[allow(dead_code)]
 pub fn path_for(root: &Path, name: &str) -> PathBuf {
-    root.join(".omnix").join("shots").join(format!("{name}.png"))
+    root.join(".omnix")
+        .join("shots")
+        .join(format!("{name}.png"))
 }
 
 /// Parse `omnix browser screenshot` flags. Kept separate from capture so tests
@@ -324,9 +351,7 @@ pub fn parse_args(args: &[String]) -> Result<ShotOptions> {
                     .get(i + 1)
                     .with_context(|| format!("{arg} needs a value"))?;
                 match arg {
-                    "--width" => {
-                        width = Some(value.parse().context("--width must be a number")?)
-                    }
+                    "--width" => width = Some(value.parse().context("--width must be a number")?),
                     "--height" => {
                         height = Some(value.parse().context("--height must be a number")?)
                     }
@@ -444,7 +469,10 @@ mod tests {
         bad.push("--preset".into());
         bad.push("cinema".into());
         assert!(parse_args(&bad).is_err());
-        let no_out: Vec<String> = ["https://example.com"].iter().map(|s| s.to_string()).collect();
+        let no_out: Vec<String> = ["https://example.com"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!(parse_args(&no_out).is_err());
         let engine: Vec<String> = [
             "https://example.com",

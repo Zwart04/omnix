@@ -4,7 +4,7 @@
 //! empty, the GUI handoff picker only offers those members and the host
 //! rejects anything else, so a stale page cannot start an unlisted agent.
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -242,7 +242,9 @@ pub fn role_brief(role: &str) -> Option<&'static str> {
         "researcher" => {
             Some("Investigate APIs and docs, then report findings with file references.")
         }
-        "debugger" => Some("Reproduce the failure, find the root cause, and propose the smallest fix."),
+        "debugger" => {
+            Some("Reproduce the failure, find the root cause, and propose the smallest fix.")
+        }
         "documenter" => Some("Update the README and docs, and keep examples accurate."),
         "orchestrator" | "coordinator" => Some(
             "Coordinate the team: split the task, send one assignment per worker, wait for results, and summarize.",
@@ -346,9 +348,11 @@ mod tests {
             members: vec![member("opencode", "9router/model")],
         })
         .unwrap();
-        assert!(resolve(&team, "opencode", "9router/model")
-            .unwrap()
-            .is_some());
+        assert!(
+            resolve(&team, "opencode", "9router/model")
+                .unwrap()
+                .is_some()
+        );
         assert!(resolve(&team, "opencode", "").unwrap().is_some());
         assert!(resolve(&team, "codex", "").is_err());
         assert!(resolve(&team, "opencode", "other/model").is_err());

@@ -43,9 +43,7 @@ pub fn locks_dir(root: &Path) -> PathBuf {
 
 fn valid_resource(resource: &str) -> bool {
     let trimmed = resource.trim();
-    !trimmed.is_empty()
-        && trimmed.len() <= 200
-        && !trimmed.chars().any(char::is_control)
+    !trimmed.is_empty() && trimmed.len() <= 200 && !trimmed.chars().any(char::is_control)
 }
 
 fn normalize(resource: &str) -> Result<String> {
@@ -134,7 +132,7 @@ pub fn pid_alive(pid: u32) -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        return Path::new(&format!("/proc/{pid}")).exists();
+        Path::new(&format!("/proc/{pid}")).exists()
     }
     #[cfg(all(unix, not(target_os = "linux")))]
     {
@@ -189,7 +187,9 @@ fn describe_holder(lock: &Lock) -> String {
     let until = lock.expires_at;
     format!(
         "{} (pid {}, expires {})",
-        lock.owner, lock.pid, crate::control::local_time(until)
+        lock.owner,
+        lock.pid,
+        crate::control::local_time(until)
     )
 }
 
@@ -366,7 +366,12 @@ pub fn prune(root: &Path) -> usize {
 /// Release by resource or lock id. Ownership is enforced unless `force` is set;
 /// the handoff close path passes `force` because the record itself carries the
 /// ids it created.
-pub fn release(root: &Path, resource_or_id: &str, owner: Option<&str>, force: bool) -> Result<Option<Lock>> {
+pub fn release(
+    root: &Path,
+    resource_or_id: &str,
+    owner: Option<&str>,
+    force: bool,
+) -> Result<Option<Lock>> {
     let wanted = resource_or_id.trim();
     if wanted.is_empty() {
         bail!("lock resource or id is required");
@@ -419,11 +424,8 @@ mod tests {
     use super::*;
 
     fn temp_root(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "omnix-lock-{tag}-{}-{}",
-            std::process::id(),
-            now()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("omnix-lock-{tag}-{}-{}", std::process::id(), now()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
@@ -440,7 +442,11 @@ mod tests {
             .to_string();
         assert!(err.contains("agent:a"), "{err}");
         assert!(release(&root, "port:3000", Some("agent:b"), false).is_err());
-        assert!(release(&root, "port:3000", Some("agent:a"), false).unwrap().is_some());
+        assert!(
+            release(&root, "port:3000", Some("agent:a"), false)
+                .unwrap()
+                .is_some()
+        );
         assert!(acquire_as(&root, "port:3000", "agent:b", 60, me, BTreeMap::new()).is_ok());
         fs::remove_dir_all(&root).ok();
     }
@@ -465,7 +471,15 @@ mod tests {
         let mut meta = BTreeMap::new();
         meta.insert("handoff".into(), "task".into());
         let first = acquire_as(&root, "worktree:/tmp/x", "agent:a", 10, me, meta.clone()).unwrap();
-        let second = acquire_as(&root, "worktree:/tmp/x", "agent:a", 120, me, BTreeMap::new()).unwrap();
+        let second = acquire_as(
+            &root,
+            "worktree:/tmp/x",
+            "agent:a",
+            120,
+            me,
+            BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(second.id, first.id);
         assert_eq!(second.meta.get("handoff").map(String::as_str), Some("task"));
         assert!(second.expires_at >= first.expires_at);
@@ -480,7 +494,15 @@ mod tests {
         assert_eq!(list(&root).len(), 1);
         assert!(release(&root, &lock.id, None, true).unwrap().is_some());
         assert!(list(&root).is_empty());
-        let gone = acquire_as(&root, "branch:main", "agent:a", 60, 999_999, BTreeMap::new()).unwrap();
+        let gone = acquire_as(
+            &root,
+            "branch:main",
+            "agent:a",
+            60,
+            999_999,
+            BTreeMap::new(),
+        )
+        .unwrap();
         assert_eq!(prune(&root), 1, "dead PID is pruned");
         assert!(release(&root, &gone.id, None, true).unwrap().is_none());
         fs::remove_dir_all(&root).ok();

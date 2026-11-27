@@ -29,7 +29,10 @@ pub fn builds_dir() -> PathBuf {
 }
 
 pub fn dev_home() -> PathBuf {
-    crate::control::home().join(".omnix").join("dev").join("home")
+    crate::control::home()
+        .join(".omnix")
+        .join("dev")
+        .join("home")
 }
 
 fn previous_dir() -> PathBuf {
@@ -169,9 +172,7 @@ pub fn task(options: TaskOptions) -> Result<(handoff::Handoff, PathBuf)> {
     if !repo.join("CONTRIBUTING.md").is_file() {
         bail!("CONTRIBUTING.md is missing from {}", repo.display());
     }
-    let name = options
-        .name
-        .unwrap_or_else(|| format!("dev-{}", now()));
+    let name = options.name.unwrap_or_else(|| format!("dev-{}", now()));
     let prompt = task_prompt(&repo, &brief)?;
     let (mut record, path) = handoff::create_with(
         &repo,
@@ -185,19 +186,17 @@ pub fn task(options: TaskOptions) -> Result<(handoff::Handoff, PathBuf)> {
         },
     )?;
     handoff::remember(&path)?;
-    if options.run {
-        if crate::control::read_control(&crate::control::runtime_dir()).is_some() {
-            let reply = crate::control::request(
-                &crate::control::runtime_dir(),
-                json!({"cmd": "spawnHandoff", "record": record}),
-            )?;
-            let pane = reply
-                .get("paneKey")
-                .and_then(Value::as_str)
-                .unwrap_or("?")
-                .to_string();
-            handoff::mark_delivered(&mut record, &pane)?;
-        }
+    if options.run && crate::control::read_control(&crate::control::runtime_dir()).is_some() {
+        let reply = crate::control::request(
+            &crate::control::runtime_dir(),
+            json!({"cmd": "spawnHandoff", "record": record}),
+        )?;
+        let pane = reply
+            .get("paneKey")
+            .and_then(Value::as_str)
+            .unwrap_or("?")
+            .to_string();
+        handoff::mark_delivered(&mut record, &pane)?;
     }
     Ok((record, path))
 }
@@ -251,15 +250,13 @@ fn build_one(worktree: &Path, release: bool) -> Result<Build> {
         built_at: now(),
         notes: json!({}),
     };
-    atomic_write(
-        &dir.join("build.json"),
-        &serde_json::to_vec_pretty(&build)?,
-    )?;
+    atomic_write(&dir.join("build.json"), &serde_json::to_vec_pretty(&build)?)?;
     Ok(build)
 }
 
 pub fn build(worktree: Option<PathBuf>, release: bool) -> Result<Build> {
-    let root = worktree.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let root =
+        worktree.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let repo = repo_root(&root)?;
     if !is_omnix_repo(&repo) {
         bail!("build runs inside an Omnix repository");
@@ -270,7 +267,8 @@ pub fn build(worktree: Option<PathBuf>, release: bool) -> Result<Build> {
 /// `cargo test` plus a small, honest bench: startup of `--help`, `doctor`, and
 /// the binary size. It is not a GUI idle measurement.
 pub fn test(worktree: Option<PathBuf>, offline: bool) -> Result<Value> {
-    let root = worktree.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let root =
+        worktree.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let repo = repo_root(&root)?;
     let mut command = Command::new("cargo");
     command.arg("test").current_dir(&repo);
@@ -335,7 +333,7 @@ pub fn builds() -> Vec<Build> {
                 .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         })
         .collect();
-    rows.sort_by(|a, b| b.built_at.cmp(&a.built_at));
+    rows.sort_by_key(|row| std::cmp::Reverse(row.built_at));
     rows
 }
 
@@ -384,7 +382,7 @@ fn read_installed() -> Value {
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
         .unwrap_or_else(|| json!({}))
-    }
+}
 
 /// Save the binary being replaced, then swap in the dev build. The caller must
 /// have a real owner action behind it; nothing calls this automatically.
@@ -428,7 +426,9 @@ pub fn install(id: Option<&str>, restart: bool) -> Result<Value> {
 
 #[cfg(not(target_os = "linux"))]
 pub fn install(_id: Option<&str>, _restart: bool) -> Result<Value> {
-    bail!("installing a dev binary in place is wired for Linux; use the normal installer on this platform")
+    bail!(
+        "installing a dev binary in place is wired for Linux; use the normal installer on this platform"
+    )
 }
 
 #[cfg(target_os = "linux")]
@@ -503,7 +503,10 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(dir.join("previous")).unwrap();
         fs::write(dir.join("previous").join("omnix"), b"old").unwrap();
-        assert_eq!(fs::read(dir.join("previous").join("omnix")).unwrap(), b"old");
+        assert_eq!(
+            fs::read(dir.join("previous").join("omnix")).unwrap(),
+            b"old"
+        );
         fs::remove_dir_all(&dir).ok();
     }
 }

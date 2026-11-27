@@ -108,17 +108,18 @@ fn ensure_session_columns(conn: &Connection) -> Result<()> {
         ("model", "TEXT"),
     ] {
         if !existing.contains(name) {
-            conn.execute(&format!("ALTER TABLE sessions ADD COLUMN {name} {decl}"), [])?;
+            conn.execute(
+                &format!("ALTER TABLE sessions ADD COLUMN {name} {decl}"),
+                [],
+            )?;
         }
     }
     Ok(())
 }
 
 pub fn meta(conn: &Connection, key: &str) -> Option<String> {
-    conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| {
-        r.get(0)
-    })
-    .ok()
+    conn.query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+        .ok()
 }
 
 pub fn set_meta(conn: &Connection, key: &str, value: &str) -> Result<()> {
@@ -218,7 +219,7 @@ fn identifiers(text: &str) -> String {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for raw in text.split(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '.' | '-' | '/'))) {
-        for part in raw.split(|c: char| matches!(c, '_' | '.' | '-' | '/')) {
+        for part in raw.split(['_', '.', '-', '/']) {
             if part.len() < 2 {
                 continue;
             }
@@ -258,7 +259,16 @@ pub fn redact(text: &str) -> String {
     }
     fn secret_at(rest: &str) -> Option<usize> {
         let lower = rest.to_ascii_lowercase();
-        for prefix in ["sk-", "sk-proj-", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_"] {
+        for prefix in [
+            "sk-",
+            "sk-proj-",
+            "ghp_",
+            "gho_",
+            "ghu_",
+            "ghs_",
+            "ghr_",
+            "github_pat_",
+        ] {
             if lower.starts_with(prefix) {
                 let len = take_while(rest, |c| {
                     c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.')
@@ -695,10 +705,7 @@ pub fn upsert(conn: &mut Connection, entry: &Entry) -> Result<usize> {
     let mut stored = 0usize;
     for line in entry.lines {
         let truncated = line.text.chars().count() > MAX_MESSAGE_CHARS;
-        let text: String = redact(&line.text)
-            .chars()
-            .take(MAX_MESSAGE_CHARS)
-            .collect();
+        let text: String = redact(&line.text).chars().take(MAX_MESSAGE_CHARS).collect();
         insert_msg.execute(params![
             session_row,
             line.role,
@@ -1156,11 +1163,15 @@ mod tests {
 
         let full = transcript(&conn, "codex", "s1", false).unwrap();
         assert_eq!(full.messages, 45);
-        assert!(full.text.contains("msg-1\n"), "full keeps the whole session");
+        assert!(
+            full.text.contains("msg-1\n"),
+            "full keeps the whole session"
+        );
     }
 
     #[test]
-    fn trailing_punctuation_and_camel_case_still_match() {        let dir = temp_dir("punct");
+    fn trailing_punctuation_and_camel_case_still_match() {
+        let dir = temp_dir("punct");
         let tx_dir = dir.join("transcripts");
         fs::create_dir_all(&tx_dir).unwrap();
         let mut f = fs::File::create(tx_dir.join("s2.jsonl")).unwrap();
@@ -1242,9 +1253,11 @@ mod tests {
                 .is_empty(),
             "env secret must not be searchable"
         );
-        assert!(!search(&conn, "redacted", None, false, false, 5)
-            .unwrap()
-            .is_empty());
+        assert!(
+            !search(&conn, "redacted", None, false, false, 5)
+                .unwrap()
+                .is_empty()
+        );
         assert_eq!(
             redact("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.abcdefghij"),
             "Authorization: Bearer [redacted]"

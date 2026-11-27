@@ -117,7 +117,6 @@ fn tool_text(id: &Value, text: impl Into<String>, is_error: bool) -> Value {
     })
 }
 
-
 fn extra_tools() -> Vec<Value> {
     vec![
         json!({
@@ -217,7 +216,12 @@ fn append_instructions(value: &mut Value) {
 
 fn redact_line(line: &str) -> String {
     let mut out = line.to_string();
-    for header in ["authorization:", "proxy-authorization:", "cookie:", "set-cookie:"] {
+    for header in [
+        "authorization:",
+        "proxy-authorization:",
+        "cookie:",
+        "set-cookie:",
+    ] {
         if let Some(pos) = out.to_ascii_lowercase().find(header) {
             let start = pos + header.len();
             let end = out[start..]
@@ -270,7 +274,7 @@ fn sensitive_key(key: &str) -> bool {
 fn redact_url_query(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
-    while let Some(at) = rest.find(|ch| ch == '?' || ch == '&') {
+    while let Some(at) = rest.find(['?', '&']) {
         let (before, after) = rest.split_at(at + 1);
         out.push_str(before);
         let end = after
@@ -294,8 +298,7 @@ fn redact_url_query(text: &str) -> String {
 }
 
 fn base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b = [
@@ -484,7 +487,9 @@ fn handle_client(
         "screenshotNative" => {
             let result = native_screenshot(proxy, &args);
             match result {
-                Ok(value) => proxy.reply(out, json!({ "jsonrpc": "2.0", "id": id, "result": value }))?,
+                Ok(value) => {
+                    proxy.reply(out, json!({ "jsonrpc": "2.0", "id": id, "result": value }))?
+                }
                 Err(err) => proxy.reply(out, tool_text(&id, format!("{err:#}"), true))?,
             }
             return Ok(());
@@ -546,17 +551,13 @@ fn handle_client(
         }
         "scrollTo" => {
             let Some(selector) = string_arg(&args, &["selector"]) else {
-                proxy.reply(
-                    out,
-                    tool_text(&id, "scrollTo needs a CSS selector", true),
-                )?;
+                proxy.reply(out, tool_text(&id, "scrollTo needs a CSS selector", true))?;
                 return Ok(());
             };
             let generated = proxy.generated_id();
-            proxy.pending.insert(
-                id_key(&generated),
-                Custom::ScrollTo { original: id },
-            );
+            proxy
+                .pending
+                .insert(id_key(&generated), Custom::ScrollTo { original: id });
             return forward(
                 &json!({
                     "jsonrpc": "2.0",
@@ -610,11 +611,7 @@ fn handle_client(
     forward(&value, child_in)
 }
 
-fn handle_child(
-    line: &str,
-    proxy: &mut Proxy,
-    out: &mut impl Write,
-) -> Result<()> {
+fn handle_child(line: &str, proxy: &mut Proxy, out: &mut impl Write) -> Result<()> {
     let Ok(mut value) = serde_json::from_str::<Value>(line) else {
         out.write_all(line.as_bytes())?;
         out.write_all(b"\n")?;
@@ -651,10 +648,21 @@ fn handle_child(
                 only_errors,
             } => {
                 let text = result_text(&value);
-                let body = filter_network(&text, pattern.as_deref(), request_id.as_deref(), only_errors);
-                (original, json!({ "content": [{ "type": "text", "text": body }], "isError": false }))
+                let body = filter_network(
+                    &text,
+                    pattern.as_deref(),
+                    request_id.as_deref(),
+                    only_errors,
+                );
+                (
+                    original,
+                    json!({ "content": [{ "type": "text", "text": body }], "isError": false }),
+                )
             }
-            Custom::ScrollTo { original } => (original, value.get("result").cloned().unwrap_or(Value::Null)),
+            Custom::ScrollTo { original } => (
+                original,
+                value.get("result").cloned().unwrap_or(Value::Null),
+            ),
         };
         write_line(
             out,
@@ -672,7 +680,11 @@ fn handle_child(
             proxy.latest_url = Some(text.trim().to_string());
         }
     }
-    if value.get("result").and_then(|r| r.get("instructions")).is_some() {
+    if value
+        .get("result")
+        .and_then(|r| r.get("instructions"))
+        .is_some()
+    {
         append_instructions(&mut value);
     }
     write_line(out, &value)
@@ -743,7 +755,11 @@ fn filter_network(
             }
         }
         if let Some(needle) = &needle {
-            let hay = row.get("url").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
+            let hay = row
+                .get("url")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_ascii_lowercase();
             if !hay.contains(needle) {
                 return false;
             }
@@ -774,7 +790,11 @@ fn native_screenshot(proxy: &Proxy, args: &Value) -> Result<Value> {
     let out = string_arg(args, &["out"])
         .map(|path| {
             let path = PathBuf::from(path);
-            if path.is_absolute() { path } else { root.join(path) }
+            if path.is_absolute() {
+                path
+            } else {
+                root.join(path)
+            }
         })
         .unwrap_or_else(|| {
             root.join(".omnix")
@@ -813,8 +833,8 @@ fn native_screenshot(proxy: &Proxy, args: &Value) -> Result<Value> {
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }
-    let bytes = std::fs::read(&out)
-        .with_context(|| format!("read screenshot {}", out.display()))?;
+    let bytes =
+        std::fs::read(&out).with_context(|| format!("read screenshot {}", out.display()))?;
     let path = std::fs::canonicalize(&out).unwrap_or(out);
     Ok(json!({
         "content": [
@@ -1023,7 +1043,10 @@ mod tests {
         assert!(allow.permits("https://api.example.com/v1"));
         assert!(!allow.permits("https://evil.com/"));
         assert!(!allow.permits("https://notexample.com/"));
-        assert_eq!(host_of("https://user:pass@App.Example.com:8443/x"), Some("app.example.com".into()));
+        assert_eq!(
+            host_of("https://user:pass@App.Example.com:8443/x"),
+            Some("app.example.com".into())
+        );
         assert_eq!(host_of("http://[::1]:3000/"), Some("::1".into()));
     }
 
@@ -1033,7 +1056,10 @@ mod tests {
         let only = filter_console(text, true, None);
         assert!(only.contains("boom"));
         assert!(!only.contains("start"));
-        assert_eq!(filter_console(text, true, Some("nope")), "(no console messages matched)");
+        assert_eq!(
+            filter_console(text, true, Some("nope")),
+            "(no console messages matched)"
+        );
 
         let rows = r#"[{"id":"req-0","url":"https://x/api?a=1","status":200},{"id":"req-1","url":"https://x/api?token=abc","status":500}]"#;
         let errors = filter_network(rows, None, None, true);
@@ -1050,7 +1076,10 @@ mod tests {
         augment_tools(&mut value);
         let tools = value.pointer("/result/tools").unwrap().as_array().unwrap();
         assert_eq!(
-            tools.iter().filter(|t| t["name"] == "screenshotNative").count(),
+            tools
+                .iter()
+                .filter(|t| t["name"] == "screenshotNative")
+                .count(),
             1
         );
         assert_eq!(tools.iter().filter(|t| t["name"] == "network").count(), 1);

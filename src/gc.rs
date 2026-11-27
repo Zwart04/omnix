@@ -141,7 +141,7 @@ pub fn run(_root: &Path, dry: bool) -> Result<Value> {
         let db = _root.join(".omnix").join("history.sqlite");
         if db.exists() {
             if let Ok(mut conn) = crate::history::open(&db) {
-                if let Ok(report) = crate::sources::scan(&mut conn, &_root) {
+                if let Ok(report) = crate::sources::scan(&mut conn, _root) {
                     if report.pruned > 0 {
                         actions.push(format!("pruned {} missing transcript(s)", report.pruned));
                     }
