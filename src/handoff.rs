@@ -655,7 +655,10 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
 
     let base = match &options.base {
         Some(base) => base.clone(),
-        None => git(&repo, &["rev-parse", "--short", "HEAD"])?,
+        None => match git(&repo, &["rev-parse", "--verify", "--quiet", "origin/main"]) {
+            Ok(_) => "origin/main".to_string(),
+            Err(_) => git(&repo, &["rev-parse", "--short", "HEAD"])?,
+        },
     };
     let branch = match options.branch.as_deref() {
         Some(raw) if !raw.trim().is_empty() => {
@@ -1524,6 +1527,34 @@ mod tests {
             let _ = child.kill();
         }
         assert!(exited, "queued worker must be stopped by close");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn new_worktree_starts_from_origin_main_not_local_head() {
+        let dir = temp_repo("base");
+        let pushed = git(&dir, &["rev-parse", "HEAD"]).unwrap();
+        git(&dir, &["update-ref", "refs/remotes/origin/main", &pushed]).unwrap();
+        fs::write(dir.join("README.md"), "ahead\n").unwrap();
+        git(
+            &dir,
+            &["-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qam", "ahead"],
+        )
+        .unwrap();
+
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "base1".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.base, "origin/main");
+        let wt = git(Path::new(&record.worktree), &["rev-parse", "HEAD"]).unwrap();
+        assert_eq!(wt, pushed, "worktree must start at origin/main, not local HEAD");
         fs::remove_dir_all(&dir).ok();
     }
 
