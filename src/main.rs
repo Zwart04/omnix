@@ -1454,12 +1454,7 @@ fn cmd_events(args: &[String]) -> Result<()> {
             .unwrap_or("")
             .to_string();
         let kind = row.get("kind").and_then(Value::as_str).unwrap_or("?");
-        let who = row
-            .get("handoff")
-            .and_then(Value::as_str)
-            .filter(|text| !text.is_empty())
-            .or_else(|| row.get("pane").and_then(Value::as_str))
-            .unwrap_or("");
+        let who = event_who(&row);
         let extra = row
             .get("status")
             .and_then(Value::as_str)
@@ -1468,6 +1463,14 @@ fn cmd_events(args: &[String]) -> Result<()> {
         println!("{at}  {kind:<22} {who:<18} {extra}");
     }
     Ok(())
+}
+
+fn event_who(row: &Value) -> String {
+    ["handoff", "name", "pane"]
+        .iter()
+        .find_map(|key| row.get(*key).and_then(Value::as_str).filter(|text| !text.is_empty()))
+        .unwrap_or("")
+        .to_string()
 }
 
 fn cmd_gc(args: &[String]) -> Result<()> {
@@ -2171,6 +2174,16 @@ mod tests {
         assert!(!wait_state_hit("exited", Some(1), &until));
         assert!(!wait_state_hit("exited", Some(70), &until));
         assert!(wait_state_hit("exited", Some(1), &["exited".to_string()]));
+    }
+
+    #[test]
+    fn events_name_the_handoff_from_its_name_field() {
+        let row = serde_json::json!({"kind": "handoff-created", "name": "gnd1"});
+        assert_eq!(event_who(&row), "gnd1");
+        let row = serde_json::json!({"kind": "handoff-delivered", "name": "lapor", "pane": "ho:lapor"});
+        assert_eq!(event_who(&row), "lapor");
+        let row = serde_json::json!({"kind": "agent-started", "pane": "ho:boss1"});
+        assert_eq!(event_who(&row), "ho:boss1");
     }
 
     #[test]
