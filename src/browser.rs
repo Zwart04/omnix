@@ -18,6 +18,12 @@ pub struct Session {
     pub pid: u32,
     pub created_at: u64,
     pub expires_at: u64,
+    /// Launch-time identity so a recycled PID is never mistaken for this
+    /// session. Optional so 0.9.1 session files still parse.
+    #[serde(default)]
+    pub pid_started: Option<u64>,
+    #[serde(default)]
+    pub pid_exe: Option<String>,
 }
 
 fn now() -> u64 {
@@ -46,7 +52,12 @@ fn read_session(path: &Path) -> Option<Session> {
 }
 
 fn session_active(session: &Session) -> bool {
-    session.expires_at > now() && crate::locks::pid_alive(session.pid)
+    session.expires_at > now()
+        && crate::procs::alive_and_ours(
+            session.pid,
+            session.pid_started,
+            session.pid_exe.as_deref(),
+        )
 }
 
 /// Register the caller before `browser mcp` starts. Reusing an id owned by the
@@ -66,12 +77,15 @@ pub fn session_start(root: &Path, id: &str, owner: &str, pid: u32) -> Result<Ses
         }
     }
     let stamp = now();
+    let identity = crate::procs::identity(pid);
     let session = Session {
         id: id.to_string(),
         owner: owner.chars().take(120).collect(),
         pid,
         created_at: stamp,
         expires_at: stamp.saturating_add(SESSION_TTL),
+        pid_started: identity.as_ref().map(|(started, _)| *started),
+        pid_exe: identity.map(|(_, exe)| exe),
     };
     let dir = sessions_dir(root);
     std::fs::create_dir_all(&dir)?;
@@ -136,34 +150,8 @@ pub fn env_session() -> Option<String> {
         .filter(|id| !id.is_empty())
 }
 
-fn stop_pid(pid: u32) -> bool {
-    if pid == 0 || pid == std::process::id() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-    #[cfg(windows)]
-    {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = pid;
-        false
-    }
+fn stop_pid(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    crate::procs::stop(pid, started, exe)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -324,17 +312,22 @@ pub fn serve(port: u16) -> Result<u16> {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-    let child = cmd.spawn().with_context(|| {
+    let mut child = cmd.spawn().with_context(|| {
         format!(
             "could not start '{}'. Install Lightpanda or set OMNIX_LIGHTPANDA",
             binary()
         )
     })?;
     let pid = child.id();
-    wait_until_listening(pid, port)?;
-    if let Err(err) = write_state(pid, port) {
+    let identity = crate::procs::identity(pid);
+    let (started, exe) = match &identity {
+        Some((started, exe)) => (Some(*started), Some(exe.as_str())),
+        None => (None, None),
+    };
+    wait_until_listening(pid, port, started, exe)?;
+    if let Err(err) = write_state(pid, port, started, exe) {
         // Do not leave a daemon the user cannot find or stop.
-        let _ = kill(pid);
+        let _ = child.kill();
         return Err(err);
     }
     println!(
@@ -346,7 +339,12 @@ pub fn serve(port: u16) -> Result<u16> {
 
 /// A PID alone is not proof the daemon is up: a busy port makes Lightpanda
 /// exit immediately. Poll the socket so `serve` never prints a false success.
-fn wait_until_listening(pid: u32, port: u16) -> Result<()> {
+fn wait_until_listening(
+    pid: u32,
+    port: u16,
+    started: Option<u64>,
+    exe: Option<&str>,
+) -> Result<()> {
     use std::net::{Ipv4Addr, SocketAddr, TcpStream};
     use std::time::{Duration, Instant};
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
@@ -367,7 +365,7 @@ fn wait_until_listening(pid: u32, port: u16) -> Result<()> {
             bail!("lightpanda exited while opening 127.0.0.1:{port}");
         }
         if start.elapsed() > Duration::from_secs(3) {
-            let _ = kill(pid);
+            let _ = kill(pid, started, exe);
             bail!("lightpanda did not listen on 127.0.0.1:{port} within 3s");
         }
         std::thread::sleep(Duration::from_millis(50));
@@ -378,14 +376,19 @@ fn state_path() -> PathBuf {
     crate::root().join(".omnix").join("browser.json")
 }
 
-fn write_state(pid: u32, port: u16) -> Result<()> {
+fn write_state(pid: u32, port: u16, started: Option<u64>, exe: Option<&str>) -> Result<()> {
     let path = state_path();
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     std::fs::write(
         path,
-        serde_json::to_vec_pretty(&json!({ "pid": pid, "port": port }))?,
+        serde_json::to_vec_pretty(&json!({
+            "pid": pid,
+            "port": port,
+            "pidStarted": started,
+            "pidExe": exe,
+        }))?,
     )?;
     Ok(())
 }
@@ -429,51 +432,35 @@ fn alive(pid: u32) -> bool {
     }
 }
 
-/// The shared Lightpanda daemon, if it is still alive.
+/// The shared Lightpanda daemon, if it is still the process we started.
 pub fn running() -> Option<(u32, u16)> {
     let bytes = std::fs::read(state_path()).ok()?;
     let state: Value = serde_json::from_slice(&bytes).ok()?;
     let pid = state.get("pid").and_then(Value::as_u64)? as u32;
     let port = state.get("port").and_then(Value::as_u64)? as u16;
-    alive(pid).then_some((pid, port))
+    let started = state.get("pidStarted").and_then(Value::as_u64);
+    let exe = state.get("pidExe").and_then(Value::as_str);
+    crate::procs::alive_and_ours(pid, started, exe).then_some((pid, port))
 }
 
-fn kill(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        let _ = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        for _ in 0..20 {
-            if !alive(pid) {
-                return true;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        let _ = Command::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        !alive(pid)
-    }
-    #[cfg(windows)]
-    {
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = pid;
-        false
-    }
+fn state_identity() -> (Option<u64>, Option<String>) {
+    let Some(Ok(state)) = std::fs::read(state_path())
+        .ok()
+        .map(|bytes| serde_json::from_slice::<Value>(&bytes))
+    else {
+        return (None, None);
+    };
+    (
+        state.get("pidStarted").and_then(Value::as_u64),
+        state
+            .get("pidExe")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    )
+}
+
+fn kill(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    crate::procs::stop(pid, started, exe)
 }
 
 /// `browser stop` closes the caller's session only. `--all` is the explicit
@@ -489,7 +476,8 @@ pub fn stop(session: Option<&str>, all: bool) -> Result<Value> {
             }
             return Ok(json!({ "stopped": false, "sessions": 0 }));
         };
-        if !kill(pid) {
+        let (started, exe) = state_identity();
+        if !kill(pid, started, exe.as_deref()) {
             bail!("could not stop lightpanda pid {pid}");
         }
         let _ = std::fs::remove_file(&path);
@@ -535,7 +523,7 @@ pub fn stop(session: Option<&str>, all: bool) -> Result<Value> {
 }
 
 fn close_session(root: &Path, session: &Session) -> Result<Value> {
-    let killed = stop_pid(session.pid);
+    let killed = stop_pid(session.pid, session.pid_started, session.pid_exe.as_deref());
     session_close(root, &session.id)?;
     Ok(json!({
         "stopped": true,
@@ -676,6 +664,38 @@ mod tests {
         session_close(&root, "two").unwrap();
         assert!(session_list(&root).is_empty());
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_recycled_pid_is_never_signalled_and_the_session_is_stale() {
+        let mut child = Command::new("sleep").args(["60"]).spawn().unwrap();
+        let pid = child.id();
+        let (started, exe) = crate::procs::identity(pid).unwrap();
+        assert!(!stop_pid(pid, Some(started + 1), Some(&exe)));
+        assert!(
+            crate::procs::alive(pid),
+            "a mismatched PID must never be signalled"
+        );
+        let stale = Session {
+            id: "old".into(),
+            owner: "agent:a".into(),
+            pid,
+            created_at: 0,
+            expires_at: now() + 600,
+            pid_started: Some(started + 1),
+            pid_exe: Some(exe.clone()),
+        };
+        assert!(!session_active(&stale));
+        let ours = Session {
+            pid_started: Some(started),
+            pid_exe: Some(exe),
+            ..stale.clone()
+        };
+        assert!(session_active(&ours));
+        assert!(stop_pid(pid, ours.pid_started, ours.pid_exe.as_deref()));
+        assert!(!crate::procs::alive(pid));
+        let _ = child.wait();
     }
 
     #[cfg(unix)]

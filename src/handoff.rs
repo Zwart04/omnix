@@ -1458,101 +1458,10 @@ fn force_removal_problem(repo: &Path, record: &Handoff, home: &Path) -> Option<S
 }
 
 /// Start ticks and command line from `/proc/<pid>`, the launch-time identity.
-/// `/proc/<pid>/cmdline` can read back empty for a moment right after `exec`,
-/// so it is retried before giving up.
-#[cfg(target_os = "linux")]
+/// The implementation lives in [`crate::procs`] so the browser, previews, and
+/// locks share one definition.
 pub fn process_identity(pid: u32) -> Option<(u64, String)> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let rest = &stat[stat.rfind(')')? + 1..];
-    let started: u64 = rest.split_whitespace().nth(19)?.parse().ok()?;
-    for _ in 0..20 {
-        let Ok(raw) = fs::read(format!("/proc/{pid}/cmdline")) else {
-            return None;
-        };
-        let cmdline = raw
-            .split(|byte| *byte == 0)
-            .filter(|part| !part.is_empty())
-            .map(|part| String::from_utf8_lossy(part).into_owned())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !cmdline.is_empty() {
-            return Some((started, cmdline));
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    None
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn process_identity(_pid: u32) -> Option<(u64, String)> {
-    None
-}
-
-#[cfg(target_os = "linux")]
-fn process_state(pid: u32) -> Option<char> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    let rest = &stat[stat.rfind(')')? + 1..];
-    rest.split_whitespace().next()?.chars().next()
-}
-
-#[cfg(target_os = "linux")]
-fn identity_matches(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
-    match (process_identity(pid), started, exe) {
-        (Some((actual_started, actual_exe)), Some(started), Some(exe)) => {
-            started == actual_started && exe == actual_exe
-        }
-        // No stored identity means no proof; never signal on a guess.
-        _ => false,
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn process_gone(pid: u32) -> bool {
-    if process_state(pid) == Some('Z') {
-        return true;
-    }
-    // SAFETY: signal 0 only probes liveness; it delivers nothing.
-    unsafe { libc::kill(pid as i32, 0) != 0 }
-}
-
-#[cfg(target_os = "linux")]
-fn wait_gone(pid: u32, ms: u64) -> bool {
-    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
-    loop {
-        if process_gone(pid) {
-            return true;
-        }
-        if std::time::Instant::now() >= deadline {
-            return false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-}
-
-/// TERM only the process whose identity matches the one captured at launch,
-/// wait for it to leave, then KILL and confirm.
-#[cfg(target_os = "linux")]
-fn stop_process(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
-    if pid == 0 || !identity_matches(pid, started, exe) {
-        return false;
-    }
-    // SAFETY: identity was just proven, so this signals the recorded process.
-    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
-    if wait_gone(pid, 3000) {
-        return true;
-    }
-    if !identity_matches(pid, started, exe) {
-        // The PID was recycled while we waited; never KILL the newcomer.
-        return true;
-    }
-    // SAFETY: identity was re-proven after the wait.
-    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
-    wait_gone(pid, 1000)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn stop_process(_pid: u32, _started: Option<u64>, _exe: Option<&str>) -> bool {
-    false
+    crate::procs::identity(pid)
 }
 
 #[cfg(test)]
@@ -1565,12 +1474,12 @@ fn close_record(record: Handoff) -> Result<Handoff> {
 fn close_record_with(mut record: Handoff, force: bool) -> Result<Handoff> {
     // Stop a running or still-queued worker before the worktree disappears.
     // Only a process whose identity still matches its launch record is signalled.
-    stop_process(
+    crate::procs::stop(
         record.worker_pid.unwrap_or(0),
         record.worker_started,
         record.worker_exe.as_deref(),
     );
-    stop_process(
+    crate::procs::stop(
         record.pid.unwrap_or(0),
         record.pid_started,
         record.pid_exe.as_deref(),

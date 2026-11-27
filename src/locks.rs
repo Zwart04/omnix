@@ -26,6 +26,11 @@ pub struct Lock {
     pub pid: u32,
     pub created_at: u64,
     pub expires_at: u64,
+    /// Launch-time identity so a recycled PID cannot keep a lease alive.
+    #[serde(default)]
+    pub pid_started: Option<u64>,
+    #[serde(default)]
+    pub pid_exe: Option<String>,
     #[serde(default)]
     pub meta: BTreeMap<String, String>,
 }
@@ -121,43 +126,11 @@ fn write_new(path: &Path, lock: &Lock) -> Result<bool> {
 }
 
 /// A lock is active only while both its lease and its owner live. An expired
-/// lock or one whose PID is gone is stale and may be replaced.
+/// lock or one whose PID is gone (or has been recycled by another process) is
+/// stale and may be replaced.
 pub fn active(lock: &Lock) -> bool {
-    lock.expires_at > now() && pid_alive(lock.pid)
-}
-
-pub fn pid_alive(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Path::new(&format!("/proc/{pid}")).exists()
-    }
-    #[cfg(all(unix, not(target_os = "linux")))]
-    {
-        return std::process::Command::new("kill")
-            .args(["-0", &pid.to_string()])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-    }
-    #[cfg(windows)]
-    {
-        let out = std::process::Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output();
-        return out
-            .map(|out| String::from_utf8_lossy(&out.stdout).contains(&pid.to_string()))
-            .unwrap_or(false);
-    }
-    #[cfg(not(any(unix, windows)))]
-    {
-        let _ = pid;
-        false
-    }
+    lock.expires_at > now()
+        && crate::procs::alive_and_ours(lock.pid, lock.pid_started, lock.pid_exe.as_deref())
 }
 
 fn ttl_value(ttl: u64) -> u64 {
@@ -284,6 +257,7 @@ pub fn acquire_as(
     let owner: String = owner.chars().take(120).collect();
     let path = path_for(root, &resource);
     let ttl = ttl_value(ttl_secs);
+    let identity = crate::procs::identity(pid);
 
     for _ in 0..3 {
         let stamp = now();
@@ -294,6 +268,8 @@ pub fn acquire_as(
             pid,
             created_at: stamp,
             expires_at: stamp.saturating_add(ttl),
+            pid_started: identity.as_ref().map(|(started, _)| *started),
+            pid_exe: identity.as_ref().map(|(_, exe)| exe.clone()),
             meta: meta.clone(),
         };
         if write_new(&path, &lock)? {
@@ -308,6 +284,8 @@ pub fn acquire_as(
             // Same owner: renew, keep the original creation time, merge meta.
             let mut renewed = existing.clone();
             renewed.pid = pid;
+            renewed.pid_started = identity.as_ref().map(|(started, _)| *started);
+            renewed.pid_exe = identity.as_ref().map(|(_, exe)| exe.clone());
             renewed.expires_at = stamp.saturating_add(ttl);
             renewed.meta.extend(meta.clone());
             write(&path, &renewed)?;
@@ -429,6 +407,33 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_lock_whose_owner_pid_was_recycled_is_stale() {
+        let mut child = std::process::Command::new("sleep")
+            .args(["60"])
+            .spawn()
+            .unwrap();
+        let (started, exe) = crate::procs::identity(child.id()).unwrap();
+        let mut lock = Lock {
+            id: "x".into(),
+            resource: "res".into(),
+            owner: "o".into(),
+            pid: child.id(),
+            created_at: now(),
+            expires_at: now() + 600,
+            pid_started: Some(started + 1),
+            pid_exe: Some(exe.clone()),
+            meta: BTreeMap::new(),
+        };
+        assert!(!active(&lock), "a recycled PID must not keep a lock alive");
+        lock.pid_started = Some(started);
+        lock.pid_exe = Some(exe);
+        assert!(active(&lock));
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]

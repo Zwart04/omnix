@@ -39,6 +39,11 @@ struct PreviewState {
     /// Lease id for `port:<n>`; old state files do not have one.
     #[serde(default)]
     lock: Option<String>,
+    /// Launch-time identity so a recycled PID is never signalled.
+    #[serde(default)]
+    pid_started: Option<u64>,
+    #[serde(default)]
+    pid_exe: Option<String>,
 }
 
 fn now() -> u64 {
@@ -194,29 +199,17 @@ pub fn load_launch(root: &Path) -> Result<Vec<LaunchConfig>> {
     Ok(out)
 }
 
-fn alive(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        Command::new("kill")
-            .arg("-0")
-            .arg(pid.to_string())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output()
-            .map(|out| String::from_utf8_lossy(&out.stdout).contains(&pid.to_string()))
-            .unwrap_or(false)
+fn alive_state(state: &PreviewState) -> bool {
+    crate::procs::alive_and_ours(state.pid, state.pid_started, state.pid_exe.as_deref())
+}
+
+fn stop_state(state: &PreviewState) {
+    crate::procs::stop_group(state.pid, state.pid_started, state.pid_exe.as_deref());
+}
+
+fn stop_spawned(pid: u32, identity: &Option<(u64, String)>) {
+    if let Some((started, exe)) = identity {
+        crate::procs::stop_group(pid, Some(*started), Some(exe));
     }
 }
 
@@ -278,40 +271,6 @@ fn with_port(args: &[String], from: u16, to: u16) -> Vec<String> {
         index += 1;
     }
     out
-}
-
-fn kill_tree(pid: u32) {
-    if pid == 0 {
-        return;
-    }
-    #[cfg(unix)]
-    {
-        // The child was started with its own process group, so the negative
-        // PID reaches npm/node/vite children too.
-        let group = format!("-{pid}");
-        let _ = Command::new("kill")
-            .args(["-TERM", "--", &group])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-        std::thread::sleep(Duration::from_millis(600));
-        let _ = Command::new("kill")
-            .args(["-KILL", "--", &group])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
 }
 
 fn tail(path: &Path, lines: usize) -> String {
@@ -386,7 +345,7 @@ fn locate(root: &Path, name: &str) -> Option<(PathBuf, PreviewState)> {
 pub fn start(root: &Path, name: &str, keep: bool) -> Result<Value> {
     let config = find_config(root, name)?;
     if let Some((path, state)) = locate(root, name) {
-        if alive(state.pid) && port_open(state.port) {
+        if alive_state(&state) && port_open(state.port) {
             return Ok(json!({
                 "alreadyRunning": true,
                 "name": state.name,
@@ -457,6 +416,8 @@ pub fn start(root: &Path, name: &str, keep: bool) -> Result<Value> {
             return Err(err);
         }
     };
+    // Capture the launch identity now, while the PID is still certainly ours.
+    let identity = crate::procs::identity(child.id());
     // Bind the lease to the server process so an abandoned preview expires
     // without a background monitor.
     match crate::locks::acquire_as(
@@ -469,7 +430,7 @@ pub fn start(root: &Path, name: &str, keep: bool) -> Result<Value> {
     ) {
         Ok(renewed) => lock = renewed,
         Err(err) => {
-            kill_tree(child.id());
+            stop_spawned(child.id(), &identity);
             let _ = crate::locks::release(root, &lock.id, None, true);
             return Err(err);
         }
@@ -484,14 +445,16 @@ pub fn start(root: &Path, name: &str, keep: bool) -> Result<Value> {
         started_at: now(),
         keep,
         lock: Some(lock.id.clone()),
+        pid_started: identity.as_ref().map(|(started, _)| *started),
+        pid_exe: identity.as_ref().map(|(_, exe)| exe.clone()),
     };
     if let Err(err) = write_state(root, &state) {
-        kill_tree(state.pid);
+        stop_state(&state);
         let _ = crate::locks::release(root, &lock.id, None, true);
         return Err(err);
     }
     if let Err(err) = wait_ready(&mut child, port, &log_path) {
-        kill_tree(state.pid);
+        stop_state(&state);
         let _ = fs::remove_file(state_path(root, &state.name));
         let _ = crate::locks::release(root, &lock.id, None, true);
         return Err(err);
@@ -535,7 +498,7 @@ pub fn stop(root: &Path, name: &str) -> Result<Value> {
             preview_dir(root).display()
         );
     };
-    kill_tree(state.pid);
+    stop_state(&state);
     let _ = fs::remove_file(&path);
     if let Some(id) = &state.lock {
         let _ = crate::locks::release(root, id, None, true);
@@ -548,7 +511,7 @@ pub fn stop(root: &Path, name: &str) -> Result<Value> {
         "name": state.name,
         "pid": state.pid,
         "port": state.port,
-        "stopped": !alive(state.pid),
+        "stopped": !alive_state(&state),
     }))
 }
 
@@ -598,7 +561,7 @@ pub fn list(root: &Path) -> Vec<Value> {
                 "log": state.log,
                 "startedAt": state.started_at,
                 "keep": state.keep,
-                "alive": alive(state.pid),
+                "alive": alive_state(&state),
                 "ready": port_open(state.port),
             })
         })
@@ -613,7 +576,7 @@ pub fn stop_all(root: &Path, include_keep: bool) -> Vec<String> {
         if state.keep && !include_keep {
             continue;
         }
-        kill_tree(state.pid);
+        stop_state(&state);
         let _ = fs::remove_file(path);
         if let Some(id) = &state.lock {
             let _ = crate::locks::release(root, id, None, true);
@@ -628,7 +591,7 @@ pub fn stop_all(root: &Path, include_keep: bool) -> Vec<String> {
 pub fn prune(root: &Path, dry: bool) -> Vec<String> {
     let mut actions = Vec::new();
     for (path, state) in read_all_states(root) {
-        if alive(state.pid) {
+        if alive_state(&state) {
             continue;
         }
         actions.push(format!("prune preview {}", state.name));
@@ -729,6 +692,8 @@ mod tests {
             started_at: 0,
             keep: false,
             lock: None,
+            pid_started: None,
+            pid_exe: None,
         };
         write_state(&root, &state).unwrap();
         let text = logs(&root, "Web", true).unwrap();
@@ -782,6 +747,46 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stop_never_signals_a_recycled_preview_pid() {
+        use std::os::unix::process::CommandExt;
+        let mut child = Command::new("sleep")
+            .args(["60"])
+            .process_group(0)
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let (started, exe) = crate::procs::identity(pid).unwrap();
+        let state = PreviewState {
+            name: "Web".into(),
+            pid,
+            port: 0,
+            url: String::new(),
+            log: String::new(),
+            started_at: 0,
+            keep: false,
+            lock: None,
+            pid_started: Some(started + 1),
+            pid_exe: Some(exe.clone()),
+        };
+        assert!(!alive_state(&state));
+        stop_state(&state);
+        assert!(
+            crate::procs::alive(pid),
+            "a mismatched PID must never be signalled"
+        );
+        let ours = PreviewState {
+            pid_started: Some(started),
+            pid_exe: Some(exe),
+            ..state.clone()
+        };
+        assert!(alive_state(&ours));
+        stop_state(&ours);
+        assert!(!crate::procs::alive(pid));
+        let _ = child.wait();
+    }
+
     #[test]
     fn stop_releases_the_preview_port_lease() {
         let home = std::env::temp_dir().join(format!("omnix-preview-home-{}", std::process::id()));
@@ -807,6 +812,8 @@ mod tests {
             started_at: 0,
             keep: false,
             lock: Some(lock.id),
+            pid_started: None,
+            pid_exe: None,
         };
         write_state(&root, &state).unwrap();
         stop(&root, "Web").unwrap();

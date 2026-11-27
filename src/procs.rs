@@ -153,6 +153,180 @@ pub fn snapshot() -> Table {
     Table::new(imp::snapshot())
 }
 
+/// Launch-time identity from `/proc/<pid>`: start ticks plus the full command
+/// line. `/proc/<pid>/cmdline` can read back empty for a moment right after
+/// `exec`, so it is retried before giving up. `None` when the process is gone
+/// or the platform has no `/proc`.
+#[cfg(target_os = "linux")]
+pub fn identity(pid: u32) -> Option<(u64, String)> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let started: u64 = rest.split_whitespace().nth(19)?.parse().ok()?;
+    for _ in 0..20 {
+        let Ok(raw) = std::fs::read(format!("/proc/{pid}/cmdline")) else {
+            return None;
+        };
+        let cmdline = raw
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !cmdline.is_empty() {
+            return Some((started, cmdline));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    None
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn identity(_pid: u32) -> Option<(u64, String)> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn state_of(pid: u32) -> Option<char> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().next()?.chars().next()
+}
+
+/// Liveness, with a zombie on Linux already counted as gone.
+pub fn alive(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        !matches!(state_of(pid), None | Some('Z'))
+    }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .map(|out| String::from_utf8_lossy(&out.stdout).contains(&pid.to_string()))
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
+}
+
+/// True only while `pid` still carries the identity captured at launch. On a
+/// platform without `/proc` a record with no identity keeps the old PID
+/// semantics; a record that has one can never be proven and is refused.
+#[cfg(target_os = "linux")]
+pub fn identity_matches(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    match (identity(pid), started, exe) {
+        (Some((actual_started, actual_exe)), Some(started), Some(exe)) => {
+            actual_started == started && actual_exe == exe
+        }
+        _ => false,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn identity_matches(_pid: u32, started: Option<u64>, _exe: Option<&str>) -> bool {
+    started.is_none()
+}
+
+/// Alive *and* still the recorded process.
+pub fn alive_and_ours(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    identity_matches(pid, started, exe) && alive(pid)
+}
+
+#[cfg(unix)]
+fn wait_gone(pid: u32, ms: u64) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    loop {
+        if !alive(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// TERM, wait, then KILL — but only when the process still matches its launch
+/// identity. Returns true when it is gone.
+#[cfg(unix)]
+pub fn stop(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    if pid == 0 || pid == std::process::id() || !identity_matches(pid, started, exe) {
+        return false;
+    }
+    // SAFETY: identity was just proven, so this signals the recorded process.
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    if wait_gone(pid, 3000) {
+        return true;
+    }
+    if !identity_matches(pid, started, exe) {
+        // The PID was recycled while we waited; never KILL the newcomer.
+        return true;
+    }
+    // SAFETY: identity was re-proven after the wait.
+    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+    wait_gone(pid, 1000)
+}
+
+#[cfg(windows)]
+pub fn stop(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    if pid == 0 || !identity_matches(pid, started, exe) {
+        return false;
+    }
+    std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn stop(_pid: u32, _started: Option<u64>, _exe: Option<&str>) -> bool {
+    false
+}
+
+/// Same as [`stop`] for a process group led by `pid`. Used by previews, which
+/// start the server in its own group so npm/node children leave with it.
+#[cfg(unix)]
+pub fn stop_group(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    if pid == 0 || !identity_matches(pid, started, exe) {
+        return false;
+    }
+    let group = -(pid as i32);
+    // SAFETY: the group leader's identity was just proven.
+    unsafe { libc::kill(group, libc::SIGTERM) };
+    if wait_gone(pid, 3000) {
+        return true;
+    }
+    if !identity_matches(pid, started, exe) {
+        return true;
+    }
+    // SAFETY: the leader still matches, so the group is still ours.
+    unsafe { libc::kill(group, libc::SIGKILL) };
+    wait_gone(pid, 1000)
+}
+
+#[cfg(not(unix))]
+pub fn stop_group(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    stop(pid, started, exe)
+}
+
 #[cfg(target_os = "linux")]
 mod imp {
     use super::Proc;
@@ -328,6 +502,53 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["node", "codex", "sh", "worker"]);
         assert!(table.descendants(99).is_empty());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stop_refuses_a_pid_that_no_longer_matches_its_identity() {
+        let mut child = std::process::Command::new("sleep")
+            .args(["60"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let (started, _exe) = identity(pid).unwrap();
+        // A recycled PID: same number, different start time and command line.
+        assert!(!stop(pid, Some(started + 1), Some("not-the-worker")));
+        assert!(alive(pid), "a mismatched PID must never be signalled");
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stop_ends_the_process_whose_identity_matches() {
+        let mut child = std::process::Command::new("sleep")
+            .args(["60"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let (started, exe) = identity(pid).unwrap();
+        assert!(stop(pid, Some(started), Some(&exe)));
+        assert!(!alive(pid));
+        let _ = child.wait();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_recycled_pid_is_not_alive_and_ours() {
+        let mut child = std::process::Command::new("sleep")
+            .args(["60"])
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let (started, exe) = identity(pid).unwrap();
+        assert!(alive_and_ours(pid, Some(started), Some(&exe)));
+        assert!(!alive_and_ours(pid, Some(started + 1), Some(&exe)));
+        assert!(!alive_and_ours(pid, Some(started), Some("other")));
+        assert!(!alive_and_ours(pid, None, None));
+        let _ = child.kill();
+        let _ = child.wait();
     }
 
     #[test]
