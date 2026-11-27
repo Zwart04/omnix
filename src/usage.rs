@@ -847,7 +847,9 @@ fn exhaustion_events(home: &Path) -> Vec<(String, Value)> {
         };
         let at = row.get("at").and_then(Value::as_i64).unwrap_or(now);
         let reset = row.get("resetAt").and_then(Value::as_i64);
-        let stale = reset.map(|at| at <= now).unwrap_or_else(|| at + 6 * 3600 <= now);
+        // Output-derived exhaustion is a short-lived hint: without a reset time
+        // it only holds for ten minutes.
+        let stale = reset.map(|at| at <= now).unwrap_or_else(|| at + 600 <= now);
         if stale {
             continue;
         }
@@ -936,13 +938,14 @@ fn decorate_agents(agents: &mut Vec<Value>, home: &Path) {
                     }
                 }
             }
-            if group.is_none()
-                || map
-                    .get("windows")
-                    .and_then(Value::as_array)
-                    .map(|w| w.is_empty())
-                    .unwrap_or(true)
-            {
+            let windows_empty = map
+                .get("windows")
+                .and_then(Value::as_array)
+                .map(|w| w.is_empty())
+                .unwrap_or(true);
+            // Official window data wins: only fall back to the output text when
+            // no window is known for this agent.
+            if group.is_none() && windows_empty {
                 map.insert("state".into(), json!("exhausted"));
                 map.insert("exhausted".into(), json!(true));
             }
@@ -1504,5 +1507,58 @@ mod tests {
         let claude = check_quota_in_snapshot(&snap, "antigravity", Some("claude-sonnet-5-5-high"));
         assert!(claude.exhausted);
         assert!(claude.known);
+    }
+
+    #[test]
+    fn official_windows_beat_output_quota_hint() {
+        let root = std::env::temp_dir().join(format!("omnix-quota-win-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".claude")).unwrap();
+        std::fs::create_dir_all(root.join(".omnix")).unwrap();
+        std::fs::write(
+            root.join(".claude/usage.json"),
+            r#"{"five_hour":{"usedPercent":8,"resetsInSeconds":3600,"windowMinutes":300},"seven_day":{"usedPercent":6,"resetsInSeconds":3600,"windowMinutes":10080}}"#,
+        )
+        .unwrap();
+        let hint = serde_json::json!({
+            "kind": "agent-quota-exhausted",
+            "agent": "claude",
+            "at": unix_now() - 30,
+            "model": null,
+            "resetAt": null,
+            "resetLocal": "16:40 WIB",
+            "confidence": "high"
+        });
+        std::fs::write(root.join(".omnix/events.jsonl"), format!("{hint}\n")).unwrap();
+        let snap = snapshot_for(&root, &root);
+        let check = check_quota_in_snapshot(&snap, "claude", None);
+        assert!(!check.exhausted, "official windows win over output text");
+        assert!(check.known);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn output_quota_hint_expires_and_needs_missing_windows() {
+        let root = std::env::temp_dir().join(format!("omnix-quota-hint-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".omnix")).unwrap();
+        let write = |at: i64| {
+            let hint = serde_json::json!({
+                "kind": "agent-quota-exhausted",
+                "agent": "claude",
+                "at": at,
+                "model": null,
+                "resetAt": null,
+                "confidence": "high"
+            });
+            std::fs::write(root.join(".omnix/events.jsonl"), format!("{hint}\n")).unwrap();
+        };
+        write(unix_now() - 30);
+        let fresh = snapshot_for(&root, &root);
+        assert!(check_quota_in_snapshot(&fresh, "claude", None).exhausted);
+        write(unix_now() - 1200);
+        let stale = snapshot_for(&root, &root);
+        assert!(!check_quota_in_snapshot(&stale, "claude", None).exhausted);
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
