@@ -800,6 +800,9 @@ pub fn headless_args(agent: &str, options: &LaunchOptions, brief: &str) -> Resul
                 argv.push("--permission-mode".to_string());
                 argv.push("acceptEdits".to_string());
             }
+            // The worker reports back with `omnix handoff report`; allow only that Bash call.
+            argv.push("--allowedTools".to_string());
+            argv.push("Bash(omnix handoff report *)".to_string());
             argv
         }
         "antigravity" => vec![
@@ -1125,7 +1128,14 @@ mod tests {
         );
         assert_eq!(
             headless_args("claude", &opts, "do it").unwrap(),
-            vec!["-p", "do it", "--permission-mode", "acceptEdits"]
+            vec![
+                "-p",
+                "do it",
+                "--permission-mode",
+                "acceptEdits",
+                "--allowedTools",
+                "Bash(omnix handoff report *)",
+            ]
         );
         assert!(headless_args("omp", &opts, "do it").is_err());
         assert!(headless_args("codex", &opts, " ").is_err());
