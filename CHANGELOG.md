@@ -5,6 +5,17 @@ Notable changes to Omnix. Release notes for every tag are also on the
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-11-27
+
+### Fixed
+
+- **Every process stop now proves the launch identity.** The browser daemon,
+  agent browser sessions, previews (including their process group), and lock
+  owners all record `/proc/<pid>` start time and command line when they start.
+  A stop sends `TERM` only when the identity still matches, waits up to three
+  seconds, then `KILL`; a recycled or foreign PID is never signalled. A lock
+  whose owner PID was recycled is stale instead of permanently held.
+
 ## [0.9.1] - 2026-11-27
 
 ### Fixed
