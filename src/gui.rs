@@ -2561,8 +2561,13 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
         if let Some(mut session) = app.ptys.remove(&key) {
             if let Ok(Some(status)) = session.child.try_wait() {
                 code = status.exit_code() as i64;
+            } else {
+                // Reap after killing so no `[agy] <defunct>` is left behind.
+                let _ = session.child.kill();
+                if let Ok(status) = session.child.wait() {
+                    code = status.exit_code() as i64;
+                }
             }
-            let _ = session.child.kill();
         }
         app.pane_procs.remove(&key);
         app.panes.remove(&key);

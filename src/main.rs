@@ -2122,11 +2122,21 @@ fn free_ram_mb() -> Option<u64> {
     Some(total.saturating_sub(used) / (1024 * 1024))
 }
 
-fn wait_for_queue_conditions(record: &mut handoff::Handoff) -> Result<()> {
+fn wait_for_queue_conditions(record: &mut handoff::Handoff, record_path: &Path) -> Result<()> {
     if record.after.is_none() && record.start_at.is_none() && record.min_free_mb.is_none() {
         return Ok(());
     }
     loop {
+        // `handoff close` writes closed:true; stop instead of starting an agent
+        // in a worktree that no longer exists.
+        if let Ok(bytes) = std::fs::read(record_path) {
+            if let Ok(fresh) = serde_json::from_slice::<handoff::Handoff>(&bytes) {
+                *record = fresh;
+                if record.closed {
+                    bail!("handoff closed while queued");
+                }
+            }
+        }
         let mut waiting = Vec::new();
         if let Some(after_name) = &record.after {
             let done = handoff::list_all()
@@ -2175,7 +2185,10 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
     let bytes = std::fs::read(record_path)
         .with_context(|| format!("read handoff record {}", record_path.display()))?;
     let mut record: handoff::Handoff = serde_json::from_slice(&bytes)?;
-    wait_for_queue_conditions(&mut record)?;
+    record.worker_pid = Some(std::process::id());
+    record.updated_at = control::epoch();
+    handoff::save(&record)?;
+    wait_for_queue_conditions(&mut record, record_path)?;
 
     let log_path = PathBuf::from(&record.repo)
         .join(".omnix")
@@ -2560,6 +2573,7 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
                 record.report = rep.report;
             }
         }
+        record.worker_pid = None;
         handoff::mark_headless(&mut record, &log_path, ok)?;
         control::event(
             "agent-exited",

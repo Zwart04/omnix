@@ -79,6 +79,9 @@ pub struct Handoff {
     /// Headless runner PID, log file, session ID, and exit status.
     #[serde(default)]
     pub pid: Option<u32>,
+    /// PID of the detached `_headless-worker`, so `close` can stop a queued run.
+    #[serde(default)]
+    pub worker_pid: Option<u32>,
     #[serde(default)]
     pub log: Option<String>,
     #[serde(default)]
@@ -792,6 +795,7 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         push_wip: options.push_wip,
         checkpoint: options.checkpoint,
         pid: None,
+        worker_pid: None,
         log: None,
         session_id: None,
         exit_code: None,
@@ -1265,7 +1269,29 @@ pub fn close_in(repo: &Path, name: &str) -> Result<Handoff> {
     close_record(record)
 }
 
+fn terminate(pid: u32) {
+    if pid == 0 {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .status();
+    }
+}
+
 fn close_record(mut record: Handoff) -> Result<Handoff> {
+    // Stop a running or still-queued worker before the worktree disappears.
+    for pid in [record.worker_pid, record.pid].into_iter().flatten() {
+        terminate(pid);
+    }
     let worktree = PathBuf::from(&record.worktree);
     if worktree.exists() {
         if dirty_except(&worktree, &record.links)? {
@@ -1388,6 +1414,26 @@ mod tests {
         assert!(find_in(&dir, "probe").is_none(), "record must be rolled back");
         let branch = git(&dir, &["branch", "--list", "omnix/probe"]).unwrap();
         assert!(branch.trim().is_empty(), "branch must be rolled back: {branch}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn close_stops_the_recorded_worker() {
+        let dir = temp_repo("close-worker");
+        let (mut record, _) = create(&dir, "stopme", "codex", "x", None, false).unwrap();
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 60"])
+            .spawn()
+            .unwrap();
+        record.worker_pid = Some(child.id());
+        save(&record).unwrap();
+        close_in(&dir, "stopme").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let exited = child.try_wait().unwrap().is_some();
+        if !exited {
+            let _ = child.kill();
+        }
+        assert!(exited, "queued worker must be stopped by close");
         fs::remove_dir_all(&dir).ok();
     }
 
