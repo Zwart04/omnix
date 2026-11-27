@@ -5,6 +5,33 @@ Notable changes to Omnix. Release notes for every tag are also on the
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-27
+
+### Fixed
+
+- **Claude folder trust is safe like Orca's.** The config file follows the
+  pane's `CLAUDE_CONFIG_DIR`, with the legacy `~/.claude/.config.json` and the
+  `-custom-oauth` suffix. Omnix never creates a missing config and never writes
+  an unreadable one; it rewrites through a same-mode `<file>.omnix-trust-<id>.tmp`
+  file and a rename, so the owner-only `0600` mode, an existing symlink, and
+  every unrelated key survive. Writers serialize on Claude Code's own
+  `<file>.lock` directory, re-read under the lock, and log the outcome
+  (granted / unchanged / missing / unreadable / locked).
+- **`handoff close --force` refuses dangerous paths.** The repository itself,
+  `$HOME`, `/`, the repository's parent, paths outside `<repo>/.omnix`, and
+  symlinks are rejected; a leftover folder is removed only after its `.git`
+  file proves an Omnix worktree of this repository, and a folder that holds
+  another registered worktree is never deleted.
+- **A process is signalled only when its identity still matches.** The launch
+  records `/proc/<pid>` start time and command line; `close` sends `TERM`,
+  waits up to three seconds, then `KILL` and confirms. A recycled or foreign
+  PID is left alone.
+- **The tests leave the real home data alone.** The suite is run through a
+  guard that fingerprints the content and mode of `~/.claude.json` and the
+  whole `~/.omnix` tree before and after, and fails if either changed.
+
+## [0.9.0] - 2026-11-27
+
 ### Fixed
 
 - **Claude handoffs work again** — the stored default `mode: "edit"` no longer
