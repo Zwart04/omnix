@@ -814,7 +814,7 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
             } else {
                 None
             };
-            let options = handoff::CreateOptions {
+            let mut options = handoff::CreateOptions {
                 name: name.clone(),
                 agent: value(args, "--agent").unwrap_or_else(|| "codex".into()),
                 prompt: value(args, "--prompt").unwrap_or_default(),
@@ -837,79 +837,85 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                 start_at,
                 min_free_mb,
             };
-            let (mut record, record_path) = handoff::create_with(&root(), options)?;
-            handoff::remember(&record_path)?;
-            if has(args, "--run") || has(args, "--headless") {
-                if !has(args, "--force") {
-                    let check = usage::check_quota(
-                        &root(),
-                        &control::home(),
-                        &record.agent,
-                        record.model.as_deref(),
-                        false,
-                    );
-                    if check.exhausted {
-                        if let handoff::QuotaPolicy::Fallback(targets) = &parsed_policy {
-                            if let Some(next_target) =
-                                pick_available_fallback(&root(), &control::home(), &record.name, &record.agent, targets)
-                            {
-                                println!(
-                                    "fallback: {} -> {}{}",
-                                    record.agent,
-                                    next_target.agent,
-                                    next_target
-                                        .model
-                                        .as_deref()
-                                        .map(|m| format!(":{m}"))
-                                        .unwrap_or_default()
-                                );
-                                record.agent = next_target.agent;
-                                record.model = next_target.model;
-                                record.effort = None;
-                                record.mode = None;
-                                handoff::save(&record)?;
-                            } else {
-                                bail!(
-                                    "{} and all fallback targets are exhausted (pass --force to override)",
-                                    check.reason.unwrap_or_else(|| "quota exhausted".into())
-                                );
-                            }
+            // Every argument and quota gate runs before the worktree exists, so a
+            // rejected handoff leaves nothing behind for the next attempt.
+            let mut queue_reason: Option<String> = None;
+            if (has(args, "--run") || has(args, "--headless")) && !has(args, "--force") {
+                let check = usage::check_quota(
+                    &root(),
+                    &control::home(),
+                    &options.agent,
+                    options.model.as_deref(),
+                    false,
+                );
+                if check.exhausted {
+                    if let handoff::QuotaPolicy::Fallback(targets) = &parsed_policy {
+                        if let Some(next_target) = pick_available_fallback(
+                            &root(),
+                            &control::home(),
+                            &name,
+                            &options.agent,
+                            targets,
+                        ) {
+                            println!(
+                                "fallback: {} -> {}{}",
+                                options.agent,
+                                next_target.agent,
+                                next_target
+                                    .model
+                                    .as_deref()
+                                    .map(|m| format!(":{m}"))
+                                    .unwrap_or_default()
+                            );
+                            options.agent = next_target.agent;
+                            options.model = next_target.model;
+                            options.effort = None;
+                            options.mode = None;
                         } else {
                             bail!(
-                                "{} (pass --on-quota fallback=... or --force)",
+                                "{} and all fallback targets are exhausted (pass --force to override)",
                                 check.reason.unwrap_or_else(|| "quota exhausted".into())
                             );
                         }
+                    } else {
+                        bail!(
+                            "{} (pass --on-quota fallback=... or --force)",
+                            check.reason.unwrap_or_else(|| "quota exhausted".into())
+                        );
                     }
+                }
 
-                    let max_parallel = value(args, "--max-parallel")
-                        .map(|text| text.parse::<usize>())
-                        .transpose()
-                        .context("--max-parallel must be a number")?
-                        .unwrap_or(2);
-                    if let Some(reason) =
-                        run_gate(&record.agent, record.model.as_deref(), max_parallel, false)?
-                    {
-                        let chosen = crate::fallback::get(&root(), &record.agent)
-                            .filter(|fb| fb.auto && !fb.agent.is_empty())
-                            .filter(|fb| crate::agent::resolve(&fb.agent).is_some());
-                        match chosen {
-                            Some(fb) => {
-                                println!("fallback: {} -> {}", record.agent, fb.agent);
-                                record.agent = fb.agent;
-                                record.model = None;
-                                record.effort = None;
-                                record.mode = None;
-                                handoff::save(&record)?;
-                            }
-                            None => {
-                                handoff::mark_queued(&mut record, &reason)?;
-                                println!("outcome: queued");
-                                println!("reason:  {reason}");
-                                return Ok(());
-                            }
+                let max_parallel = value(args, "--max-parallel")
+                    .map(|text| text.parse::<usize>())
+                    .transpose()
+                    .context("--max-parallel must be a number")?
+                    .unwrap_or(2);
+                if let Some(reason) =
+                    run_gate(&options.agent, options.model.as_deref(), max_parallel, false)?
+                {
+                    let chosen = crate::fallback::get(&root(), &options.agent)
+                        .filter(|fb| fb.auto && !fb.agent.is_empty())
+                        .filter(|fb| crate::agent::resolve(&fb.agent).is_some());
+                    match chosen {
+                        Some(fb) => {
+                            println!("fallback: {} -> {}", options.agent, fb.agent);
+                            options.agent = fb.agent;
+                            options.model = None;
+                            options.effort = None;
+                            options.mode = None;
                         }
+                        None => queue_reason = Some(reason),
                     }
+                }
+            }
+            let (mut record, record_path) = handoff::create_with(&root(), options)?;
+            handoff::remember(&record_path)?;
+            if has(args, "--run") || has(args, "--headless") {
+                if let Some(reason) = queue_reason {
+                    handoff::mark_queued(&mut record, &reason)?;
+                    println!("outcome: queued");
+                    println!("reason:  {reason}");
+                    return Ok(());
                 }
                 let gui_up = control::read_control(&control::runtime_dir()).is_some();
                 let force_headless = has(args, "--headless")

@@ -2194,7 +2194,9 @@ fn control_request(
             let options = crate::agent::LaunchOptions {
                 model: record.get("model").and_then(Value::as_str).map(str::to_string),
                 effort: record.get("effort").and_then(Value::as_str).map(str::to_string),
-                mode: record.get("mode").and_then(Value::as_str).map(str::to_string),
+                mode: matches!(crate::agent::base_agent(agent), "antigravity" | "claude")
+                    .then(|| record.get("mode").and_then(Value::as_str).map(str::to_string))
+                    .flatten(),
                 prompt: None,
             };
             let extra = crate::agent::extra_args(agent, &options)?;
@@ -2342,7 +2344,7 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                     let is_agent = app
                         .panes
                         .get(&key)
-                        .map(|m| !m.agent.trim().is_empty())
+                        .map(|m| !m.agent.trim().is_empty() && !m.orchestrator)
                         .unwrap_or(false);
                     if is_agent {
                         let tail = app.pane_tails.entry(key.clone()).or_default();

@@ -430,6 +430,41 @@ When the work is done or you are blocked, write a short report and run:\n\n\
     body
 }
 
+/// Undoes the worktree, branch, brief, and record if `create_with` fails after
+/// touching git, so a failed handoff never blocks the next attempt with
+/// "already open" or "worktree already exists".
+struct CreateRollback {
+    repo: PathBuf,
+    worktree: PathBuf,
+    branch: String,
+    brief: Option<PathBuf>,
+    record: Option<PathBuf>,
+    armed: bool,
+}
+
+impl CreateRollback {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for CreateRollback {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let path = self.worktree.to_string_lossy().to_string();
+        let _ = git(&self.repo, &["worktree", "remove", "--force", &path]);
+        let _ = git(&self.repo, &["branch", "-D", &self.branch]);
+        if let Some(brief) = &self.brief {
+            let _ = fs::remove_file(brief);
+        }
+        if let Some(record) = &self.record {
+            let _ = fs::remove_file(record);
+        }
+    }
+}
+
 /// Mirrors Orca: create worktree, write the brief durably, then deliver. The
 /// caller decides delivery (the GUI control channel) so a dry run stays dry.
 pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, PathBuf)> {
@@ -445,12 +480,11 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
             crate::agent::AGENTS.join(", ")
         );
     }
-    let mode = options
-        .mode
-        .clone()
-        .unwrap_or_else(|| "edit".to_string());
-    if !matches!(mode.as_str(), "plan" | "edit" | "full") {
-        bail!("--mode must be plan, edit, or full");
+    let mode = options.mode.clone();
+    if let Some(mode) = &mode {
+        if !matches!(mode.as_str(), "plan" | "edit" | "full") {
+            bail!("--mode must be plan, edit, or full");
+        }
     }
     if let Some(fb) = &options.fallback {
         if fb.agent.is_empty() && fb.command.is_none() {
@@ -529,6 +563,22 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         }
         None => repo.join(".omnix").join("worktrees").join(&name),
     };
+    // Resolve the role and validate link names before touching git, so a bad
+    // argument fails without leaving a worktree behind.
+    let role = match &options.role {
+        Some(role) => Some(resolve_role(role)?),
+        None => None,
+    };
+    for (link_name, _) in &options.links {
+        if link_name.is_empty()
+            || link_name.len() > 128
+            || link_name.starts_with('/')
+            || link_name.contains("..")
+            || link_name.chars().any(char::is_control)
+        {
+            bail!("invalid --link name '{link_name}'");
+        }
+    }
     if worktree.exists() {
         bail!("worktree already exists: {}", worktree.display());
     }
@@ -577,16 +627,17 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
             .with_context(|| format!("create worktree failed first as: {first}"))?;
     }
 
+    let mut rollback = CreateRollback {
+        repo: repo.clone(),
+        worktree: worktree.clone(),
+        branch: branch.clone(),
+        brief: None,
+        record: None,
+        armed: true,
+    };
+
     let mut links = Vec::new();
     for (link_name, source) in &options.links {
-        if link_name.is_empty()
-            || link_name.len() > 128
-            || link_name.starts_with('/')
-            || link_name.contains("..")
-            || link_name.chars().any(char::is_control)
-        {
-            bail!("invalid --link name '{link_name}'");
-        }
         let dest = worktree.join(link_name);
         if dest.exists() || dest.symlink_metadata().is_ok() {
             bail!("{} already exists in the worktree", dest.display());
@@ -602,10 +653,6 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         ));
     }
 
-    let role = match &options.role {
-        Some(role) => Some(resolve_role(role)?),
-        None => None,
-    };
     let id = format!("{}-{name}", now());
     let handoff_dir = repo.join(".omnix").join("handoffs");
     fs::create_dir_all(&handoff_dir)?;
@@ -618,12 +665,13 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         &base,
         &id,
         options.parent.as_deref(),
-        &mode,
+        mode.as_deref().unwrap_or("default"),
         &options.paths,
         role.as_deref(),
         &prompt,
     );
     atomic_write(&brief, body.as_bytes())?;
+    rollback.brief = Some(brief.clone());
 
     let record = Handoff {
         id: id.clone(),
@@ -648,7 +696,7 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         parent: options.parent,
         model: options.model,
         effort: options.effort,
-        mode: Some(mode),
+        mode,
         paths: options.paths,
         links,
         status: None,
@@ -674,8 +722,10 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         min_free_mb: options.min_free_mb,
     };
     let record_path = write_record(&record)?;
+    rollback.record = Some(record_path.clone());
     // The record now owns the lease ids; the guard must not release them.
     let _ = guard.disarm();
+    rollback.disarm();
     crate::control::event(
         "handoff-created",
         serde_json::json!({
@@ -1229,6 +1279,34 @@ mod tests {
                 .unwrap()
                 .contains("do the thing")
         );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failed_create_rolls_back_worktree_and_record() {
+        let dir = temp_repo("rollback");
+        let src = dir.join("source.txt");
+        fs::write(&src, "s\n").unwrap();
+        let err = create_with(
+            &dir,
+            CreateOptions {
+                name: "probe".into(),
+                agent: "codex".into(),
+                prompt: "do it".into(),
+                links: vec![("README.md".into(), src)],
+                ..Default::default()
+            },
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("already exists in the worktree"), "{err}");
+        assert!(
+            !dir.join(".omnix/worktrees/probe").exists(),
+            "worktree must be rolled back"
+        );
+        assert!(find_in(&dir, "probe").is_none(), "record must be rolled back");
+        let branch = git(&dir, &["branch", "--list", "omnix/probe"]).unwrap();
+        assert!(branch.trim().is_empty(), "branch must be rolled back: {branch}");
         fs::remove_dir_all(&dir).ok();
     }
 

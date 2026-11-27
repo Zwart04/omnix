@@ -631,11 +631,11 @@ pub fn extra_args(agent: &str, options: &LaunchOptions) -> Result<Vec<String>> {
     {
         bail!("--model is only supported for codex, claude, antigravity, and opencode");
     }
-    if options.effort.is_some() && !matches!(base, "codex" | "antigravity") {
-        bail!("--effort is only supported for codex and antigravity");
+    if options.effort.is_some() && !matches!(base, "codex" | "antigravity" | "claude") {
+        bail!("--effort is only supported for codex, antigravity, and claude");
     }
-    if options.mode.is_some() && base != "antigravity" {
-        bail!("--mode is only supported for antigravity");
+    if options.mode.is_some() && !matches!(base, "antigravity" | "claude") {
+        bail!("--mode is only supported for antigravity and claude");
     }
     if let Some(prompt) = &options.prompt {
         if prompt.trim().is_empty() {
@@ -684,6 +684,19 @@ pub fn extra_args(agent: &str, options: &LaunchOptions) -> Result<Vec<String>> {
                 out.push("--model".into());
                 out.push(model.clone());
             }
+            if let Some(effort) = &options.effort {
+                out.push("--effort".into());
+                out.push(effort.clone());
+            }
+            if let Some(mode) = &options.mode {
+                let mapped = match mode.as_str() {
+                    "edit" => "acceptEdits",
+                    "full" => "bypassPermissions",
+                    other => other,
+                };
+                out.push("--permission-mode".into());
+                out.push(mapped.into());
+            }
         }
         "opencode" | "opencode2" => {
             if let Some(prompt) = &options.prompt {
@@ -712,12 +725,14 @@ pub fn headless_args(agent: &str, options: &LaunchOptions, brief: &str) -> Resul
             "exec".to_string(),
             "--dangerously-bypass-approvals-and-sandbox".to_string(),
         ],
-        "claude" => vec![
-            "-p".to_string(),
-            brief.to_string(),
-            "--permission-mode".to_string(),
-            "acceptEdits".to_string(),
-        ],
+        "claude" => {
+            let mut argv = vec!["-p".to_string(), brief.to_string()];
+            if options.mode.is_none() {
+                argv.push("--permission-mode".to_string());
+                argv.push("acceptEdits".to_string());
+            }
+            argv
+        }
         "antigravity" => vec![
             "-p".to_string(),
             brief.to_string(),
@@ -966,7 +981,30 @@ mod tests {
             extra_args("claude", &claude).unwrap(),
             vec!["--model", "gpt-5"]
         );
-        assert!(extra_args("claude", &opts).is_err(), "claude has no effort flag");
+        assert_eq!(
+            extra_args("claude", &opts).unwrap(),
+            vec!["--model", "gpt-5", "--effort", "high"]
+        );
+        let claude_mode = LaunchOptions {
+            effort: Some("medium".into()),
+            mode: Some("edit".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            extra_args("claude", &claude_mode).unwrap(),
+            vec!["--effort", "medium", "--permission-mode", "acceptEdits"]
+        );
+        assert_eq!(
+            extra_args(
+                "claude",
+                &LaunchOptions {
+                    mode: Some("full".into()),
+                    ..Default::default()
+                }
+            )
+            .unwrap(),
+            vec!["--permission-mode", "bypassPermissions"]
+        );
         assert!(
             extra_args("opencode", &antigravity).is_err(),
             "opencode has no mode flag"
