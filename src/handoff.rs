@@ -910,6 +910,15 @@ pub fn mark_queued(record: &mut Handoff, reason: &str) -> Result<()> {
 
 /// Record the result of a non-interactive run. The transcript stays in the
 /// log file; the record only points at it.
+pub fn mark_running(record: &mut Handoff, pid: u32) -> Result<()> {
+    record.outcome = "working".into();
+    record.receipt.detail = format!("headless worker running (pid {pid})");
+    record.worker_pid = Some(pid);
+    record.updated_at = now();
+    write_record(record)?;
+    Ok(())
+}
+
 pub fn mark_headless(record: &mut Handoff, log: &Path, success: bool) -> Result<()> {
     record.outcome = if success {
         "delivered-headless".into()
@@ -1839,6 +1848,28 @@ mod tests {
         assert!(record.orchestrator);
         let saved: Handoff = serde_json::from_slice(&fs::read(record_path(&record)).unwrap()).unwrap();
         assert!(saved.orchestrator, "flag must survive the record file");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_started_worker_never_leaves_the_dry_run_receipt() {
+        let dir = temp_repo("started");
+        let (mut record, path) = create_with(
+            &dir,
+            CreateOptions {
+                name: "started".into(),
+                agent: "claude".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        mark_running(&mut record, std::process::id()).unwrap();
+        assert_eq!(record.outcome, "working");
+        assert!(!record.receipt.detail.contains("dry run"), "{}", record.receipt.detail);
+        assert!(record.worker_pid.is_some());
+        let saved: Handoff = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(!saved.receipt.detail.contains("dry run"));
         fs::remove_dir_all(&dir).ok();
     }
 

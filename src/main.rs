@@ -2330,9 +2330,7 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
     let bytes = std::fs::read(record_path)
         .with_context(|| format!("read handoff record {}", record_path.display()))?;
     let mut record: handoff::Handoff = serde_json::from_slice(&bytes)?;
-    record.worker_pid = Some(std::process::id());
-    record.updated_at = control::epoch();
-    handoff::save(&record)?;
+    handoff::mark_running(&mut record, std::process::id())?;
     wait_for_queue_conditions(&mut record, record_path)?;
 
     let log_path = PathBuf::from(&record.repo)
