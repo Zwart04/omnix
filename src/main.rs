@@ -489,9 +489,8 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&out)?);
                         std::process::exit(75);
                     }
-                    let hit = until.iter().any(|want| want == &state)
-                        || (state == "exited" && until.iter().any(|want| want == "turn-done"))
-                        || (state == "quota" && until.iter().any(|want| want == "exited"));
+                    let hit =
+                        wait_state_hit(&state, pane.get("exitCode").and_then(Value::as_i64), &until);
                     if hit {
                         if has(args, "--json") {
                             println!("{}", serde_json::to_string_pretty(pane)?);
@@ -2113,6 +2112,33 @@ fn spawn_detached_worker(record_path: &Path, force: bool) -> Result<()> {
 fn cmd_headless_worker(args: &[String]) -> Result<()> {
     let record_path = value(args, "--record").context("--record is required")?;
     run_headless_worker(Path::new(&record_path), has(args, "--force"))
+}
+
+fn wait_state_hit(state: &str, exit_code: Option<i64>, until: &[String]) -> bool {
+    if until.iter().any(|want| want == state) {
+        return true;
+    }
+    match state {
+        // A non-zero exit is a failure, not a finished turn.
+        "exited" => exit_code.unwrap_or(0) == 0 && until.iter().any(|w| w == "turn-done"),
+        "quota" => until.iter().any(|w| w == "exited"),
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_does_not_call_a_failed_exit_turn_done() {
+        let until = vec!["turn-done".to_string()];
+        assert!(wait_state_hit("turn-done", None, &until));
+        assert!(wait_state_hit("exited", Some(0), &until));
+        assert!(!wait_state_hit("exited", Some(1), &until));
+        assert!(!wait_state_hit("exited", Some(70), &until));
+        assert!(wait_state_hit("exited", Some(1), &["exited".to_string()]));
+    }
 }
 
 fn free_ram_mb() -> Option<u64> {
