@@ -2477,6 +2477,10 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
 
         let mut child = command.spawn().context("start headless agent")?;
         record.pid = Some(child.id());
+        if let Some((started, exe)) = handoff::process_identity(child.id()) {
+            record.pid_started = Some(started);
+            record.pid_exe = Some(exe);
+        }
         record.outcome = "working".into();
         record.blocked_reason = None;
         record.exit_code = None;

@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -82,6 +82,15 @@ pub struct Handoff {
     /// PID of the detached `_headless-worker`, so `close` can stop a queued run.
     #[serde(default)]
     pub worker_pid: Option<u32>,
+    /// Identity captured at launch so a recycled PID is never signalled.
+    #[serde(default)]
+    pub worker_started: Option<u64>,
+    #[serde(default)]
+    pub worker_exe: Option<String>,
+    #[serde(default)]
+    pub pid_started: Option<u64>,
+    #[serde(default)]
+    pub pid_exe: Option<String>,
     #[serde(default)]
     pub log: Option<String>,
     #[serde(default)]
@@ -216,8 +225,7 @@ fn branch_prefix(repo: &Path, role: Option<&str>) -> String {
                     return None;
                 }
                 let (key, value) = line.split_once('=')?;
-                (key.trim() == "branch_prefix")
-                    .then(|| value.trim().trim_matches('"').to_string())
+                (key.trim() == "branch_prefix").then(|| value.trim().trim_matches('"').to_string())
             })
         })
         .filter(|p| !p.trim().is_empty());
@@ -492,6 +500,7 @@ fn validate_paths(paths: &[String]) -> Result<()> {
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn brief_body(
     name: &str,
     agent: &str,
@@ -764,10 +773,7 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         }
         symlink(source, &dest)
             .with_context(|| format!("link {} -> {}", dest.display(), source.display()))?;
-        links.push((
-            link_name.clone(),
-            source.to_string_lossy().into_owned(),
-        ));
+        links.push((link_name.clone(), source.to_string_lossy().into_owned()));
     }
 
     let id = format!("{}-{name}", now());
@@ -830,6 +836,10 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         checkpoint: options.checkpoint,
         pid: None,
         worker_pid: None,
+        worker_started: None,
+        worker_exe: None,
+        pid_started: None,
+        pid_exe: None,
         log: None,
         session_id: None,
         exit_code: None,
@@ -917,6 +927,10 @@ pub fn mark_running(record: &mut Handoff, pid: u32) -> Result<()> {
     record.outcome = "working".into();
     record.receipt.detail = format!("headless worker running (pid {pid})");
     record.worker_pid = Some(pid);
+    if let Some((started, exe)) = process_identity(pid) {
+        record.worker_started = Some(started);
+        record.worker_exe = Some(exe);
+    }
     record.updated_at = now();
     write_record(record)?;
     Ok(())
@@ -1191,10 +1205,7 @@ pub fn headless_pane_row(record: &Handoff) -> serde_json::Value {
     } else if record.outcome == "queued" {
         "queued"
     } else if record.exit_code.is_some()
-        || matches!(
-            record.outcome.as_str(),
-            "delivered-headless" | "failed"
-        )
+        || matches!(record.outcome.as_str(), "delivered-headless" | "failed")
     {
         "exited"
     } else if record.pid.is_some() {
@@ -1232,8 +1243,8 @@ pub fn report(repo: &Path, name: &str, status: &str, text: &str) -> Result<Hando
         bail!("report is empty");
     }
     let repo = main_repo(repo)?;
-    let mut record =
-        find_in(&repo, &name).with_context(|| format!("no open handoff '{name}' in {}", repo.display()))?;
+    let mut record = find_in(&repo, &name)
+        .with_context(|| format!("no open handoff '{name}' in {}", repo.display()))?;
     let path = PathBuf::from(&record.repo)
         .join(".omnix")
         .join("handoffs")
@@ -1320,6 +1331,7 @@ pub fn prune_orphans(records: &[Handoff]) -> Vec<String> {
         .collect()
 }
 
+#[cfg(test)]
 pub fn close_in(repo: &Path, name: &str) -> Result<Handoff> {
     close_in_forced(repo, name, false)
 }
@@ -1331,24 +1343,199 @@ pub fn close_in_forced(repo: &Path, name: &str, force: bool) -> Result<Handoff> 
     close_record_with(record, force)
 }
 
-fn terminate(pid: u32) {
-    if pid == 0 {
-        return;
+/// Real path for comparison; a missing path falls back to its own spelling.
+fn canonical_path(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn is_symlink(path: &Path) -> bool {
+    fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false)
+}
+
+/// Every worktree git still registers, as real paths.
+fn registered_worktrees(repo: &Path) -> Vec<PathBuf> {
+    let Ok(text) = git(repo, &["worktree", "list", "--porcelain"]) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(|path| canonical_path(Path::new(path)))
+        .collect()
+}
+
+fn gitdir_of(worktree: &Path) -> Option<PathBuf> {
+    let text = fs::read_to_string(worktree.join(".git")).ok()?;
+    let rest = text.lines().next()?.trim().strip_prefix("gitdir:")?.trim();
+    let path = Path::new(rest);
+    Some(if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        worktree.join(path)
+    })
+}
+
+/// A `.git` file proves this folder is an Omnix worktree of this repo only when
+/// it names an admin entry under the repo's `worktrees/` and that entry links
+/// back here. Proof keeps a foreign folder from being deleted as "leftover".
+fn proves_orphan_worktree(repo: &Path, worktree: &Path) -> bool {
+    let Some(admin) = gitdir_of(worktree) else {
+        return false;
+    };
+    let admin = canonical_path(&admin);
+    let Ok(common) = git(repo, &["rev-parse", "--git-common-dir"]) else {
+        return false;
+    };
+    let common = PathBuf::from(common);
+    let common = if common.is_absolute() {
+        common
+    } else {
+        repo.join(common)
+    };
+    let common = canonical_path(&common);
+    if !admin.starts_with(common.join("worktrees")) {
+        return false;
     }
-    #[cfg(unix)]
-    {
-        let _ = Command::new("kill")
-            .args(["-TERM", &pid.to_string()])
-            .status();
+    let Ok(backlink) = fs::read_to_string(admin.join("gitdir")) else {
+        return false;
+    };
+    let backlink = Path::new(backlink.trim());
+    let backlink = if backlink.is_absolute() {
+        backlink.to_path_buf()
+    } else {
+        admin.join(backlink)
+    };
+    canonical_path(&backlink) == canonical_path(&worktree.join(".git"))
+}
+
+/// `Some(reason)` when a `close --force` must leave the folder alone.
+fn force_removal_problem(repo: &Path, record: &Handoff, home: &Path) -> Option<String> {
+    let worktree = Path::new(&record.worktree);
+    let target = canonical_path(worktree);
+    let repo_real = canonical_path(repo);
+    if target == repo_real {
+        return Some("it is the repository itself".into());
     }
-    #[cfg(windows)]
+    if target == canonical_path(home) {
+        return Some("it is the home directory".into());
+    }
+    if target == Path::new("/") {
+        return Some("it is the filesystem root".into());
+    }
+    if repo_real.parent() == Some(&target) {
+        return Some("it is the repository's parent".into());
+    }
+    if !target.starts_with(repo_real.join(".omnix")) {
+        return Some("it is outside <repo>/.omnix".into());
+    }
+    if is_symlink(worktree) {
+        return Some("it is a symlink".into());
+    }
+    let registered = registered_worktrees(repo);
+    if let Some(nested) = registered
+        .iter()
+        .find(|p| *p != &target && p.starts_with(&target))
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .status();
+        return Some(format!(
+            "it contains the registered worktree {}",
+            nested.display()
+        ));
+    }
+    let is_registered = registered.contains(&target);
+    let own_record = canonical_path(Path::new(&record.repo)) == repo_real
+        && canonical_path(Path::new(&record.worktree)) == target;
+    if !is_registered && !proves_orphan_worktree(repo, worktree) && !own_record {
+        return Some("it is not a proven Omnix worktree".into());
+    }
+    None
+}
+
+/// Start ticks and executable from `/proc/<pid>`, the launch-time identity.
+#[cfg(target_os = "linux")]
+pub fn process_identity(pid: u32) -> Option<(u64, String)> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = &stat[stat.rfind(')')? + 1..];
+    let started: u64 = rest.split_whitespace().nth(19)?.parse().ok()?;
+    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let text = String::from_utf8_lossy(&cmdline);
+    let exe = text.split('\0').next()?.to_string();
+    Some((started, exe))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn process_identity(_pid: u32) -> Option<(u64, String)> {
+    None
+}
+
+#[cfg(target_os = "linux")]
+fn process_state(pid: u32) -> Option<char> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    let rest = &stat[stat.rfind(')')? + 1..];
+    rest.split_whitespace().next()?.chars().next()
+}
+
+#[cfg(target_os = "linux")]
+fn identity_matches(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    match (process_identity(pid), started, exe) {
+        (Some((actual_started, actual_exe)), Some(started), Some(exe)) => {
+            started == actual_started && exe == actual_exe
+        }
+        // No stored identity means no proof; never signal on a guess.
+        _ => false,
     }
 }
 
+#[cfg(target_os = "linux")]
+fn process_gone(pid: u32) -> bool {
+    if process_state(pid) == Some('Z') {
+        return true;
+    }
+    // SAFETY: signal 0 only probes liveness; it delivers nothing.
+    unsafe { libc::kill(pid as i32, 0) != 0 }
+}
+
+#[cfg(target_os = "linux")]
+fn wait_gone(pid: u32, ms: u64) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+    loop {
+        if process_gone(pid) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// TERM only the process whose identity matches the one captured at launch,
+/// wait for it to leave, then KILL and confirm.
+#[cfg(target_os = "linux")]
+fn stop_process(pid: u32, started: Option<u64>, exe: Option<&str>) -> bool {
+    if pid == 0 || !identity_matches(pid, started, exe) {
+        return false;
+    }
+    // SAFETY: identity was just proven, so this signals the recorded process.
+    unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    if wait_gone(pid, 3000) {
+        return true;
+    }
+    if !identity_matches(pid, started, exe) {
+        // The PID was recycled while we waited; never KILL the newcomer.
+        return true;
+    }
+    // SAFETY: identity was re-proven after the wait.
+    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+    wait_gone(pid, 1000)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn stop_process(_pid: u32, _started: Option<u64>, _exe: Option<&str>) -> bool {
+    false
+}
+
+#[cfg(test)]
 fn close_record(record: Handoff) -> Result<Handoff> {
     close_record_with(record, false)
 }
@@ -1357,15 +1544,26 @@ fn close_record(record: Handoff) -> Result<Handoff> {
 /// tracks as a worktree. Callers must only pass it after the user confirmed it.
 fn close_record_with(mut record: Handoff, force: bool) -> Result<Handoff> {
     // Stop a running or still-queued worker before the worktree disappears.
-    for pid in [record.worker_pid, record.pid].into_iter().flatten() {
-        terminate(pid);
-    }
+    // Only a process whose identity still matches its launch record is signalled.
+    stop_process(
+        record.worker_pid.unwrap_or(0),
+        record.worker_started,
+        record.worker_exe.as_deref(),
+    );
+    stop_process(
+        record.pid.unwrap_or(0),
+        record.pid_started,
+        record.pid_exe.as_deref(),
+    );
     let worktree = PathBuf::from(&record.worktree);
     if worktree.exists() {
         let repo = PathBuf::from(&record.repo);
         if force {
             // git refuses `worktree remove` once the .git file is gone, so drop
             // the folder directly and let prune clear git's registration.
+            if let Some(problem) = force_removal_problem(&repo, &record, &crate::control::home()) {
+                bail!("refusing to force-remove {}: {problem}", worktree.display());
+            }
             fs::remove_dir_all(&worktree)?;
             let _ = git(&repo, &["worktree", "prune"]);
         } else {
@@ -1491,9 +1689,15 @@ mod tests {
             !dir.join(".omnix/worktrees/probe").exists(),
             "worktree must be rolled back"
         );
-        assert!(find_in(&dir, "probe").is_none(), "record must be rolled back");
+        assert!(
+            find_in(&dir, "probe").is_none(),
+            "record must be rolled back"
+        );
         let branch = git(&dir, &["branch", "--list", "omnix/probe"]).unwrap();
-        assert!(branch.trim().is_empty(), "branch must be rolled back: {branch}");
+        assert!(
+            branch.trim().is_empty(),
+            "branch must be rolled back: {branch}"
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -1514,11 +1718,11 @@ mod tests {
     fn close_stops_the_recorded_worker() {
         let dir = temp_repo("close-worker");
         let (mut record, _) = create(&dir, "stopme", "codex", "x", None, false).unwrap();
-        let mut child = Command::new("sh")
-            .args(["-c", "sleep 60"])
-            .spawn()
-            .unwrap();
+        let mut child = Command::new("sh").args(["-c", "sleep 60"]).spawn().unwrap();
         record.worker_pid = Some(child.id());
+        let (started, exe) = process_identity(child.id()).unwrap();
+        record.worker_started = Some(started);
+        record.worker_exe = Some(exe);
         save(&record).unwrap();
         close_in(&dir, "stopme").unwrap();
         std::thread::sleep(std::time::Duration::from_millis(300));
@@ -1538,7 +1742,15 @@ mod tests {
         fs::write(dir.join("README.md"), "ahead\n").unwrap();
         git(
             &dir,
-            &["-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-qam", "ahead"],
+            &[
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "user.name=T",
+                "commit",
+                "-qam",
+                "ahead",
+            ],
         )
         .unwrap();
 
@@ -1554,7 +1766,10 @@ mod tests {
         .unwrap();
         assert_eq!(record.base, "origin/main");
         let wt = git(Path::new(&record.worktree), &["rev-parse", "HEAD"]).unwrap();
-        assert_eq!(wt, pushed, "worktree must start at origin/main, not local HEAD");
+        assert_eq!(
+            wt, pushed,
+            "worktree must start at origin/main, not local HEAD"
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -1670,8 +1885,7 @@ mod tests {
     #[test]
     fn report_and_close_round_trip() {
         let dir = temp_repo("report");
-        let (mut record, _) =
-            create(&dir, "lapor", "codex", "do it", None, false).unwrap();
+        let (mut record, _) = create(&dir, "lapor", "codex", "do it", None, false).unwrap();
         mark_delivered(&mut record, "ho:lapor").unwrap();
         let reported = report(&dir, "lapor", "blocked", "waiting for DNS").unwrap();
         assert_eq!(reported.status.as_deref(), Some("blocked"));
@@ -1760,8 +1974,14 @@ mod tests {
     fn on_quota_parser_supports_stop_wait_and_fallback_list() {
         let dir = temp_repo("on-quota");
         assert_eq!(parse_on_quota(&dir, None).unwrap(), QuotaPolicy::Stop);
-        assert_eq!(parse_on_quota(&dir, Some("stop")).unwrap(), QuotaPolicy::Stop);
-        assert_eq!(parse_on_quota(&dir, Some("wait")).unwrap(), QuotaPolicy::Wait);
+        assert_eq!(
+            parse_on_quota(&dir, Some("stop")).unwrap(),
+            QuotaPolicy::Stop
+        );
+        assert_eq!(
+            parse_on_quota(&dir, Some("wait")).unwrap(),
+            QuotaPolicy::Wait
+        );
         let fb = parse_on_quota(
             &dir,
             Some("fallback=antigravity:gemini-4-neon-high,codex:gpt-6.2-sol"),
@@ -1877,7 +2097,8 @@ mod tests {
         )
         .unwrap();
         assert!(record.orchestrator);
-        let saved: Handoff = serde_json::from_slice(&fs::read(record_path(&record)).unwrap()).unwrap();
+        let saved: Handoff =
+            serde_json::from_slice(&fs::read(record_path(&record)).unwrap()).unwrap();
         assert!(saved.orchestrator, "flag must survive the record file");
         fs::remove_dir_all(&dir).ok();
     }
@@ -1897,7 +2118,11 @@ mod tests {
         .unwrap();
         mark_running(&mut record, std::process::id()).unwrap();
         assert_eq!(record.outcome, "working");
-        assert!(!record.receipt.detail.contains("dry run"), "{}", record.receipt.detail);
+        assert!(
+            !record.receipt.detail.contains("dry run"),
+            "{}",
+            record.receipt.detail
+        );
         assert!(record.worker_pid.is_some());
         let saved: Handoff = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(!saved.receipt.detail.contains("dry run"));
@@ -1920,7 +2145,11 @@ mod tests {
         assert!(record.receipt.detail.starts_with("dry run"));
         mark_queued(&mut record, "waiting for quota").unwrap();
         assert_eq!(record.outcome, "queued");
-        assert!(!record.receipt.detail.contains("dry run"), "{}", record.receipt.detail);
+        assert!(
+            !record.receipt.detail.contains("dry run"),
+            "{}",
+            record.receipt.detail
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -1949,13 +2178,21 @@ mod tests {
 
     #[test]
     fn forget_drops_a_missing_index_entry_and_keeps_the_rest() {
-        let home = std::env::temp_dir().join(format!("omnix-index-{}-{}", std::process::id(), now()));
+        let home =
+            std::env::temp_dir().join(format!("omnix-index-{}-{}", std::process::id(), now()));
         fs::create_dir_all(home.join(".omnix")).unwrap();
         let gone = home.join("gone.json");
         let kept = home.join("kept.json");
         fs::write(&kept, "{}").unwrap();
-        let text = vec![gone.to_string_lossy().into_owned(), kept.to_string_lossy().into_owned()];
-        fs::write(home.join(".omnix").join("handoffs.json"), serde_json::to_vec(&text).unwrap()).unwrap();
+        let text = vec![
+            gone.to_string_lossy().into_owned(),
+            kept.to_string_lossy().into_owned(),
+        ];
+        fs::write(
+            home.join(".omnix").join("handoffs.json"),
+            serde_json::to_vec(&text).unwrap(),
+        )
+        .unwrap();
         let prev = std::env::var_os("OMNIX_HOME");
         unsafe { std::env::set_var("OMNIX_HOME", &home) };
         assert_eq!(missing_index_entries(), vec![gone.clone()]);
@@ -1984,8 +2221,168 @@ mod tests {
         )
         .unwrap();
         fs::remove_dir_all(&dir).unwrap();
-        let removed = prune_orphans(&[record.clone()]);
+        let removed = prune_orphans(std::slice::from_ref(&record));
         assert_eq!(removed, vec![record.name.clone()]);
-        assert!(prune_orphans(&[Handoff { closed: true, ..record }]).is_empty());
+        assert!(
+            prune_orphans(&[Handoff {
+                closed: true,
+                ..record
+            }])
+            .is_empty()
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn close_never_kills_a_pid_whose_identity_does_not_match() {
+        let dir = temp_repo("pid-foreign");
+        let (mut record, _) = create(&dir, "keepme", "codex", "x", None, false).unwrap();
+        let mut child = Command::new("sh").args(["-c", "sleep 60"]).spawn().unwrap();
+        let (started, _exe) = process_identity(child.id()).unwrap();
+        record.worker_pid = Some(child.id());
+        // Wrong start time: this PID has been recycled since launch.
+        record.worker_started = Some(started + 1);
+        record.worker_exe = Some("not-the-worker".into());
+        save(&record).unwrap();
+        close_in(&dir, "keepme").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let still_running = child.try_wait().unwrap().is_none();
+        let _ = child.kill();
+        let _ = child.wait();
+        assert!(still_running, "a mismatched PID must never be signalled");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn force_removal_refuses_the_repository_itself_and_keeps_it() {
+        let dir = temp_repo("danger-repo");
+        let (mut record, _) = create(&dir, "safe", "codex", "x", None, false).unwrap();
+        record.worktree = dir.to_string_lossy().into_owned();
+        save(&record).unwrap();
+        let err = close_in_forced(&dir, "safe", true).unwrap_err();
+        assert!(err.to_string().contains("refusing"), "{err}");
+        assert!(
+            dir.exists(),
+            "the repository must survive a refused force-close"
+        );
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn force_removal_refuses_every_dangerous_path() {
+        let dir = temp_repo("danger-all");
+        let (mut record, _) = create(&dir, "safe", "codex", "x", None, false).unwrap();
+        let home = crate::control::home();
+
+        record.worktree = dir.to_string_lossy().into_owned();
+        assert!(
+            force_removal_problem(&dir, &record, &home).is_some(),
+            "repo"
+        );
+
+        record.worktree = dir.parent().unwrap().to_string_lossy().into_owned();
+        assert!(
+            force_removal_problem(&dir, &record, &home).is_some(),
+            "repo parent"
+        );
+
+        record.worktree = "/".into();
+        assert!(
+            force_removal_problem(&dir, &record, &home).is_some(),
+            "root"
+        );
+
+        let outside = dir
+            .parent()
+            .unwrap()
+            .join(format!("omnix-outside-{}", now()));
+        fs::create_dir_all(&outside).unwrap();
+        record.worktree = outside.to_string_lossy().into_owned();
+        assert!(
+            force_removal_problem(&dir, &record, &home).is_some(),
+            "outside .omnix"
+        );
+
+        record.worktree = home.to_string_lossy().into_owned();
+        assert!(
+            force_removal_problem(&dir, &record, &home).is_some(),
+            "home"
+        );
+
+        let real = dir.join(".omnix").join("worktrees").join("real");
+        fs::create_dir_all(&real).unwrap();
+        let link = dir.join(".omnix").join("worktrees").join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        record.worktree = link.to_string_lossy().into_owned();
+        assert!(
+            force_removal_problem(&dir, &record, &home).is_some(),
+            "symlink"
+        );
+        assert!(link.exists(), "the symlink must remain");
+
+        fs::remove_dir_all(&dir).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn force_removal_refuses_an_unproven_directory() {
+        let dir = temp_repo("danger-foreign");
+        let (mut record, _) = create(&dir, "safe", "codex", "x", None, false).unwrap();
+        let foreign = dir.join(".omnix").join("worktrees").join("foreign");
+        fs::create_dir_all(&foreign).unwrap();
+        record.worktree = foreign.to_string_lossy().into_owned();
+        // A record for another repo cannot vouch for this folder.
+        record.repo = dir.join("elsewhere").to_string_lossy().into_owned();
+        let problem = force_removal_problem(&dir, &record, &crate::control::home());
+        assert!(problem.is_some(), "an unproven folder must be refused");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn force_removal_allows_its_own_record() {
+        let dir = temp_repo("danger-own");
+        let (record, _) = create(&dir, "safe", "codex", "x", None, false).unwrap();
+        assert!(force_removal_problem(&dir, &record, &crate::control::home()).is_none());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn force_removal_refuses_a_folder_holding_another_registered_worktree() {
+        let dir = temp_repo("danger-nested");
+        let outer = dir.join(".omnix").join("worktrees").join("outer");
+        let inner = outer.join("inner");
+        git(
+            &dir,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "outer",
+                outer.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        git(
+            &dir,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "inner",
+                inner.to_str().unwrap(),
+            ],
+        )
+        .unwrap();
+        let (mut record, _) = create(&dir, "rec", "codex", "x", None, false).unwrap();
+        record.worktree = outer.to_string_lossy().into_owned();
+        let problem = force_removal_problem(&dir, &record, &crate::control::home());
+        assert!(
+            problem.is_some(),
+            "a folder holding a live worktree is protected"
+        );
+        assert!(inner.exists());
+        fs::remove_dir_all(&dir).ok();
     }
 }
