@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -65,7 +65,8 @@ fn escape_toml(text: &str) -> String {
 }
 
 fn has_flag(argv: &[String], needle: &str) -> bool {
-    argv.iter().any(|arg| arg == needle || arg.starts_with(&format!("{needle}=")))
+    argv.iter()
+        .any(|arg| arg == needle || arg.starts_with(&format!("{needle}=")))
 }
 
 /// Deliver the harness rules through each CLI's own supported mechanism. The
@@ -84,9 +85,9 @@ pub fn harness_args(root: &Path, agent: &str, argv: &[String]) -> Result<Vec<Str
             }
         }
         "codex" => {
-            let already = argv
-                .iter()
-                .any(|arg| arg.contains("developer_instructions") || arg.contains("model_instructions_file"));
+            let already = argv.iter().any(|arg| {
+                arg.contains("developer_instructions") || arg.contains("model_instructions_file")
+            });
             if !already {
                 out.push("-c".into());
                 out.push(format!(
@@ -137,7 +138,10 @@ fn default_shell() -> String {
 /// Put the running binary's folder first on PATH. Agents run `omnix agent
 /// send` from a menu-launched app, whose PATH rarely contains the install
 /// folder (the macOS app bundle and a portable Windows build both need this).
-fn path_with_exe_dir(exe: &Path, current: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+fn path_with_exe_dir(
+    exe: &Path,
+    current: Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
     let dir = exe.parent()?;
     let mut dirs = vec![dir.to_path_buf()];
     if let Some(path) = current {
@@ -155,7 +159,7 @@ fn open(cmd: CommandBuilder, cwd: &Path) -> Result<Spawned> {
         }
     }
     /* A desktop launch inherits no TERM, and a TUI that sees "dumb" or nothing
-       draws monochrome. Every pty we open can do 256 colours and truecolor. */
+    draws monochrome. Every pty we open can do 256 colours and truecolor. */
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("TERM_PROGRAM", "omnix");
@@ -204,13 +208,15 @@ pub fn spawn_command(line: &str, cwd: &Path) -> Result<Spawned> {
 /// Resolve the binary and the full argv/env for an agent launch: saved extra
 /// arguments first, then per-handoff flags, then resume flags, then the saved
 /// environment.
+pub type AgentArgv = (std::path::PathBuf, Vec<String>, Vec<(String, String)>);
+
 pub fn agent_argv_at(
     home: &Path,
     root: &Path,
     name: &str,
     session: Option<&str>,
     extra: &[String],
-) -> Result<(std::path::PathBuf, Vec<String>, Vec<(String, String)>)> {
+) -> Result<AgentArgv> {
     let bin = crate::agent::resolve(name)
         .or_else(|| crate::agent::launch_cmd(name).map(std::path::PathBuf::from))
         .with_context(|| format!("unknown agent '{name}'"))?;
@@ -239,68 +245,17 @@ pub fn agent_argv_at(
     Ok((bin, argv, env))
 }
 
-/// Claude asks "Is this a project you trust?" for every new folder and exits
-/// when nothing answers. Omnix marks only its own `.omnix/worktrees/` checkouts
-/// trusted, and records the previous value so `omnix` can undo it.
-pub fn grant_claude_trust_at(home: &Path, worktree: &Path) -> Result<()> {
-    if !worktree.components().any(|c| c.as_os_str() == ".omnix") {
-        return Ok(());
-    }
-    let key = worktree.to_string_lossy().into_owned();
-    let claude = home.join(".claude.json");
-    let mut doc: serde_json::Value = match std::fs::read(&claude) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .with_context(|| format!("parse {}", claude.display()))?,
-        Err(_) => serde_json::json!({}),
-    };
-    if !doc.is_object() {
-        bail!("{} is not a JSON object", claude.display());
-    }
-    let previous = doc["projects"][&key]["hasTrustDialogAccepted"].clone();
-    let projects = doc
-        .as_object_mut()
-        .unwrap()
-        .entry("projects")
-        .or_insert_with(|| serde_json::json!({}));
-    let entry = projects
-        .as_object_mut()
-        .context("projects is not an object")?
-        .entry(key.clone())
-        .or_insert_with(|| serde_json::json!({}));
-    entry["hasTrustDialogAccepted"] = serde_json::Value::Bool(true);
-    let bytes = serde_json::to_vec_pretty(&doc)?;
-    let tmp = claude.with_extension("json.omnix-tmp");
-    std::fs::write(&tmp, &bytes)?;
-    std::fs::rename(&tmp, &claude)?;
-
-    let log_path = home.join(".omnix").join("trust-created.json");
-    let mut log: serde_json::Value = std::fs::read(&log_path)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_else(|| serde_json::json!({ "version": 1, "created": {} }));
-    if !log["created"].get(&key).is_some() {
-        log["created"][&key] = serde_json::json!({ "file": claude, "previous": previous });
-        std::fs::create_dir_all(log_path.parent().unwrap())?;
-        std::fs::write(&log_path, serde_json::to_vec_pretty(&log)?)?;
-    }
-    Ok(())
-}
-
 pub fn agent_argv_with(
     root: &Path,
     name: &str,
     session: Option<&str>,
     extra: &[String],
-) -> Result<(std::path::PathBuf, Vec<String>, Vec<(String, String)>)> {
+) -> Result<AgentArgv> {
     agent_argv_at(&crate::control::home(), root, name, session, extra)
 }
 
 #[allow(dead_code)]
-pub fn agent_argv(
-    root: &Path,
-    name: &str,
-    session: Option<&str>,
-) -> Result<(std::path::PathBuf, Vec<String>, Vec<(String, String)>)> {
+pub fn agent_argv(root: &Path, name: &str, session: Option<&str>) -> Result<AgentArgv> {
     agent_argv_with(root, name, session, &[])
 }
 
@@ -314,7 +269,7 @@ pub fn spawn_agent_with(
 ) -> Result<Spawned> {
     let (bin, argv, env) = agent_argv_with(root, name, session, extra)?;
     if crate::agent::base_agent(name) == "claude" {
-        grant_claude_trust_at(&crate::control::home(), cwd)?;
+        crate::claude_trust::grant_for_pane(&env, extra_env, cwd);
     }
     let mut cmd = CommandBuilder::new(bin);
     for arg in argv {
@@ -331,11 +286,7 @@ pub fn spawn_agent_with(
 
 /// Open the agent's own sign-in flow inside a profile. Omnix passes only the
 /// config folder env; it never reads or stores the token.
-pub fn spawn_login(
-    root: &Path,
-    name: &str,
-    cwd: &Path,
-) -> Result<(Spawned, Option<String>)> {
+pub fn spawn_login(root: &Path, name: &str, cwd: &Path) -> Result<(Spawned, Option<String>)> {
     let (args, type_login) = crate::agent::login_parts(name)?;
     let bin = crate::agent::resolve(name)
         .or_else(|| crate::agent::launch_cmd(name).map(std::path::PathBuf::from))
@@ -389,8 +340,6 @@ pub fn spawn(shell: Option<&str>, cwd: &Path, agent: Option<(&str, &str)>) -> Re
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use serde_json::{json, Value};
-    use std::fs;
 
     #[test]
     fn agent_argv_applies_saved_settings_before_resume_flags() {
@@ -423,11 +372,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("omnix-argv-off-{}", std::process::id()));
         let dir = root.join(".omnix");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(
-            dir.join("agents.json"),
-            r#"{"codex":{"enabled":false}}"#,
-        )
-        .unwrap();
+        std::fs::write(dir.join("agents.json"), r#"{"codex":{"enabled":false}}"#).unwrap();
         assert!(agent_argv(&root, "codex", None).is_err());
         std::fs::remove_dir_all(&root).ok();
     }
@@ -449,7 +394,10 @@ mod tests {
         // an agent without a known flag is left untouched
         std::fs::write(dir.join("agents.json"), r#"{}"#).unwrap();
         let (_, argv, _) = agent_argv(&root, "kiro", None).unwrap();
-        assert!(argv.is_empty(), "unknown flag must not be guessed: {argv:?}");
+        assert!(
+            argv.is_empty(),
+            "unknown flag must not be guessed: {argv:?}"
+        );
         std::fs::remove_dir_all(&root).ok();
     }
 
@@ -468,7 +416,11 @@ mod tests {
         let (_, argv, env) = agent_argv_at(&home, &root, "codex:akun2", None, &[]).unwrap();
         // No user args, but codex still receives the harness guide.
         assert_eq!(argv.first().map(String::as_str), Some("-c"), "{argv:?}");
-        let dir = home.join(".omnix").join("profiles").join("codex").join("akun2");
+        let dir = home
+            .join(".omnix")
+            .join("profiles")
+            .join("codex")
+            .join("akun2");
         assert!(env.contains(&("FOO".to_string(), "1".to_string())));
         assert!(
             env.contains(&("CODEX_HOME".to_string(), dir.to_string_lossy().into_owned())),
@@ -492,7 +444,10 @@ mod tests {
             &["--append-system-prompt".into(), "custom".into()],
         )
         .unwrap();
-        assert!(claude_again.is_empty(), "a user flag wins: {claude_again:?}");
+        assert!(
+            claude_again.is_empty(),
+            "a user flag wins: {claude_again:?}"
+        );
 
         let codex = harness_args(&root, "codex", &[]).unwrap();
         assert_eq!(codex[0], "-c");
@@ -525,7 +480,8 @@ mod tests {
     }
 
     #[test]
-    fn spawn_shell_and_read_output() {        let dir = std::env::temp_dir();
+    fn spawn_shell_and_read_output() {
+        let dir = std::env::temp_dir();
         let mut spawned = spawn(None, &dir, None).expect("spawn shell");
         let mut reader = spawned.reader;
         {
@@ -553,34 +509,5 @@ mod tests {
         }
         let _ = spawned.pty.child.kill();
         assert!(seen.contains("omnix-pty-ok"), "pty output was {seen:?}");
-    }
-
-    #[test]
-    fn claude_trust_is_granted_only_to_omnix_worktrees_and_remembers_the_old_value() {
-        let home = std::env::temp_dir().join(format!("omnix-trust-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&home);
-        fs::create_dir_all(&home).unwrap();
-        let claude = home.join(".claude.json");
-        fs::write(
-            &claude,
-            r#"{"numStartups":3,"projects":{"/repo/.omnix/worktrees/fix-a":{"hasTrustDialogAccepted":false,"allowedTools":[]}}}"#,
-        )
-        .unwrap();
-
-        let own = Path::new("/repo/.omnix/worktrees/fix-b");
-        let other = Path::new("/home/me/project");
-        grant_claude_trust_at(&home, own).unwrap();
-        grant_claude_trust_at(&home, other).unwrap();
-
-        let doc: Value = serde_json::from_slice(&fs::read(&claude).unwrap()).unwrap();
-        assert_eq!(doc["numStartups"], 3, "unrelated keys stay");
-        assert_eq!(doc["projects"]["/repo/.omnix/worktrees/fix-b"]["hasTrustDialogAccepted"], true);
-        assert!(doc["projects"].get("/home/me/project").is_none(), "non-omnix path is untouched");
-        assert_eq!(doc["projects"]["/repo/.omnix/worktrees/fix-a"]["allowedTools"], json!([]));
-
-        let log: Value = serde_json::from_slice(&fs::read(home.join(".omnix").join("trust-created.json")).unwrap()).unwrap();
-        let entry = &log["created"]["/repo/.omnix/worktrees/fix-b"];
-        assert_eq!(entry["previous"], Value::Null, "undo knows there was no prior value");
-        let _ = fs::remove_dir_all(&home);
     }
 }

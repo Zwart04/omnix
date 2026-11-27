@@ -2,10 +2,12 @@
 
 mod agent;
 mod browser;
+#[cfg(feature = "gui")]
+mod claude_trust;
 mod control;
-mod dev;
 #[cfg(all(feature = "gui", target_os = "linux"))]
 mod cookies;
+mod dev;
 mod fallback;
 #[cfg(feature = "gui")]
 mod gc;
@@ -23,9 +25,9 @@ mod projects;
 mod pty;
 #[cfg(feature = "gui")]
 mod selftest;
+mod setup;
 #[cfg(all(feature = "gui", target_os = "linux"))]
 mod shot;
-mod setup;
 mod sources;
 mod team;
 mod update;
@@ -329,7 +331,12 @@ fn panes() -> Vec<Value> {
                     .as_deref()
                     .is_some_and(|pk| pane.get("paneKey").and_then(Value::as_str) == Some(pk))
         });
-        if !already && (record.pid.is_some() || record.log.is_some() || record.blocked_reason.is_some() || record.outcome == "queued") {
+        if !already
+            && (record.pid.is_some()
+                || record.log.is_some()
+                || record.blocked_reason.is_some()
+                || record.outcome == "queued")
+        {
             rows.push(handoff::headless_pane_row(&record));
         }
     }
@@ -412,10 +419,9 @@ fn cmd_agent(args: &[String]) -> Result<()> {
             // them here so a tracked session is never invisible.
             for ws in workspace::list(&root()).unwrap_or_default() {
                 for s in ws.sessions {
-                    if rows
-                        .iter()
-                        .any(|r| r.get("paneKey").and_then(Value::as_str) == Some(s.pane_key.as_str()))
-                    {
+                    if rows.iter().any(|r| {
+                        r.get("paneKey").and_then(Value::as_str) == Some(s.pane_key.as_str())
+                    }) {
                         continue;
                     }
                     rows.push(json!({
@@ -461,13 +467,11 @@ fn cmd_agent(args: &[String]) -> Result<()> {
             let target = value(args, "--name")
                 .or_else(|| pos.first().cloned())
                 .context("usage: omnix agent wait <name|pane>")?;
-            let until = csv(
-                &value(args, "--until")
-                    .unwrap_or_else(|| "turn-done".into())
-                    .split(',')
-                    .map(str::to_string)
-                    .collect::<Vec<_>>(),
-            );
+            let until = csv(&value(args, "--until")
+                .unwrap_or_else(|| "turn-done".into())
+                .split(',')
+                .map(str::to_string)
+                .collect::<Vec<_>>());
             let timeout = value(args, "--timeout")
                 .map(|text| text.parse::<u64>())
                 .transpose()
@@ -475,8 +479,15 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                 .unwrap_or(600);
             let want_quota = until.iter().any(|w| w == "quota");
             let has_gui = control::read_control(&control::runtime_dir()).is_some();
-            if !has_gui && handoff::find_any(&target).is_none() && panes().iter().all(|p| control::find_pane(std::slice::from_ref(p), &target).is_none()) {
-                bail!("Omnix app is not running and no headless handoff named '{target}' was found");
+            if !has_gui
+                && handoff::find_any(&target).is_none()
+                && panes()
+                    .iter()
+                    .all(|p| control::find_pane(std::slice::from_ref(p), &target).is_none())
+            {
+                bail!(
+                    "Omnix app is not running and no headless handoff named '{target}' was found"
+                );
             }
             let wait_started_epoch = control::epoch();
             let started = std::time::Instant::now();
@@ -490,8 +501,11 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                         println!("{}", serde_json::to_string_pretty(&out)?);
                         std::process::exit(75);
                     }
-                    let hit =
-                        wait_state_hit(&state, pane.get("exitCode").and_then(Value::as_i64), &until);
+                    let hit = wait_state_hit(
+                        &state,
+                        pane.get("exitCode").and_then(Value::as_i64),
+                        &until,
+                    );
                     if hit {
                         if has(args, "--json") {
                             println!("{}", serde_json::to_string_pretty(pane)?);
@@ -526,7 +540,11 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                                 pane_state(&row)
                             );
                         }
-                        bail!("handoff '{}' was not delivered ({})", target, record.outcome);
+                        bail!(
+                            "handoff '{}' was not delivered ({})",
+                            target,
+                            record.outcome
+                        );
                     }
                 }
                 if timeout > 0 && started.elapsed().as_secs() >= timeout {
@@ -575,7 +593,10 @@ fn cmd_agent(args: &[String]) -> Result<()> {
             println!(
                 "sent to {} ({})",
                 reply.get("paneKey").and_then(Value::as_str).unwrap_or("?"),
-                reply.get("state").and_then(Value::as_str).unwrap_or("unknown")
+                reply
+                    .get("state")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
             );
         }
         Some("adopt") => {
@@ -679,7 +700,13 @@ fn handoff_repo(args: &[String]) -> Result<PathBuf> {
     handoff::main_repo(&base)
 }
 
-fn quota_block(agent: &str, model: Option<&str>, home: &Path, stop: f64, live: bool) -> Option<String> {
+fn quota_block(
+    agent: &str,
+    model: Option<&str>,
+    home: &Path,
+    stop: f64,
+    live: bool,
+) -> Option<String> {
     let snapshot = if live {
         usage::snapshot_live_sync_for(&root(), home)
     } else {
@@ -687,7 +714,11 @@ fn quota_block(agent: &str, model: Option<&str>, home: &Path, stop: f64, live: b
     };
     let check = usage::check_quota_in_snapshot(&snapshot, agent, model);
     if check.exhausted {
-        return Some(check.reason.unwrap_or_else(|| format!("{agent} quota is exhausted")));
+        return Some(
+            check
+                .reason
+                .unwrap_or_else(|| format!("{agent} quota is exhausted")),
+        );
     }
     let entry = snapshot
         .get("agents")
@@ -709,7 +740,9 @@ fn quota_block(agent: &str, model: Option<&str>, home: &Path, stop: f64, live: b
         .filter_map(|window| window.get("usedPercent").and_then(Value::as_f64))
         .fold(0.0f64, f64::max);
     if used >= stop {
-        Some(format!("{agent} quota is {used:.0}% used (limit {stop:.0}%)"))
+        Some(format!(
+            "{agent} quota is {used:.0}% used (limit {stop:.0}%)"
+        ))
     } else {
         None
     }
@@ -719,7 +752,12 @@ fn quota_block(agent: &str, model: Option<&str>, home: &Path, stop: f64, live: b
 /// to spawn now or queue the handoff. No background runner. A CLI handoff may
 /// run with the app closed, so a missing control socket skips the pane gate
 /// instead of failing the command.
-fn run_gate(agent: &str, model: Option<&str>, max_parallel: usize, live_usage: bool) -> Result<Option<String>> {
+fn run_gate(
+    agent: &str,
+    model: Option<&str>,
+    max_parallel: usize,
+    live_usage: bool,
+) -> Result<Option<String>> {
     let state = control::request(&control::runtime_dir(), json!({"cmd": "state"})).ok();
     if let Some(state) = &state {
         let active = state
@@ -754,7 +792,13 @@ fn run_gate(agent: &str, model: Option<&str>, max_parallel: usize, live_usage: b
         .ok()
         .and_then(|value| value.parse::<f64>().ok())
         .unwrap_or(99.5);
-    Ok(quota_block(agent, model, &control::home(), stop, live_usage))
+    Ok(quota_block(
+        agent,
+        model,
+        &control::home(),
+        stop,
+        live_usage,
+    ))
 }
 
 fn cmd_handoff(args: &[String]) -> Result<()> {
@@ -790,7 +834,10 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
             }
         }
         Some("report") => {
-            let pos = positional(&args[1..], &["--repo", "--status", "--file", "--text", "--name"]);
+            let pos = positional(
+                &args[1..],
+                &["--repo", "--status", "--file", "--text", "--name"],
+            );
             let name = value(args, "--name")
                 .or_else(|| pos.first().cloned())
                 .context("usage: omnix handoff report <name> --status S --file F")?;
@@ -978,9 +1025,12 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                     .transpose()
                     .context("--max-parallel must be a number")?
                     .unwrap_or(2);
-                if let Some(reason) =
-                    run_gate(&options.agent, options.model.as_deref(), max_parallel, false)?
-                {
+                if let Some(reason) = run_gate(
+                    &options.agent,
+                    options.model.as_deref(),
+                    max_parallel,
+                    false,
+                )? {
                     let chosen = crate::fallback::get(&root(), &options.agent)
                         .filter(|fb| fb.auto && !fb.agent.is_empty())
                         .filter(|fb| crate::agent::resolve(&fb.agent).is_some());
@@ -1015,7 +1065,8 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                     if has(args, "--foreground") {
                         run_headless_worker(&record_path, has(args, "--force"))?;
                         if let Ok(bytes) = std::fs::read(&record_path) {
-                            if let Ok(updated) = serde_json::from_slice::<handoff::Handoff>(&bytes) {
+                            if let Ok(updated) = serde_json::from_slice::<handoff::Handoff>(&bytes)
+                            {
                                 record = updated;
                             }
                         }
@@ -1024,8 +1075,13 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                         for _ in 0..20 {
                             std::thread::sleep(std::time::Duration::from_millis(80));
                             if let Ok(bytes) = std::fs::read(&record_path) {
-                                if let Ok(updated) = serde_json::from_slice::<handoff::Handoff>(&bytes) {
-                                    if updated.pid.is_some() || updated.log.is_some() || updated.outcome == "queued" {
+                                if let Ok(updated) =
+                                    serde_json::from_slice::<handoff::Handoff>(&bytes)
+                                {
+                                    if updated.pid.is_some()
+                                        || updated.log.is_some()
+                                        || updated.outcome == "queued"
+                                    {
                                         record = updated;
                                         break;
                                     }
@@ -1064,7 +1120,10 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
             println!("brief:    {}", record.brief);
             println!("record:   {}", record_path.display());
             if record.outcome == "not-delivered" {
-                println!("launch:   {}", handoff::format_launch_preview(&root(), &record));
+                println!(
+                    "launch:   {}",
+                    handoff::format_launch_preview(&root(), &record)
+                );
             }
             if let Some(warning) = record.warning {
                 println!("warning:  {warning}");
@@ -1116,9 +1175,9 @@ fn cmd_lock(args: &[String]) -> Result<()> {
     let pos = positional(&args[1..], &["--owner", "--ttl", "--meta"]);
     match sub {
         "acquire" => {
-            let resource = pos
-                .first()
-                .context("usage: omnix lock acquire <resource> [--owner NAME] [--ttl SEC] [--meta K=V]")?;
+            let resource = pos.first().context(
+                "usage: omnix lock acquire <resource> [--owner NAME] [--ttl SEC] [--meta K=V]",
+            )?;
             let owner = value(args, "--owner").unwrap_or_else(locks::default_owner);
             let ttl = value(args, "--ttl")
                 .map(|text| text.parse::<u64>())
@@ -1189,7 +1248,10 @@ fn cmd_usage(args: &[String]) -> Result<()> {
     let mut snapshot = usage::snapshot_live_sync_for(&root(), &control::home());
     if let Value::Object(map) = &mut snapshot {
         map.insert("at".into(), json!(control::epoch()));
-        map.insert("atLocal".into(), json!(control::local_time(control::epoch())));
+        map.insert(
+            "atLocal".into(),
+            json!(control::local_time(control::epoch())),
+        );
     }
     if let Some(target) = value(args, "--check") {
         let (agent, model) = usage::split_agent_model(&root(), &target);
@@ -1242,7 +1304,10 @@ fn cmd_usage(args: &[String]) -> Result<()> {
             .cloned()
             .unwrap_or_default();
         if windows.is_empty() {
-            let state = entry.get("state").and_then(Value::as_str).unwrap_or("tidak diketahui");
+            let state = entry
+                .get("state")
+                .and_then(Value::as_str)
+                .unwrap_or("tidak diketahui");
             let reset = entry
                 .get("resetLocal")
                 .and_then(Value::as_str)
@@ -1261,16 +1326,27 @@ fn cmd_usage(args: &[String]) -> Result<()> {
                 .unwrap_or_else(|| {
                     if minutes == 300 || w.get("kind").and_then(Value::as_str) == Some("primary") {
                         "5 jam".to_string()
-                    } else if minutes == 10080 || w.get("kind").and_then(Value::as_str) == Some("secondary") {
+                    } else if minutes == 10080
+                        || w.get("kind").and_then(Value::as_str) == Some("secondary")
+                    {
                         "mingguan".to_string()
                     } else {
-                        w.get("kind").and_then(Value::as_str).unwrap_or("quota").to_string()
+                        w.get("kind")
+                            .and_then(Value::as_str)
+                            .unwrap_or("quota")
+                            .to_string()
                     }
                 });
             let used = w.get("usedPercent").and_then(Value::as_f64).unwrap_or(0.0);
-            let reset_secs = w.get("resetsInSeconds").and_then(Value::as_i64).unwrap_or(0);
+            let reset_secs = w
+                .get("resetsInSeconds")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
             let reset_text = if reset_secs > 0 {
-                format!(" (pulih {})", control::local_time(now_epoch + reset_secs as u64))
+                format!(
+                    " (pulih {})",
+                    control::local_time(now_epoch + reset_secs as u64)
+                )
             } else {
                 String::new()
             };
@@ -1338,7 +1414,9 @@ fn cmd_doctor(args: &[String]) -> Result<()> {
             Some(path) => println!(
                 "{agent:<12} {:<40} {}",
                 path,
-                row.get("version").and_then(Value::as_str).unwrap_or("installed")
+                row.get("version")
+                    .and_then(Value::as_str)
+                    .unwrap_or("installed")
             ),
             None => println!("{agent:<12} missing"),
         }
@@ -1357,7 +1435,10 @@ fn cmd_doctor(args: &[String]) -> Result<()> {
         if control.is_some() { "live" } else { "off" },
         browser::version().unwrap_or_else(|| "missing".into())
     );
-    if let Some(app) = control::version_mismatch(env!("CARGO_PKG_VERSION"), control.as_ref().and_then(|c| c.version.as_deref())) {
+    if let Some(app) = control::version_mismatch(
+        env!("CARGO_PKG_VERSION"),
+        control.as_ref().and_then(|c| c.version.as_deref()),
+    ) {
         println!(
             "warning: the running app is {app} but this CLI is {}. Restart the app to load the new build.",
             env!("CARGO_PKG_VERSION")
@@ -1468,7 +1549,11 @@ fn cmd_events(args: &[String]) -> Result<()> {
 fn event_who(row: &Value) -> String {
     ["handoff", "name", "pane"]
         .iter()
-        .find_map(|key| row.get(*key).and_then(Value::as_str).filter(|text| !text.is_empty()))
+        .find_map(|key| {
+            row.get(*key)
+                .and_then(Value::as_str)
+                .filter(|text| !text.is_empty())
+        })
         .unwrap_or("")
         .to_string()
 }
@@ -1492,7 +1577,7 @@ fn cmd_gc(args: &[String]) -> Result<()> {
                 println!("dry run: nothing changed");
             }
         }
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(feature = "gui"))]
     {
@@ -1500,7 +1585,6 @@ fn cmd_gc(args: &[String]) -> Result<()> {
         bail!("gc needs a build with the gui feature")
     }
 }
-
 
 fn cmd_preview(args: &[String]) -> Result<()> {
     let sub = args.first().map(String::as_str).unwrap_or("");
@@ -1581,7 +1665,9 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
     let sub = args.first().map(String::as_str).unwrap_or("");
     let pos = positional(
         &args[1..],
-        &["--kind", "--dir", "--sha256", "--revoke", "--grant", "--limit"],
+        &[
+            "--kind", "--dir", "--sha256", "--revoke", "--grant", "--limit",
+        ],
     );
     match sub {
         "list" => {
@@ -1601,9 +1687,15 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
                         } else {
                             "disabled"
                         },
-                        row["kinds"].as_array().map(|k| {
-                            k.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(",")
-                        }).unwrap_or_default(),
+                        row["kinds"]
+                            .as_array()
+                            .map(|k| {
+                                k.iter()
+                                    .filter_map(Value::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            })
+                            .unwrap_or_default(),
                         row["permissions"].as_str().unwrap_or("")
                     );
                     if let Some(error) = row["error"].as_str() {
@@ -1617,7 +1709,11 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
             let value = plugin::search(&query)?;
             if has(args, "--json") {
                 println!("{}", serde_json::to_string_pretty(&value)?);
-            } else if value["plugins"].as_array().map(Vec::is_empty).unwrap_or(true) {
+            } else if value["plugins"]
+                .as_array()
+                .map(Vec::is_empty)
+                .unwrap_or(true)
+            {
                 println!("no catalog plugin matches '{}'", query.trim());
             } else {
                 for row in value["plugins"].as_array().cloned().unwrap_or_default() {
@@ -1638,7 +1734,9 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
             }
         }
         "install" => {
-            let source = pos.first().context("usage: omnix plugin install <name|folder|archive>")?;
+            let source = pos
+                .first()
+                .context("usage: omnix plugin install <name|folder|archive>")?;
             let value = plugin::install(source)?;
             if has(args, "--json") {
                 println!("{}", serde_json::to_string_pretty(&value)?);
@@ -1649,7 +1747,10 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
                     value["version"].as_str().unwrap_or("?"),
                     value["path"].as_str().unwrap_or("")
                 );
-                println!("permissions: {}", value["permissions"].as_str().unwrap_or("none"));
+                println!(
+                    "permissions: {}",
+                    value["permissions"].as_str().unwrap_or("none")
+                );
                 println!("{}", value["note"].as_str().unwrap_or(""));
             }
         }
@@ -1663,12 +1764,18 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
             println!("removed {}", value["name"].as_str().unwrap_or(name));
         }
         "enable" | "disable" => {
-            let name = pos.first().context("usage: omnix plugin enable|disable <name>")?;
+            let name = pos
+                .first()
+                .context("usage: omnix plugin enable|disable <name>")?;
             let value = plugin::set_enabled(name, sub == "enable")?;
             println!(
                 "{} {}",
                 value["name"].as_str().unwrap_or(name),
-                if sub == "enable" { "enabled" } else { "disabled" }
+                if sub == "enable" {
+                    "enabled"
+                } else {
+                    "disabled"
+                }
             );
         }
         "doctor" => {
@@ -1676,13 +1783,21 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
             if has(args, "--json") {
                 println!("{}", serde_json::to_string_pretty(&value)?);
             } else {
-                if value["plugins"].as_array().map(Vec::is_empty).unwrap_or(true) {
+                if value["plugins"]
+                    .as_array()
+                    .map(Vec::is_empty)
+                    .unwrap_or(true)
+                {
                     println!("no plugins installed");
                 }
                 for row in value["plugins"].as_array().cloned().unwrap_or_default() {
                     println!(
                         "{} {}",
-                        if row["ok"].as_bool().unwrap_or(false) { "ok  " } else { "FAIL" },
+                        if row["ok"].as_bool().unwrap_or(false) {
+                            "ok  "
+                        } else {
+                            "FAIL"
+                        },
                         row["name"].as_str().unwrap_or("?")
                     );
                     for problem in row["problems"].as_array().cloned().unwrap_or_default() {
@@ -1692,7 +1807,9 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
             }
         }
         "permissions" => {
-            let name = pos.first().context("usage: omnix plugin permissions <name>")?;
+            let name = pos
+                .first()
+                .context("usage: omnix plugin permissions <name>")?;
             if let Some(keys) = value(args, "--revoke") {
                 let keys = csv(&[keys]);
                 plugin::revoke(name, &keys)?;
@@ -1703,12 +1820,20 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
             }
             let rows = plugin::list();
             if let Some(row) = rows.iter().find(|row| row["name"].as_str() == Some(name)) {
-                println!("{}: {}", name, row["permissions"].as_str().unwrap_or("none"));
+                println!(
+                    "{}: {}",
+                    name,
+                    row["permissions"].as_str().unwrap_or("none")
+                );
                 println!(
                     "granted: {}",
                     row["granted"]
                         .as_array()
-                        .map(|keys| keys.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(","))
+                        .map(|keys| keys
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(","))
                         .unwrap_or_default()
                 );
             } else {
@@ -1716,7 +1841,9 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
             }
         }
         "new" => {
-            let name = pos.first().context("usage: omnix plugin new <name> --kind command")?;
+            let name = pos
+                .first()
+                .context("usage: omnix plugin new <name> --kind command")?;
             let kind = value(args, "--kind").unwrap_or_else(|| "command".into());
             let dir = value(args, "--dir").map(PathBuf::from);
             let value = plugin::scaffold(name, &kind, dir)?;
@@ -1728,12 +1855,16 @@ fn cmd_plugin(args: &[String]) -> Result<()> {
             println!("next: {}", value["next"].as_str().unwrap_or(""));
         }
         "run" => {
-            let name = pos.first().context("usage: omnix plugin run <name> [args...]")?;
+            let name = pos
+                .first()
+                .context("usage: omnix plugin run <name> [args...]")?;
             let forwarded: Vec<String> = args.iter().skip(2).cloned().collect();
             let value = plugin::run_command(name, &forwarded)?;
             print_plugin_result(&value);
         }
-        _ => bail!("usage: omnix plugin list|search|install|update|remove|enable|disable|doctor|permissions|new|run"),
+        _ => bail!(
+            "usage: omnix plugin list|search|install|update|remove|enable|disable|doctor|permissions|new|run"
+        ),
     }
     Ok(())
 }
@@ -1756,7 +1887,10 @@ fn print_plugin_result(value: &Value) {
         eprint!("{text}");
     }
     if value.get("stdout").is_none() && value.get("stderr").is_none() {
-        println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(value).unwrap_or_default()
+        );
     }
     if let Some(code) = value.get("exitCode").and_then(Value::as_i64) {
         if code != 0 {
@@ -1798,7 +1932,10 @@ fn cmd_dev(args: &[String]) -> Result<()> {
             );
         }
         "test" => {
-            let value = dev::test(value(args, "--workspace").map(PathBuf::from), has(args, "--offline"))?;
+            let value = dev::test(
+                value(args, "--workspace").map(PathBuf::from),
+                has(args, "--offline"),
+            )?;
             println!("{}", serde_json::to_string_pretty(&value)?);
             if value["ok"].as_bool() == Some(false) {
                 bail!("dev test failed");
@@ -1883,7 +2020,9 @@ fn cmd_browser(args: &[String]) -> Result<()> {
                 if let Some(session) = value["session"].as_str() {
                     println!("closed browser session {session}");
                     if value["daemon"].as_u64().is_some() {
-                        println!("shared Lightpanda daemon is still running (use --all to stop it)");
+                        println!(
+                            "shared Lightpanda daemon is still running (use --all to stop it)"
+                        );
                     }
                 } else {
                     println!("stopped shared lightpanda");
@@ -1913,9 +2052,13 @@ fn cmd_browser(args: &[String]) -> Result<()> {
                 let domain = value(args, "--domain").context("--domain HOST is required")?;
                 let out = value(args, "--out");
                 let value = match action {
-                    "import" => cookies::import(&root(), &domain, out.as_deref(), has(args, "--yes"))?,
+                    "import" => {
+                        cookies::import(&root(), &domain, out.as_deref(), has(args, "--yes"))?
+                    }
                     "clear" => cookies::clear(&root(), &domain, out.as_deref())?,
-                    _ => bail!("usage: omnix browser session import|clear --from native --domain HOST"),
+                    _ => bail!(
+                        "usage: omnix browser session import|clear --from native --domain HOST"
+                    ),
                 };
                 if has(args, "--json") {
                     println!("{}", serde_json::to_string_pretty(&value)?);
@@ -1926,8 +2069,13 @@ fn cmd_browser(args: &[String]) -> Result<()> {
                         value["domain"].as_str().unwrap_or(""),
                         value["path"].as_str().unwrap_or("")
                     );
-                    println!("agent: omnix browser mcp   (the session file is picked up automatically)");
-                    println!("clear: omnix browser session clear --domain {}", value["domain"].as_str().unwrap_or(""));
+                    println!(
+                        "agent: omnix browser mcp   (the session file is picked up automatically)"
+                    );
+                    println!(
+                        "clear: omnix browser session clear --domain {}",
+                        value["domain"].as_str().unwrap_or("")
+                    );
                 } else {
                     println!(
                         "{} cookie session for {}: {}",
@@ -2092,7 +2240,8 @@ fn pick_available_fallback(
             );
             continue;
         }
-        let check = usage::check_quota_in_snapshot(&snapshot, &target.agent, target.model.as_deref());
+        let check =
+            usage::check_quota_in_snapshot(&snapshot, &target.agent, target.model.as_deref());
         if check.exhausted {
             control::event(
                 "agent-quota-action",
@@ -2146,8 +2295,7 @@ fn cmd_headless_worker(args: &[String]) -> Result<()> {
 }
 
 fn wait_rejected(record: &handoff::Handoff) -> bool {
-    matches!(record.outcome.as_str(), "not-delivered" | "failed")
-        || record.blocked_reason.is_some()
+    matches!(record.outcome.as_str(), "not-delivered" | "failed") || record.blocked_reason.is_some()
 }
 
 fn wait_state_hit(state: &str, exit_code: Option<i64>, until: &[String]) -> bool {
@@ -2159,104 +2307,6 @@ fn wait_state_hit(state: &str, exit_code: Option<i64>, until: &[String]) -> bool
         "exited" => exit_code.unwrap_or(0) == 0 && until.iter().any(|w| w == "turn-done"),
         "quota" => until.iter().any(|w| w == "exited"),
         _ => false,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wait_does_not_call_a_failed_exit_turn_done() {
-        let until = vec!["turn-done".to_string()];
-        assert!(wait_state_hit("turn-done", None, &until));
-        assert!(wait_state_hit("exited", Some(0), &until));
-        assert!(!wait_state_hit("exited", Some(1), &until));
-        assert!(!wait_state_hit("exited", Some(70), &until));
-        assert!(wait_state_hit("exited", Some(1), &["exited".to_string()]));
-    }
-
-    #[test]
-    fn events_name_the_handoff_from_its_name_field() {
-        let row = serde_json::json!({"kind": "handoff-created", "name": "gnd1"});
-        assert_eq!(event_who(&row), "gnd1");
-        let row = serde_json::json!({"kind": "handoff-delivered", "name": "lapor", "pane": "ho:lapor"});
-        assert_eq!(event_who(&row), "lapor");
-        let row = serde_json::json!({"kind": "agent-started", "pane": "ho:boss1"});
-        assert_eq!(event_who(&row), "ho:boss1");
-    }
-
-    #[test]
-    fn every_subcommand_answers_help_before_doing_work() {
-        let help = |words: &[&str]| {
-            let args: Vec<String> = words.iter().map(|w| w.to_string()).collect();
-            help_text(&args)
-        };
-        for cmd in [
-            "agent", "sleep", "resume", "status", "handoff", "lock", "usage", "doctor", "events",
-            "gc", "preview", "plugin", "dev", "browser", "diagnostics", "update", "history",
-        ] {
-            assert!(help(&[cmd, "--help"]).is_some(), "{cmd} has no --help");
-        }
-        assert!(help(&["handoff", "-h"]).is_some());
-        assert!(help(&["agent", "adopt", "--help"]).unwrap().contains("omnix agent adopt"));
-        assert!(help(&["handoff", "uji", "--help"]).unwrap().contains("--fallback AGENT"));
-        assert!(help(&["agent", "adopt", "--agent", "claude"]).is_none());
-        assert!(help(&["--help"]).is_none());
-    }
-
-    #[test]
-    fn version_reports_the_package_version() {
-        assert_eq!(version_text(), format!("omnix {}", env!("CARGO_PKG_VERSION")));
-    }
-
-    #[test]
-    fn wait_rejects_a_handoff_that_was_never_delivered() {
-        let home = std::env::temp_dir().join(format!("omnix-wait-home-{}", std::process::id()));
-        std::fs::create_dir_all(&home).unwrap();
-        unsafe { std::env::set_var("OMNIX_HOME", &home) };
-        let dir = std::env::temp_dir().join(format!(
-            "omnix-wait-reject-{}-{}",
-            std::process::id(),
-            control::epoch()
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        let git = |args: &[&str]| {
-            std::process::Command::new("git")
-                .args(args)
-                .current_dir(&dir)
-                .output()
-                .unwrap()
-        };
-        git(&["init", "-q"]);
-        std::fs::write(dir.join("README.md"), "x\n").unwrap();
-        git(&["add", "."]);
-        git(&[
-            "-c",
-            "user.email=t@e",
-            "-c",
-            "user.name=T",
-            "commit",
-            "-qm",
-            "init",
-        ]);
-        let (record, _) = crate::handoff::create_with(
-            &dir,
-            crate::handoff::CreateOptions {
-                name: "rej".into(),
-                agent: "codex".into(),
-                prompt: "x".into(),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(record.outcome, "not-delivered");
-        assert!(wait_rejected(&record));
-        let mut working = record.clone();
-        working.outcome = "working".into();
-        assert!(!wait_rejected(&working));
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 
@@ -2290,7 +2340,10 @@ fn wait_for_queue_conditions(record: &mut handoff::Handoff, record_path: &Path) 
                 .map(|h| {
                     h.closed
                         || h.status.as_deref() == Some("done")
-                        || matches!(h.outcome.as_str(), "delivered-headless" | "failed" | "blocked: quota")
+                        || matches!(
+                            h.outcome.as_str(),
+                            "delivered-headless" | "failed" | "blocked: quota"
+                        )
                         || h.exit_code.is_some()
                 })
                 .unwrap_or(false);
@@ -2343,8 +2396,8 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
     record.log = Some(log_path.to_string_lossy().into_owned());
 
     let policy = handoff::parse_on_quota(&root(), record.on_quota.as_deref())?;
-    let base_brief = std::fs::read_to_string(&record.brief)
-        .with_context(|| format!("read {}", record.brief))?;
+    let base_brief =
+        std::fs::read_to_string(&record.brief).with_context(|| format!("read {}", record.brief))?;
     let mut next_prompt = base_brief.clone();
     let mut fallback_idx = 0usize;
     let stall_secs = env::var("OMNIX_STALL_SECONDS")
@@ -2397,8 +2450,11 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
             }
         }
         #[cfg(feature = "gui")]
-        if agent::base_agent(&record.agent) != "claude" && agent::base_agent(&record.agent) != "codex" {
-            if let Ok(hargs) = pty::harness_args(&PathBuf::from(&record.repo), &record.agent, &argv) {
+        if agent::base_agent(&record.agent) != "claude"
+            && agent::base_agent(&record.agent) != "codex"
+        {
+            if let Ok(hargs) = pty::harness_args(&PathBuf::from(&record.repo), &record.agent, &argv)
+            {
                 argv.extend(hargs);
             }
         }
@@ -2441,7 +2497,8 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
         let stdout = child.stdout.take();
         let stderr = child.stderr.take();
         let (line_tx, line_rx) = std::sync::mpsc::channel::<String>();
-        let spawn_reader = |stream: Option<Box<dyn std::io::Read + Send>>, tx: std::sync::mpsc::Sender<String>| {
+        let spawn_reader = |stream: Option<Box<dyn std::io::Read + Send>>,
+                            tx: std::sync::mpsc::Sender<String>| {
             if let Some(reader) = stream {
                 std::thread::spawn(move || {
                     let buf = BufReader::new(reader);
@@ -2509,7 +2566,11 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
                     tail_buf.push('\n');
                     if tail_buf.len() > 8192 {
                         let drop_to = tail_buf.len() - 4096;
-                        if let Some(idx) = tail_buf.char_indices().find(|(i, _)| *i >= drop_to).map(|(i, _)| i) {
+                        if let Some(idx) = tail_buf
+                            .char_indices()
+                            .find(|(i, _)| *i >= drop_to)
+                            .map(|(i, _)| i)
+                        {
                             tail_buf.drain(..idx);
                         }
                     }
@@ -2555,7 +2616,10 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
 
         let status = child.wait().context("wait for headless agent")?;
         let ok = status.success();
-        let exit_code = status.code().map(|c| c as i64).unwrap_or(if ok { 0 } else { 1 });
+        let exit_code = status
+            .code()
+            .map(|c| c as i64)
+            .unwrap_or(if ok { 0 } else { 1 });
         record.exit_code = Some(exit_code);
 
         if !ok && detected_quota.is_none() {
@@ -2711,7 +2775,12 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
             } else {
                 tail_lines.join("\n")
             };
-            if let Ok(rep) = handoff::report(&repo, &record.name, if ok { "done" } else { "failed" }, &summary) {
+            if let Ok(rep) = handoff::report(
+                &repo,
+                &record.name,
+                if ok { "done" } else { "failed" },
+                &summary,
+            ) {
                 record.status = rep.status;
                 record.report = rep.report;
             }
@@ -2824,7 +2893,7 @@ fn run() -> Result<()> {
 fn start_app() -> Result<()> {
     #[cfg(feature = "gui")]
     {
-        return gui::run();
+        gui::run()
     }
     #[cfg(not(feature = "gui"))]
     {
@@ -2852,5 +2921,130 @@ fn main() {
     if let Err(e) = run() {
         eprintln!("omnix: {e:#}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wait_does_not_call_a_failed_exit_turn_done() {
+        let until = vec!["turn-done".to_string()];
+        assert!(wait_state_hit("turn-done", None, &until));
+        assert!(wait_state_hit("exited", Some(0), &until));
+        assert!(!wait_state_hit("exited", Some(1), &until));
+        assert!(!wait_state_hit("exited", Some(70), &until));
+        assert!(wait_state_hit("exited", Some(1), &["exited".to_string()]));
+    }
+
+    #[test]
+    fn events_name_the_handoff_from_its_name_field() {
+        let row = serde_json::json!({"kind": "handoff-created", "name": "gnd1"});
+        assert_eq!(event_who(&row), "gnd1");
+        let row =
+            serde_json::json!({"kind": "handoff-delivered", "name": "lapor", "pane": "ho:lapor"});
+        assert_eq!(event_who(&row), "lapor");
+        let row = serde_json::json!({"kind": "agent-started", "pane": "ho:boss1"});
+        assert_eq!(event_who(&row), "ho:boss1");
+    }
+
+    #[test]
+    fn every_subcommand_answers_help_before_doing_work() {
+        let help = |words: &[&str]| {
+            let args: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+            help_text(&args)
+        };
+        for cmd in [
+            "agent",
+            "sleep",
+            "resume",
+            "status",
+            "handoff",
+            "lock",
+            "usage",
+            "doctor",
+            "events",
+            "gc",
+            "preview",
+            "plugin",
+            "dev",
+            "browser",
+            "diagnostics",
+            "update",
+            "history",
+        ] {
+            assert!(help(&[cmd, "--help"]).is_some(), "{cmd} has no --help");
+        }
+        assert!(help(&["handoff", "-h"]).is_some());
+        assert!(
+            help(&["agent", "adopt", "--help"])
+                .unwrap()
+                .contains("omnix agent adopt")
+        );
+        assert!(
+            help(&["handoff", "uji", "--help"])
+                .unwrap()
+                .contains("--fallback AGENT")
+        );
+        assert!(help(&["agent", "adopt", "--agent", "claude"]).is_none());
+        assert!(help(&["--help"]).is_none());
+    }
+
+    #[test]
+    fn version_reports_the_package_version() {
+        assert_eq!(
+            version_text(),
+            format!("omnix {}", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
+    fn wait_rejects_a_handoff_that_was_never_delivered() {
+        let home = std::env::temp_dir().join(format!("omnix-wait-home-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        unsafe { std::env::set_var("OMNIX_HOME", &home) };
+        let dir = std::env::temp_dir().join(format!(
+            "omnix-wait-reject-{}-{}",
+            std::process::id(),
+            control::epoch()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(dir.join("README.md"), "x\n").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.email=t@e",
+            "-c",
+            "user.name=T",
+            "commit",
+            "-qm",
+            "init",
+        ]);
+        let (record, _) = crate::handoff::create_with(
+            &dir,
+            crate::handoff::CreateOptions {
+                name: "rej".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.outcome, "not-delivered");
+        assert!(wait_rejected(&record));
+        let mut working = record.clone();
+        working.outcome = "working".into();
+        assert!(!wait_rejected(&working));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
