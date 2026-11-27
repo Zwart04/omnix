@@ -5,6 +5,8 @@ Notable changes to Omnix. Release notes for every tag are also on the
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-11-27
+
 ### Added
 
 - **Split panes choose their layout.** Every terminal header carries an

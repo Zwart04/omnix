@@ -282,8 +282,10 @@ Working and tested in this repository:
 - Terminals split up to four panes inside one group: `Ctrl+Shift+D`, the `+`
   menu, the `Split Terminal` palette command, or the small floating split icon on
   a single pane. Split panes get a thin bar with the title, split button, agent
-  handoff, and close button. Two panes sit side by side, three become two above
-  plus one wide below, and four become a 2x2 grid. Every pane owns its pty; the
+  handoff, and close button. Each bar carries an Auto / Vertical / Stacked
+  layout picker shared by the group. Auto keeps two panes side by side, three as
+  two above plus one wide below, and four as a 2x2 grid; Vertical gives every
+  pane a full-height column, Stacked piles them. Every pane owns its pty; the
   last closed pane returns the group to a single full pane. The split button is
   disabled once the group has four panes.
 - The status bar shows an Orca-style `Used` strip: each agent logo, the window

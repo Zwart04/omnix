@@ -326,8 +326,9 @@ dituju:
 - **Area konten** — xterm untuk tab terminal; WebView konten hanya dibuat saat
   tab browser aktif dan ditutup saat tab lain dipilih. Tiap pane terminal punya
   tombol split dan close di sudut kanan atas (muncul saat hover/focus). Satu
-  grup menampung sampai empat pane: 2 berdampingan, 3 dengan satu pane lebar di
-  bawah, 4 dalam grid 2x2.
+  grup menampung sampai empat pane. Picker layout di tiap bar mengatur seluruh
+  grup: Auto menampilkan 2 berdampingan, 3 dengan satu pane lebar di bawah, dan
+  4 dalam grid 2x2; Vertical memakai kolom setinggi penuh; Stacked menumpuk.
 - **Bar status** — memori app dan agent, jumlah sesi/pesan index, dan toast
   singkat untuk hasil aksi.
 

@@ -281,9 +281,12 @@ Yang sudah jalan dan dites di repo ini:
   bar tipis di atasnya berisi judul, tombol split, hand off ke
   agent, dan tombol silang untuk menutup pane itu. Pill mengambang disembunyikan
   saat bar aktif; pada pane tunggal pill tetap bisa digeser lewat grip dan
-  double-click untuk kembali ke pojok. Dua pane tampil berdampingan, tiga pane
-  jadi dua di atas plus satu lebar di bawah, empat pane jadi grid 2x2. Tiap pane
-  punya pty sendiri; tombol close di tab strip atau silang di bar menutup pty
+  double-click untuk kembali ke pojok. Tiap bar punya picker layout Auto /
+  Vertical / Stacked yang berlaku untuk seluruh grup. Auto menampilkan dua pane
+  berdampingan, tiga pane jadi dua di atas plus satu lebar di bawah, dan empat
+  pane jadi grid 2x2; Vertical memberi tiap pane kolom setinggi penuh, Stacked
+  menumpuknya. Tiap pane punya pty sendiri; tombol close di tab strip atau
+  silang di bar menutup pty
   itu dan pane terakhir kembali menjadi satu pane penuh. Tombol split
   dinonaktifkan saat grup sudah berisi empat pane.
 - Status bar menampilkan strip `Used` ala Orca: logo tiap agent, window yang
