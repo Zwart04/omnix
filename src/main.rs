@@ -57,6 +57,7 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
 
   omnix agent track --agent A --session ID [--cwd PATH] [--pane KEY] [--workspace PATH]
   omnix agent status [--handoff NAME] [--json]
+  omnix agent adopt --agent A [--session ID] [--cwd PATH] [--title TEXT]
   omnix agent wait <name|pane> [--until turn-done,needs-approval,exited,quota] [--timeout SEC] [--json]
   omnix agent send <name|pane> --text TEXT|--file FILE [--force]
   omnix sleep [--workspace PATH]
@@ -2164,6 +2165,30 @@ mod tests {
     }
 
     #[test]
+    fn every_subcommand_answers_help_before_doing_work() {
+        let help = |words: &[&str]| {
+            let args: Vec<String> = words.iter().map(|w| w.to_string()).collect();
+            help_text(&args)
+        };
+        for cmd in [
+            "agent", "sleep", "resume", "status", "handoff", "lock", "usage", "doctor", "events",
+            "gc", "preview", "plugin", "dev", "browser", "diagnostics", "update", "history",
+        ] {
+            assert!(help(&[cmd, "--help"]).is_some(), "{cmd} has no --help");
+        }
+        assert!(help(&["handoff", "-h"]).is_some());
+        assert!(help(&["agent", "adopt", "--help"]).unwrap().contains("omnix agent adopt"));
+        assert!(help(&["handoff", "uji", "--help"]).unwrap().contains("--fallback AGENT"));
+        assert!(help(&["agent", "adopt", "--agent", "claude"]).is_none());
+        assert!(help(&["--help"]).is_none());
+    }
+
+    #[test]
+    fn version_reports_the_package_version() {
+        assert_eq!(version_text(), format!("omnix {}", env!("CARGO_PKG_VERSION")));
+    }
+
+    #[test]
     fn wait_rejects_a_handoff_that_was_never_delivered() {
         let dir = std::env::temp_dir().join(format!(
             "omnix-wait-reject-{}-{}",
@@ -2686,8 +2711,41 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
     Ok(())
 }
 
+fn version_text() -> String {
+    format!("omnix {}", env!("CARGO_PKG_VERSION"))
+}
+
+/// Usage block for `omnix <cmd> ... --help`, taken from HELP so it cannot drift
+/// from the documented commands. Top-level `--help` is handled by the dispatcher.
+fn help_text(args: &[String]) -> Option<String> {
+    let cmd = args.first()?;
+    if cmd.starts_with('-') || !args.iter().any(|a| a == "-h" || a == "--help") {
+        return None;
+    }
+    let mut out = String::new();
+    let mut shown = false;
+    for line in HELP.lines() {
+        if line.starts_with("  omnix ") {
+            shown = line.split_whitespace().nth(1) == Some(cmd.as_str());
+        } else if !line.trim().is_empty() && !line.starts_with("  omnix ") {
+            shown = shown && line.starts_with("      ");
+        } else {
+            shown = false;
+        }
+        if shown {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
+    if let Some(text) = help_text(&args) {
+        print!("{text}");
+        return Ok(());
+    }
     match args.first().map(String::as_str) {
         Some("history") => cmd_history(&args[1..]),
         Some("agent") => cmd_agent(&args[1..]),
@@ -2710,7 +2768,7 @@ fn run() -> Result<()> {
         Some("update") => cmd_update(&args[1..]),
         Some("app") => start_app(),
         Some("-V" | "--version" | "version") => {
-            println!("omnix {}", env!("CARGO_PKG_VERSION"));
+            println!("{}", version_text());
             Ok(())
         }
         Some("-h" | "--help" | "help") => {
