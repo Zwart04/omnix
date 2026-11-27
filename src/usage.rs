@@ -1561,4 +1561,38 @@ mod tests {
         assert!(!check_quota_in_snapshot(&stale, "claude", None).exhausted);
         let _ = std::fs::remove_dir_all(&root);
     }
+
+    #[test]
+    fn unknown_reset_and_retryable_stay_null() {
+        let hit = detect_exhaustion("quota exhausted").expect("hit");
+        assert_eq!(hit.reset_at, None);
+        assert_eq!(hit.retryable, None);
+
+        let no_retry =
+            detect_exhaustion("quota exceeded\n{\"error\":{\"retryable\":false}}").expect("hit");
+        assert_eq!(no_retry.retryable, Some(false));
+    }
+
+    #[test]
+    fn duplicate_quota_events_collapse_to_one() {
+        let root = std::env::temp_dir().join(format!("omnix-quota-dup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join(".omnix")).unwrap();
+        let line = serde_json::json!({
+            "kind": "agent-quota-exhausted",
+            "agent": "codex",
+            "at": unix_now() - 10,
+            "model": null,
+            "resetAt": null,
+            "confidence": "high"
+        });
+        std::fs::write(
+            root.join(".omnix/events.jsonl"),
+            format!("{line}\n{line}\n{line}\n"),
+        )
+        .unwrap();
+        let events = exhaustion_events(&root);
+        assert_eq!(events.len(), 1, "duplicate events: {events:?}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

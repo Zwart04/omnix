@@ -1418,6 +1418,19 @@ mod tests {
     }
 
     #[test]
+    fn queued_handoff_row_has_a_state_and_status() {
+        let dir = temp_repo("queued-row");
+        let (mut record, _) = create(&dir, "q", "codex", "x", None, false).unwrap();
+        record.outcome = "queued".into();
+        record.status = None;
+        let row = headless_pane_row(&record);
+        assert_eq!(row["state"], "queued");
+        assert_eq!(row["status"], "queued");
+        assert!(!row["status"].is_null());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn close_stops_the_recorded_worker() {
         let dir = temp_repo("close-worker");
         let (mut record, _) = create(&dir, "stopme", "codex", "x", None, false).unwrap();

@@ -510,6 +510,24 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                         std::process::exit(75);
                     }
                 }
+                // A handoff that was never delivered has no pane and will never
+                // reach the predicate, so fail now instead of waiting the full
+                // timeout.
+                if let Some(record) = handoff::find_any(&target) {
+                    if wait_rejected(&record) {
+                        let row = handoff::headless_pane_row(&record);
+                        if has(args, "--json") {
+                            println!("{}", serde_json::to_string_pretty(&row)?);
+                        } else {
+                            println!(
+                                "{} {}",
+                                row.get("paneKey").and_then(Value::as_str).unwrap_or("?"),
+                                pane_state(&row)
+                            );
+                        }
+                        bail!("handoff '{}' was not delivered ({})", target, record.outcome);
+                    }
+                }
                 if timeout > 0 && started.elapsed().as_secs() >= timeout {
                     bail!(
                         "timed out after {timeout}s waiting for '{}' ({})",
@@ -2114,6 +2132,11 @@ fn cmd_headless_worker(args: &[String]) -> Result<()> {
     run_headless_worker(Path::new(&record_path), has(args, "--force"))
 }
 
+fn wait_rejected(record: &handoff::Handoff) -> bool {
+    matches!(record.outcome.as_str(), "not-delivered" | "failed")
+        || record.blocked_reason.is_some()
+}
+
 fn wait_state_hit(state: &str, exit_code: Option<i64>, until: &[String]) -> bool {
     if until.iter().any(|want| want == state) {
         return true;
@@ -2138,6 +2161,52 @@ mod tests {
         assert!(!wait_state_hit("exited", Some(1), &until));
         assert!(!wait_state_hit("exited", Some(70), &until));
         assert!(wait_state_hit("exited", Some(1), &["exited".to_string()]));
+    }
+
+    #[test]
+    fn wait_rejects_a_handoff_that_was_never_delivered() {
+        let dir = std::env::temp_dir().join(format!(
+            "omnix-wait-reject-{}-{}",
+            std::process::id(),
+            control::epoch()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .unwrap()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(dir.join("README.md"), "x\n").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.email=t@e",
+            "-c",
+            "user.name=T",
+            "commit",
+            "-qm",
+            "init",
+        ]);
+        let (record, _) = crate::handoff::create_with(
+            &dir,
+            crate::handoff::CreateOptions {
+                name: "rej".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.outcome, "not-delivered");
+        assert!(wait_rejected(&record));
+        let mut working = record.clone();
+        working.outcome = "working".into();
+        assert!(!wait_rejected(&working));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

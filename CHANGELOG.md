@@ -38,6 +38,9 @@ Notable changes to Omnix. Release notes for every tag are also on the
   worker and agent, and a queued worker exits when its record is closed.
 - **No zombie agents** — exited pane children are killed and awaited, so no
   `[agy] <defunct>` remains after close.
+- **`agent wait` fails fast on a rejected handoff** — a handoff that was never
+  delivered (or is blocked) returns immediately with its state instead of
+  waiting out the full timeout.
 - **`omnix --version`** prints the package version.
 
 ## [0.8.0] - 2026-11-26
