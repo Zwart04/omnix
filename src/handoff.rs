@@ -1246,6 +1246,11 @@ pub fn report(repo: &Path, name: &str, status: &str, text: &str) -> Result<Hando
     let repo = main_repo(repo)?;
     let mut record = find_in(&repo, &name)
         .with_context(|| format!("no open handoff '{name}' in {}", repo.display()))?;
+    // One source of truth: a repeat report with the same status (for example a
+    // headless worker after its agent already reported) changes nothing.
+    if record.report.is_some() && record.status.as_deref() == Some(status) {
+        return Ok(record);
+    }
     let path = PathBuf::from(&record.repo)
         .join(".omnix")
         .join("handoffs")
@@ -1909,6 +1914,30 @@ mod tests {
         assert!(Path::new(reported.report.as_deref().unwrap()).exists());
         let closed = close_in(&dir, "lapor").unwrap();
         assert!(closed.closed);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_repeated_report_with_the_same_status_keeps_one_event() {
+        let dir = temp_repo("one-report");
+        let (_record, _) = create(&dir, "sekali", "codex", "do it", None, false).unwrap();
+        let first = report(&dir, "sekali", "done", "agent is done").unwrap();
+        let events = crate::control::events_path();
+        let count = |kind: &str| {
+            fs::read_to_string(&events)
+                .unwrap_or_default()
+                .lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|event| event["name"] == "sekali" && event["kind"] == kind)
+                .count()
+        };
+        assert_eq!(count("handoff-report"), 1);
+        let second = report(&dir, "sekali", "done", "the worker also says done").unwrap();
+        assert_eq!(count("handoff-report"), 1, "Omnix must not report twice");
+        assert_eq!(second.report, first.report, "the first report wins");
+        let third = report(&dir, "sekali", "failed", "then it failed").unwrap();
+        assert_eq!(third.status.as_deref(), Some("failed"));
+        assert_eq!(count("handoff-report"), 2, "a status change is a new fact");
         fs::remove_dir_all(&dir).ok();
     }
 
