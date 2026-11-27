@@ -897,6 +897,7 @@ pub fn mark_delivered(record: &mut Handoff, pane_key: &str) -> Result<()> {
 
 pub fn mark_queued(record: &mut Handoff, reason: &str) -> Result<()> {
     record.outcome = "queued".into();
+    record.receipt.detail = format!("queued: {reason}");
     record.queued_reason = Some(reason.to_string());
     record.updated_at = now();
     write_record(record)?;
@@ -1801,6 +1802,26 @@ mod tests {
         assert!(line.contains("codex"), "{line}");
         assert!(line.contains("-m gpt-6.2-sol"), "{line}");
         assert!(line.contains("model_reasoning_effort=medium"), "{line}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn queued_and_delivered_receipts_do_not_keep_the_dry_run_text() {
+        let dir = temp_repo("receipt");
+        let (mut record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "rcpt".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(record.receipt.detail.starts_with("dry run"));
+        mark_queued(&mut record, "waiting for quota").unwrap();
+        assert_eq!(record.outcome, "queued");
+        assert!(!record.receipt.detail.contains("dry run"), "{}", record.receipt.detail);
         fs::remove_dir_all(&dir).ok();
     }
 
