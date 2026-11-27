@@ -3,6 +3,43 @@
 Notable changes to Omnix. Release notes for every tag are also on the
 [releases page](https://github.com/Zwart04/omnix/releases).
 
+## [Unreleased]
+
+### Fixed
+
+- **Claude handoffs work again** — the stored default `mode: "edit"` no longer
+  leaks into `extra_args`, which rejected Claude with `--mode is only supported
+  for antigravity`. Explicit `--mode plan|edit|full` maps to
+  `claude --permission-mode plan|acceptEdits|bypassPermissions`, and `--effort`
+  is forwarded to Claude.
+- **Claude quota is no longer falsely exhausted** — official window data wins;
+  output-text exhaustion is only used when no window exists and expires after
+  ten minutes. Orchestrator panes are excluded from quota detection.
+- **A failed handoff leaves nothing behind** — quota and resource gates run
+  before the worktree is created, and any post-create failure removes the
+  worktree, branch, brief, and record so retries no longer hit "already open"
+  or "worktree already exists".
+- **Tracked sessions are visible** — `omnix agent status` lists sessions
+  registered with `omnix agent track` even when no live pane exists.
+- **Session IDs are real** — Claude panes and headless runs get an in-process
+  UUID v4 via `--session-id`, so `sessionId` is filled and `sleep`/`resume`
+  work. No `uuidgen` dependency.
+- **Orchestrator panes are recognized** — team orchestrator handoffs carry
+  `orchestrator: true` into their pane, so the quota watcher and UI treat them
+  correctly.
+- **Headless Claude can be adopted** — `omnix agent adopt --agent claude
+  --cwd <dir> [--session <id>]` opens a tab (resume when an id is given) or
+  resumes detached when the app is not running.
+- **Configurable branch names** — `handoff --branch <name>` wins; otherwise
+  `.omnix/config` `branch_prefix` or the role (perbaikan → `fix/`, fitur →
+  `fitur/`, desain → `desain/`, server → `server/`) sets the prefix. `omnix/`
+  remains the fallback. Existing branches are reused.
+- **Queued workers stop on close** — `handoff close` terminates the detached
+  worker and agent, and a queued worker exits when its record is closed.
+- **No zombie agents** — exited pane children are killed and awaited, so no
+  `[agy] <defunct>` remains after close.
+- **`omnix --version`** prints the package version.
+
 ## [0.8.0] - 2026-11-26
 
 ### Added
