@@ -82,7 +82,8 @@ pub struct Handoff {
     /// PID of the detached `_headless-worker`, so `close` can stop a queued run.
     #[serde(default)]
     pub worker_pid: Option<u32>,
-    /// Identity captured at launch so a recycled PID is never signalled.
+    /// Launch-time identity (`starttime` plus command line) so a recycled PID is
+    /// never signalled.
     #[serde(default)]
     pub worker_started: Option<u64>,
     #[serde(default)]
@@ -1451,16 +1452,30 @@ fn force_removal_problem(repo: &Path, record: &Handoff, home: &Path) -> Option<S
     None
 }
 
-/// Start ticks and executable from `/proc/<pid>`, the launch-time identity.
+/// Start ticks and command line from `/proc/<pid>`, the launch-time identity.
+/// `/proc/<pid>/cmdline` can read back empty for a moment right after `exec`,
+/// so it is retried before giving up.
 #[cfg(target_os = "linux")]
 pub fn process_identity(pid: u32) -> Option<(u64, String)> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     let rest = &stat[stat.rfind(')')? + 1..];
     let started: u64 = rest.split_whitespace().nth(19)?.parse().ok()?;
-    let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-    let text = String::from_utf8_lossy(&cmdline);
-    let exe = text.split('\0').next()?.to_string();
-    Some((started, exe))
+    for _ in 0..20 {
+        let Ok(raw) = fs::read(format!("/proc/{pid}/cmdline")) else {
+            return None;
+        };
+        let cmdline = raw
+            .split(|byte| *byte == 0)
+            .filter(|part| !part.is_empty())
+            .map(|part| String::from_utf8_lossy(part).into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !cmdline.is_empty() {
+            return Some((started, cmdline));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    None
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -1718,7 +1733,9 @@ mod tests {
     fn close_stops_the_recorded_worker() {
         let dir = temp_repo("close-worker");
         let (mut record, _) = create(&dir, "stopme", "codex", "x", None, false).unwrap();
-        let mut child = Command::new("sh").args(["-c", "sleep 60"]).spawn().unwrap();
+        // A direct child, like the real worker: no shell exec can rewrite its
+        // /proc identity between the capture and the signal.
+        let mut child = Command::new("sleep").args(["60"]).spawn().unwrap();
         record.worker_pid = Some(child.id());
         let (started, exe) = process_identity(child.id()).unwrap();
         record.worker_started = Some(started);
@@ -2237,7 +2254,7 @@ mod tests {
     fn close_never_kills_a_pid_whose_identity_does_not_match() {
         let dir = temp_repo("pid-foreign");
         let (mut record, _) = create(&dir, "keepme", "codex", "x", None, false).unwrap();
-        let mut child = Command::new("sh").args(["-c", "sleep 60"]).spawn().unwrap();
+        let mut child = Command::new("sleep").args(["60"]).spawn().unwrap();
         let (started, _exe) = process_identity(child.id()).unwrap();
         record.worker_pid = Some(child.id());
         // Wrong start time: this PID has been recycled since launch.
