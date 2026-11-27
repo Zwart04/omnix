@@ -239,6 +239,53 @@ pub fn agent_argv_at(
     Ok((bin, argv, env))
 }
 
+/// Claude asks "Is this a project you trust?" for every new folder and exits
+/// when nothing answers. Omnix marks only its own `.omnix/worktrees/` checkouts
+/// trusted, and records the previous value so `omnix` can undo it.
+pub fn grant_claude_trust_at(home: &Path, worktree: &Path) -> Result<()> {
+    if !worktree.components().any(|c| c.as_os_str() == ".omnix") {
+        return Ok(());
+    }
+    let key = worktree.to_string_lossy().into_owned();
+    let claude = home.join(".claude.json");
+    let mut doc: serde_json::Value = match std::fs::read(&claude) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .with_context(|| format!("parse {}", claude.display()))?,
+        Err(_) => serde_json::json!({}),
+    };
+    if !doc.is_object() {
+        bail!("{} is not a JSON object", claude.display());
+    }
+    let previous = doc["projects"][&key]["hasTrustDialogAccepted"].clone();
+    let projects = doc
+        .as_object_mut()
+        .unwrap()
+        .entry("projects")
+        .or_insert_with(|| serde_json::json!({}));
+    let entry = projects
+        .as_object_mut()
+        .context("projects is not an object")?
+        .entry(key.clone())
+        .or_insert_with(|| serde_json::json!({}));
+    entry["hasTrustDialogAccepted"] = serde_json::Value::Bool(true);
+    let bytes = serde_json::to_vec_pretty(&doc)?;
+    let tmp = claude.with_extension("json.omnix-tmp");
+    std::fs::write(&tmp, &bytes)?;
+    std::fs::rename(&tmp, &claude)?;
+
+    let log_path = home.join(".omnix").join("trust-created.json");
+    let mut log: serde_json::Value = std::fs::read(&log_path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_else(|| serde_json::json!({ "version": 1, "created": {} }));
+    if !log["created"].get(&key).is_some() {
+        log["created"][&key] = serde_json::json!({ "file": claude, "previous": previous });
+        std::fs::create_dir_all(log_path.parent().unwrap())?;
+        std::fs::write(&log_path, serde_json::to_vec_pretty(&log)?)?;
+    }
+    Ok(())
+}
+
 pub fn agent_argv_with(
     root: &Path,
     name: &str,
@@ -266,6 +313,9 @@ pub fn spawn_agent_with(
     extra_env: &[(String, String)],
 ) -> Result<Spawned> {
     let (bin, argv, env) = agent_argv_with(root, name, session, extra)?;
+    if crate::agent::base_agent(name) == "claude" {
+        grant_claude_trust_at(&crate::control::home(), cwd)?;
+    }
     let mut cmd = CommandBuilder::new(bin);
     for arg in argv {
         cmd.arg(arg);
@@ -339,6 +389,8 @@ pub fn spawn(shell: Option<&str>, cwd: &Path, agent: Option<(&str, &str)>) -> Re
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+    use serde_json::{json, Value};
+    use std::fs;
 
     #[test]
     fn agent_argv_applies_saved_settings_before_resume_flags() {
@@ -501,5 +553,34 @@ mod tests {
         }
         let _ = spawned.pty.child.kill();
         assert!(seen.contains("omnix-pty-ok"), "pty output was {seen:?}");
+    }
+
+    #[test]
+    fn claude_trust_is_granted_only_to_omnix_worktrees_and_remembers_the_old_value() {
+        let home = std::env::temp_dir().join(format!("omnix-trust-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(&home).unwrap();
+        let claude = home.join(".claude.json");
+        fs::write(
+            &claude,
+            r#"{"numStartups":3,"projects":{"/repo/.omnix/worktrees/fix-a":{"hasTrustDialogAccepted":false,"allowedTools":[]}}}"#,
+        )
+        .unwrap();
+
+        let own = Path::new("/repo/.omnix/worktrees/fix-b");
+        let other = Path::new("/home/me/project");
+        grant_claude_trust_at(&home, own).unwrap();
+        grant_claude_trust_at(&home, other).unwrap();
+
+        let doc: Value = serde_json::from_slice(&fs::read(&claude).unwrap()).unwrap();
+        assert_eq!(doc["numStartups"], 3, "unrelated keys stay");
+        assert_eq!(doc["projects"]["/repo/.omnix/worktrees/fix-b"]["hasTrustDialogAccepted"], true);
+        assert!(doc["projects"].get("/home/me/project").is_none(), "non-omnix path is untouched");
+        assert_eq!(doc["projects"]["/repo/.omnix/worktrees/fix-a"]["allowedTools"], json!([]));
+
+        let log: Value = serde_json::from_slice(&fs::read(home.join(".omnix").join("trust-created.json")).unwrap()).unwrap();
+        let entry = &log["created"]["/repo/.omnix/worktrees/fix-b"];
+        assert_eq!(entry["previous"], Value::Null, "undo knows there was no prior value");
+        let _ = fs::remove_dir_all(&home);
     }
 }
