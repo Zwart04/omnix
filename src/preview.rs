@@ -775,6 +775,9 @@ mod tests {
 
     #[test]
     fn stop_releases_the_preview_port_lease() {
+        let home = std::env::temp_dir().join(format!("omnix-preview-home-{}", std::process::id()));
+        fs::create_dir_all(&home).unwrap();
+        unsafe { std::env::set_var("OMNIX_HOME", &home) };
         let root = temp_root("lock-stop");
         let lock = crate::locks::acquire_as(
             &root,

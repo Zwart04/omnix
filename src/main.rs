@@ -2212,6 +2212,9 @@ mod tests {
 
     #[test]
     fn wait_rejects_a_handoff_that_was_never_delivered() {
+        let home = std::env::temp_dir().join(format!("omnix-wait-home-{}", std::process::id()));
+        std::fs::create_dir_all(&home).unwrap();
+        unsafe { std::env::set_var("OMNIX_HOME", &home) };
         let dir = std::env::temp_dir().join(format!(
             "omnix-wait-reject-{}-{}",
             std::process::id(),

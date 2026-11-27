@@ -1404,6 +1404,11 @@ mod tests {
             std::process::id(),
             now()
         ));
+        if std::env::var_os("OMNIX_HOME").is_none() {
+            let home = std::env::temp_dir().join(format!("omnix-test-home-{}", std::process::id()));
+            fs::create_dir_all(&home).unwrap();
+            unsafe { std::env::set_var("OMNIX_HOME", &home) };
+        }
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         git(&dir, &["init", "-q"]).unwrap();
@@ -1802,6 +1807,18 @@ mod tests {
         assert!(line.contains("codex"), "{line}");
         assert!(line.contains("-m gpt-6.2-sol"), "{line}");
         assert!(line.contains("model_reasoning_effort=medium"), "{line}");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn creating_a_handoff_in_tests_never_writes_the_real_event_log() {
+        let dir = temp_repo("isolated");
+        let events = crate::control::events_path();
+        assert!(
+            events.starts_with(std::env::temp_dir()),
+            "tests must not write {}",
+            events.display()
+        );
         fs::remove_dir_all(&dir).ok();
     }
 
