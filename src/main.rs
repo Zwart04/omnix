@@ -68,7 +68,7 @@ const HELP: &str = r#"omnix - a light workbench for worktrees, agents, and brows
       [--base REF] [--worktree-dir PATH] [--link NAME=SRC] [--model M] [--effort E]
       [--mode plan|edit|full] [--role FILE|NAME] [--parent PANE] [--paths GLOB,...]
       [--on-quota stop|wait|fallback=A:M[,...]] [--push-wip] [--checkpoint]
-      [--after HANDOFF] [--at HH:MM] [--min-free-mb N]
+      [--after HANDOFF] [--at HH:MM] [--min-free-mb N] [--orchestrator]
       [--fallback AGENT] [--fallback-command CMD] [--auto-fallback]
       [--max-parallel N] [--force] [--run] [--headless] [--foreground]
   omnix fallback show [--repo PATH]
@@ -923,7 +923,7 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                 after,
                 start_at,
                 min_free_mb,
-                orchestrator: false,
+                orchestrator: has(args, "--orchestrator"),
             };
             // Every argument and quota gate runs before the worktree exists, so a
             // rejected handoff leaves nothing behind for the next attempt.

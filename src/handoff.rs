@@ -1806,6 +1806,26 @@ mod tests {
     }
 
     #[test]
+    fn orchestrator_flag_is_kept_on_the_record() {
+        let dir = temp_repo("orch");
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "boss".into(),
+                agent: "claude".into(),
+                prompt: "plan".into(),
+                orchestrator: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(record.orchestrator);
+        let saved: Handoff = serde_json::from_slice(&fs::read(record_path(&record)).unwrap()).unwrap();
+        assert!(saved.orchestrator, "flag must survive the record file");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn queued_and_delivered_receipts_do_not_keep_the_dry_run_text() {
         let dir = temp_repo("receipt");
         let (mut record, _) = create_with(
