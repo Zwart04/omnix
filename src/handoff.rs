@@ -1337,14 +1337,13 @@ fn close_record_with(mut record: Handoff, force: bool) -> Result<Handoff> {
     let worktree = PathBuf::from(&record.worktree);
     if worktree.exists() {
         let repo = PathBuf::from(&record.repo);
-        let tracked = git(&repo, &["worktree", "list", "--porcelain"])
-            .map(|text| text.lines().any(|l| l == format!("worktree {}", record.worktree)))
-            .unwrap_or(false);
-        if !tracked && force {
+        if force {
+            // git refuses `worktree remove` once the .git file is gone, so drop
+            // the folder directly and let prune clear git's registration.
             fs::remove_dir_all(&worktree)?;
             let _ = git(&repo, &["worktree", "prune"]);
         } else {
-            if dirty_except(&worktree, &record.links)? && !force {
+            if dirty_except(&worktree, &record.links)? {
                 bail!(
                     "worktree has uncommitted changes; commit or discard them first: {}",
                     worktree.display()
@@ -1353,12 +1352,7 @@ fn close_record_with(mut record: Handoff, force: bool) -> Result<Handoff> {
             for (link_name, _) in &record.links {
                 remove_link(&worktree.join(link_name))?;
             }
-            let mut args = vec!["worktree", "remove"];
-            if force {
-                args.push("--force");
-            }
-            args.push(&record.worktree);
-            git(&repo, &args)?;
+            git(&repo, &["worktree", "remove", &record.worktree])?;
         }
     } else {
         let repo = PathBuf::from(&record.repo);
