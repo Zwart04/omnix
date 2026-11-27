@@ -924,13 +924,42 @@
     return btn;
   }
 
-  /* Split panes get a thin bar with split, handoff, and close. A lone
+  var PANE_LAYOUTS = { auto: 1, cols: 1, rows: 1 };
+
+  function setPaneLayout(group, layout) {
+    if (!group || !group.el) return;
+    if (!PANE_LAYOUTS[layout]) layout = 'auto';
+    group.layout = layout;
+    group.el.dataset.layout = layout;
+    for (var i = 0; i < group.panes.length; i++) {
+      var pane = group.panes[i];
+      if (!pane) continue;
+      if (pane.headLayout) pane.headLayout.value = layout;
+      scheduleFit(pane);
+    }
+  }
+
+  /* Split panes get a thin bar with layout, split, handoff, and close. A lone
      terminal keeps only the floating split pill, so it stays clean. */
   function makePaneHead(tab) {
     var head = el('div', 'pane-head');
     var title = el('span', 'pane-head-title', tab.title);
     title.title = tab.title;
     head.appendChild(title);
+    var layout = el('select', 'pane-head-layout');
+    layout.title = 'Pane layout';
+    layout.setAttribute('aria-label', 'Pane layout');
+    [['auto', 'Auto'], ['cols', 'Vertical'], ['rows', 'Stacked']]
+      .forEach(function (opt) {
+        var item = el('option', '', opt[1]);
+        item.value = opt[0];
+        layout.appendChild(item);
+      });
+    layout.value = (tab.group && tab.group.layout) || 'auto';
+    layout.addEventListener('change', guard(function () {
+      setPaneLayout(tab.group, layout.value);
+    }));
+    head.appendChild(layout);
     var actions = el('div', 'pane-head-actions');
     var role = paneHeadBtn('pane-head-role', 'Mark as orchestrator', ROLE_ICON, function () {
       tab.orchestrator = !tab.orchestrator;
@@ -964,6 +993,8 @@
     tab.el.insertBefore(head, tab.host);
     tab.headSplit = split;
     tab.headRole = role;
+    tab.headLayout = layout;
+    if (tab.group) setPaneLayout(tab.group, tab.group.layout || 'auto');
   }
 
   /* New terminals inherit the folder the user is already working in: the

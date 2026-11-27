@@ -5,6 +5,14 @@ Notable changes to Omnix. Release notes for every tag are also on the
 
 ## [Unreleased]
 
+### Added
+
+- **Split panes choose their layout.** Every terminal header carries an
+  Auto / Vertical / Stacked picker shared by its group. Auto keeps the compact
+  two-by-two grid at four panes; Vertical gives each pane a full-height column
+  so four panes fit side by side without clipped text. The group stops at four
+  panes and every split control disables at the cap.
+
 ## [0.9.2] - 2026-11-27
 
 ### Fixed
