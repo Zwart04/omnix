@@ -1321,6 +1321,8 @@ fn cmd_doctor(args: &[String]) -> Result<()> {
         "omnix": {
             "version": env!("CARGO_PKG_VERSION"),
             "control": control.is_some(),
+            "appVersion": control.as_ref().and_then(|c| c.version.clone()),
+            "versionMismatch": control::version_mismatch(env!("CARGO_PKG_VERSION"), control.as_ref().and_then(|c| c.version.as_deref())),
             "root": root().to_string_lossy(),
         },
         "lightpanda": browser::version(),
@@ -1355,6 +1357,12 @@ fn cmd_doctor(args: &[String]) -> Result<()> {
         if control.is_some() { "live" } else { "off" },
         browser::version().unwrap_or_else(|| "missing".into())
     );
+    if let Some(app) = control::version_mismatch(env!("CARGO_PKG_VERSION"), control.as_ref().and_then(|c| c.version.as_deref())) {
+        println!(
+            "warning: the running app is {app} but this CLI is {}. Restart the app to load the new build.",
+            env!("CARGO_PKG_VERSION")
+        );
+    }
     Ok(())
 }
 

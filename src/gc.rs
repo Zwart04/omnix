@@ -83,6 +83,12 @@ fn archive_old(record: &mut handoff::Handoff, cutoff: u64, actions: &mut Vec<Str
 /// table, or the git index.
 pub fn run(_root: &Path, dry: bool) -> Result<Value> {
     let mut actions = Vec::new();
+    for gone in handoff::missing_index_entries() {
+        actions.push(format!("forget {} (record file is gone)", gone.display()));
+        if !dry {
+            handoff::forget(&gone)?;
+        }
+    }
     let records = handoff::list_all();
 
     for mut record in records.iter().cloned() {

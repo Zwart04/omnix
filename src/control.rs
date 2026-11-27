@@ -272,6 +272,8 @@ pub fn find_pane<'a>(panes: &'a [Value], target: &str) -> Option<&'a Value> {
 pub struct ControlInfo {
     pub port: u16,
     pub token: String,
+    /// Version of the running app that wrote the file; `None` for older builds.
+    pub version: Option<String>,
 }
 
 pub fn read_control(dir: &Path) -> Option<ControlInfo> {
@@ -279,7 +281,14 @@ pub fn read_control(dir: &Path) -> Option<ControlInfo> {
     Some(ControlInfo {
         port: value.get("port").and_then(Value::as_u64)? as u16,
         token: value.get("token").and_then(Value::as_str)?.to_string(),
+        version: value.get("version").and_then(Value::as_str).map(str::to_string),
     })
+}
+
+/// A CLI and a running app of different versions talk over a socket whose
+/// protocol may have moved on. Returns the app version when they differ.
+pub fn version_mismatch(cli: &str, app: Option<&str>) -> Option<String> {
+    app.filter(|a| *a != cli).map(str::to_string)
 }
 
 /// One request/response per connection, newline-delimited JSON. The handler
@@ -509,5 +518,12 @@ mod tests {
         });
         assert!(closed, "listener must close after drop");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn version_mismatch_only_reports_a_different_running_app() {
+        assert_eq!(version_mismatch("0.9.0", Some("0.8.0")), Some("0.8.0".into()));
+        assert_eq!(version_mismatch("0.9.0", Some("0.9.0")), None);
+        assert_eq!(version_mismatch("0.9.0", None), None);
     }
 }

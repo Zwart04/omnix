@@ -330,6 +330,19 @@ pub fn list_from(paths: &[PathBuf]) -> Vec<Handoff> {
     out
 }
 
+/// Index entries whose record file no longer exists, typically because the repo
+/// was deleted outside Omnix. `list_all` skips them, so `gc` needs this list.
+pub fn missing_index_entries() -> Vec<PathBuf> {
+    fs::read(index_path())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|p| !p.exists())
+        .collect()
+}
+
 pub fn list_all() -> Vec<Handoff> {
     let paths: Vec<PathBuf> = fs::read(index_path())
         .ok()
@@ -1812,6 +1825,29 @@ mod tests {
         assert!(closed.closed);
         assert!(!Path::new(&closed.worktree).exists());
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn forget_drops_a_missing_index_entry_and_keeps_the_rest() {
+        let home = std::env::temp_dir().join(format!("omnix-index-{}-{}", std::process::id(), now()));
+        fs::create_dir_all(home.join(".omnix")).unwrap();
+        let gone = home.join("gone.json");
+        let kept = home.join("kept.json");
+        fs::write(&kept, "{}").unwrap();
+        let text = vec![gone.to_string_lossy().into_owned(), kept.to_string_lossy().into_owned()];
+        fs::write(home.join(".omnix").join("handoffs.json"), serde_json::to_vec(&text).unwrap()).unwrap();
+        let prev = std::env::var_os("OMNIX_HOME");
+        unsafe { std::env::set_var("OMNIX_HOME", &home) };
+        assert_eq!(missing_index_entries(), vec![gone.clone()]);
+        forget(&gone).unwrap();
+        assert!(missing_index_entries().is_empty());
+        let left: Vec<String> = serde_json::from_slice(&fs::read(index_path()).unwrap()).unwrap();
+        assert_eq!(left, vec![kept.to_string_lossy().into_owned()]);
+        match prev {
+            Some(v) => unsafe { std::env::set_var("OMNIX_HOME", v) },
+            None => unsafe { std::env::remove_var("OMNIX_HOME") },
+        }
+        fs::remove_dir_all(&home).ok();
     }
 
     #[test]
