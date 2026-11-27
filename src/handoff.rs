@@ -263,9 +263,15 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+pub fn record_path(record: &Handoff) -> PathBuf {
+    PathBuf::from(&record.repo)
+        .join(".omnix")
+        .join("handoffs")
+        .join(format!("{}.json", record.id))
+}
+
 fn write_record(record: &Handoff) -> Result<PathBuf> {
-    let dir = PathBuf::from(&record.repo).join(".omnix").join("handoffs");
-    let path = dir.join(format!("{}.json", record.id));
+    let path = record_path(record);
     atomic_write(&path, &serde_json::to_vec_pretty(record)?)?;
     Ok(path)
 }
@@ -277,6 +283,18 @@ pub fn save(record: &Handoff) -> Result<PathBuf> {
 /// Global index so `handoff list|report|close` work from any folder.
 pub fn index_path() -> PathBuf {
     crate::control::home().join(".omnix").join("handoffs.json")
+}
+
+/// Drops a record path from the global index. The record file is left alone.
+pub fn forget(path: &Path) -> Result<()> {
+    let text: Vec<String> = fs::read(index_path())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|p| Path::new(p) != path)
+        .collect();
+    atomic_write(&index_path(), &serde_json::to_vec_pretty(&text)?)
 }
 
 pub fn remember(path: &Path) -> Result<()> {
@@ -1257,16 +1275,34 @@ fn branch_merged(repo: &Path, branch: &str, base: &str) -> bool {
 }
 
 pub fn close(name: &str) -> Result<Handoff> {
+    close_forced(name, false)
+}
+
+pub fn close_forced(name: &str, force: bool) -> Result<Handoff> {
     let name = slug(name)?;
     let record = find_any(&name).with_context(|| format!("no open handoff '{name}'"))?;
-    close_record(record)
+    close_record_with(record, force)
+}
+
+/// Names of open records whose repo directory is gone. Their worktree cannot
+/// be reached anymore, so the index entry only blocks `gc` and `handoff list`.
+pub fn prune_orphans(records: &[Handoff]) -> Vec<String> {
+    records
+        .iter()
+        .filter(|r| !r.closed && !Path::new(&r.repo).is_dir())
+        .map(|r| r.name.clone())
+        .collect()
 }
 
 pub fn close_in(repo: &Path, name: &str) -> Result<Handoff> {
+    close_in_forced(repo, name, false)
+}
+
+pub fn close_in_forced(repo: &Path, name: &str, force: bool) -> Result<Handoff> {
     let name = slug(name)?;
     let record = find_in(repo, &name)
         .with_context(|| format!("no open handoff '{name}' in {}", repo.display()))?;
-    close_record(record)
+    close_record_with(record, force)
 }
 
 fn terminate(pid: u32) {
@@ -1287,24 +1323,43 @@ fn terminate(pid: u32) {
     }
 }
 
-fn close_record(mut record: Handoff) -> Result<Handoff> {
+fn close_record(record: Handoff) -> Result<Handoff> {
+    close_record_with(record, false)
+}
+
+/// `force` discards uncommitted work and leftover folders that git no longer
+/// tracks as a worktree. Callers must only pass it after the user confirmed it.
+fn close_record_with(mut record: Handoff, force: bool) -> Result<Handoff> {
     // Stop a running or still-queued worker before the worktree disappears.
     for pid in [record.worker_pid, record.pid].into_iter().flatten() {
         terminate(pid);
     }
     let worktree = PathBuf::from(&record.worktree);
     if worktree.exists() {
-        if dirty_except(&worktree, &record.links)? {
-            bail!(
-                "worktree has uncommitted changes; commit or discard them first: {}",
-                worktree.display()
-            );
-        }
-        for (link_name, _) in &record.links {
-            remove_link(&worktree.join(link_name))?;
-        }
         let repo = PathBuf::from(&record.repo);
-        git(&repo, &["worktree", "remove", &record.worktree])?;
+        let tracked = git(&repo, &["worktree", "list", "--porcelain"])
+            .map(|text| text.lines().any(|l| l == format!("worktree {}", record.worktree)))
+            .unwrap_or(false);
+        if !tracked && force {
+            fs::remove_dir_all(&worktree)?;
+            let _ = git(&repo, &["worktree", "prune"]);
+        } else {
+            if dirty_except(&worktree, &record.links)? && !force {
+                bail!(
+                    "worktree has uncommitted changes; commit or discard them first: {}",
+                    worktree.display()
+                );
+            }
+            for (link_name, _) in &record.links {
+                remove_link(&worktree.join(link_name))?;
+            }
+            let mut args = vec!["worktree", "remove"];
+            if force {
+                args.push("--force");
+            }
+            args.push(&record.worktree);
+            git(&repo, &args)?;
+        }
     } else {
         let repo = PathBuf::from(&record.repo);
         let _ = git(&repo, &["worktree", "prune"]);
@@ -1740,5 +1795,47 @@ mod tests {
         assert!(line.contains("-m gpt-6.2-sol"), "{line}");
         assert!(line.contains("model_reasoning_effort=medium"), "{line}");
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn force_close_removes_a_leftover_dir_that_is_not_a_worktree() {
+        let dir = temp_repo("stray");
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "stray".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        git(&dir, &["worktree", "remove", "--force", &record.worktree]).unwrap();
+        fs::create_dir_all(&record.worktree).unwrap();
+        fs::write(Path::new(&record.worktree).join("junk.txt"), "junk\n").unwrap();
+        assert!(close_record(record.clone()).is_err());
+        let closed = close_record_with(record, true).unwrap();
+        assert!(closed.closed);
+        assert!(!Path::new(&closed.worktree).exists());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn prune_orphans_drops_records_whose_repo_is_gone() {
+        let dir = temp_repo("orphan");
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "orphan".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        fs::remove_dir_all(&dir).unwrap();
+        let removed = prune_orphans(&[record.clone()]);
+        assert_eq!(removed, vec![record.name.clone()]);
+        assert!(prune_orphans(&[Handoff { closed: true, ..record }]).is_empty());
     }
 }

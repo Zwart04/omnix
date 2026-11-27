@@ -831,9 +831,10 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                     json!({ "cmd": "closePane", "target": name }),
                 );
             }
+            let force = has(args, "--force");
             let record = match handoff_repo(args) {
-                Ok(repo) => handoff::close_in(&repo, &name)?,
-                Err(_) => handoff::close(&name)?,
+                Ok(repo) => handoff::close_in_forced(&repo, &name, force)?,
+                Err(_) => handoff::close_forced(&name, force)?,
             };
             println!("closed {} ({})", record.name, record.worktree);
         }

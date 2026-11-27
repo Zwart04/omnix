@@ -93,6 +93,15 @@ pub fn run(_root: &Path, dry: bool) -> Result<Value> {
             }
             continue;
         }
+        if handoff::prune_orphans(std::slice::from_ref(&record)).len() == 1 {
+            if dry {
+                actions.push(format!("forget {} (repo is gone)", record.name));
+            } else {
+                handoff::forget(Path::new(&handoff::record_path(&record)))?;
+                actions.push(format!("forget {} (repo is gone)", record.name));
+            }
+            continue;
+        }
         let repo = PathBuf::from(&record.repo);
         if merged(&repo, &record.branch, &record.base) {
             if dry {
