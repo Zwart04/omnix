@@ -569,6 +569,162 @@ fn ai_memory(app: &App) -> Value {
     })
 }
 
+fn pty_spawn(app: &mut App, args: &Value, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) -> Result<Value> {
+    let key = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
+    if key.len() > 64
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '-' | '_'))
+    {
+        return Err(anyhow!("invalid paneKey"));
+    }
+    let cwd = as_str(&args, "cwd")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| app.root.clone());
+    let shell = as_str(&args, "shell");
+    let agent = as_str(&args, "agent");
+    let session = as_str(&args, "sessionId");
+    let command = as_str(&args, "command");
+    let label = as_str(&args, "label")
+        .or_else(|| agent.clone())
+        .or_else(|| {
+            command
+                .as_deref()
+                .and_then(|line| line.split_whitespace().next())
+                .map(str::to_string)
+        })
+        .or_else(|| shell.clone())
+        .unwrap_or_else(|| "terminal".into());
+    let label: String = label.chars().filter(|c| !c.is_control()).take(48).collect();
+    let options = crate::agent::LaunchOptions {
+        model: as_str(&args, "model"),
+        effort: as_str(&args, "effort"),
+        mode: as_str(&args, "mode"),
+        prompt: as_str(&args, "prompt"),
+    };
+    let extra = match &agent {
+        Some(agent) => crate::agent::extra_args(agent, &options)?,
+        None => Vec::new(),
+    };
+    let mut extra = extra;
+    let generated_session = match (&agent, &session) {
+        (Some(a), None) if crate::agent::base_agent(a) == "claude" => {
+            let sid = crate::agent::new_session_id();
+            extra.extend(crate::agent::new_session_args(a, &sid));
+            Some(sid)
+        }
+        _ => None,
+    };
+    let extra_env = match &agent {
+        Some(agent) => crate::agent::model_env(agent, options.model.as_deref()),
+        None => Vec::new(),
+    };
+    let login = args.get("login").and_then(Value::as_bool).unwrap_or(false);
+    let (spawned, initial_prompt) = if login {
+        let agent = agent
+            .as_deref()
+            .ok_or_else(|| anyhow!("agent is required for a login tab"))?;
+        let (spawned, prompt) = pty::spawn_login(&app.root, agent, &cwd)?;
+        (spawned, prompt)
+    } else {
+        let spawned = match (agent.clone(), session.clone(), command) {
+            (_, _, Some(line)) => {
+                if line.len() > 240 {
+                    return Err(anyhow!("command is too long"));
+                }
+                pty::spawn_command(&line, &cwd)?
+            }
+            (Some(a), s, None) => {
+                pty::spawn_agent_with(&app.root, &a, s.as_deref(), &cwd, &extra, &extra_env)?
+            }
+            _ => pty::spawn(shell.as_deref(), &cwd, None)?,
+        };
+        (spawned, None)
+    };
+    let pid = spawned.pid;
+    let mut reader = spawned.reader;
+    let tx_data = tx.clone();
+    let proxy_data = proxy.clone();
+    let key_thread = key.clone();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx_data
+                        .send(Msg::PtyData {
+                            key: key_thread.clone(),
+                            data: buf[..n].to_vec(),
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    let _ = proxy_data.send_event(UserEvent::Wake);
+                }
+            }
+        }
+        let _ = tx_data.send(Msg::PtyExit { key: key_thread });
+        let _ = proxy_data.send_event(UserEvent::Wake);
+    });
+    app.ptys.insert(key.clone(), spawned.pty);
+    app.pane_procs.insert(
+        key.clone(),
+        PaneProc {
+            pid,
+            label: label.clone(),
+            cwd: cwd.to_string_lossy().into_owned(),
+        },
+    );
+    // Auto track: a resumed session is already named, so sleep/resume
+    // can find it later without another CLI call.
+    if let (Some(agent), Some(session)) = (agent.as_deref(), session.as_deref()) {
+        let _ = workspace::track(&app.root, &cwd, agent, session, &cwd, &key);
+    }
+    if let (Some(agent), Some(sid)) = (agent.as_deref(), generated_session.as_deref()) {
+        let _ = workspace::track(&app.root, &cwd, agent, sid, &cwd, &key);
+    }
+    let handoff = as_str(&args, "handoff").unwrap_or_default();
+    let title = as_str(&args, "title").unwrap_or_else(|| label.clone());
+    let meta = PaneMeta {
+        label: label.clone(),
+        title: title.chars().filter(|c| !c.is_control()).take(80).collect(),
+        cwd: cwd.to_string_lossy().into_owned(),
+        agent: as_str(&args, "agent").unwrap_or_default(),
+        handoff: handoff.clone(),
+        parent: as_str(&args, "parent").unwrap_or_default(),
+        session_id: generated_session
+            .clone()
+            .or_else(|| as_str(&args, "sessionId"))
+            .unwrap_or_default(),
+        status: "working".into(),
+        exit_code: None,
+        orchestrator: as_bool(&args, "orchestrator"),
+        updated_at: crate::control::epoch(),
+    };
+    if !handoff.is_empty() {
+        crate::control::event(
+            "agent-started",
+            json!({ "pane": key.clone(), "handoff": handoff, "agent": meta.agent.clone() }),
+        );
+    }
+    app.panes.insert(key.clone(), meta);
+    if let Some(text) = initial_prompt {
+        app.pending_prompts.insert(key.clone(), text);
+        let timer_key = key.clone();
+        let timer_tx = tx.clone();
+        let timer_proxy = proxy.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(2500));
+            let _ = timer_tx.send(Msg::PromptDue(timer_key));
+            let _ = timer_proxy.send_event(UserEvent::Wake);
+        });
+    }
+    persist_panes(app);
+    Ok(json!({ "paneKey": key, "pid": pid }))
+}
+
 fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
     let parsed: Value = match serde_json::from_str(raw) {
         Ok(value) => value,
@@ -1231,161 +1387,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 .collect();
             Ok(json!({ "hits": hits }))
         })(),
-        "ptySpawn" => (|| {
-            let key = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
-            if key.len() > 64
-                || !key
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, ':' | '-' | '_'))
-            {
-                return Err(anyhow!("invalid paneKey"));
-            }
-            let cwd = as_str(&args, "cwd")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| app.root.clone());
-            let shell = as_str(&args, "shell");
-            let agent = as_str(&args, "agent");
-            let session = as_str(&args, "sessionId");
-            let command = as_str(&args, "command");
-            let label = as_str(&args, "label")
-                .or_else(|| agent.clone())
-                .or_else(|| {
-                    command
-                        .as_deref()
-                        .and_then(|line| line.split_whitespace().next())
-                        .map(str::to_string)
-                })
-                .or_else(|| shell.clone())
-                .unwrap_or_else(|| "terminal".into());
-            let label: String = label.chars().filter(|c| !c.is_control()).take(48).collect();
-            let options = crate::agent::LaunchOptions {
-                model: as_str(&args, "model"),
-                effort: as_str(&args, "effort"),
-                mode: as_str(&args, "mode"),
-                prompt: as_str(&args, "prompt"),
-            };
-            let extra = match &agent {
-                Some(agent) => crate::agent::extra_args(agent, &options)?,
-                None => Vec::new(),
-            };
-            let mut extra = extra;
-            let generated_session = match (&agent, &session) {
-                (Some(a), None) if crate::agent::base_agent(a) == "claude" => {
-                    let sid = crate::agent::new_session_id();
-                    extra.extend(crate::agent::new_session_args(a, &sid));
-                    Some(sid)
-                }
-                _ => None,
-            };
-            let extra_env = match &agent {
-                Some(agent) => crate::agent::model_env(agent, options.model.as_deref()),
-                None => Vec::new(),
-            };
-            let login = args.get("login").and_then(Value::as_bool).unwrap_or(false);
-            let (spawned, initial_prompt) = if login {
-                let agent = agent
-                    .as_deref()
-                    .ok_or_else(|| anyhow!("agent is required for a login tab"))?;
-                let (spawned, prompt) = pty::spawn_login(&app.root, agent, &cwd)?;
-                (spawned, prompt)
-            } else {
-                let spawned = match (agent.clone(), session.clone(), command) {
-                    (_, _, Some(line)) => {
-                        if line.len() > 240 {
-                            return Err(anyhow!("command is too long"));
-                        }
-                        pty::spawn_command(&line, &cwd)?
-                    }
-                    (Some(a), s, None) => {
-                        pty::spawn_agent_with(&app.root, &a, s.as_deref(), &cwd, &extra, &extra_env)?
-                    }
-                    _ => pty::spawn(shell.as_deref(), &cwd, None)?,
-                };
-                (spawned, None)
-            };
-            let pid = spawned.pid;
-            let mut reader = spawned.reader;
-            let tx_data = tx.clone();
-            let proxy_data = proxy.clone();
-            let key_thread = key.clone();
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match reader.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            if tx_data
-                                .send(Msg::PtyData {
-                                    key: key_thread.clone(),
-                                    data: buf[..n].to_vec(),
-                                })
-                                .is_err()
-                            {
-                                break;
-                            }
-                            let _ = proxy_data.send_event(UserEvent::Wake);
-                        }
-                    }
-                }
-                let _ = tx_data.send(Msg::PtyExit { key: key_thread });
-                let _ = proxy_data.send_event(UserEvent::Wake);
-            });
-            app.ptys.insert(key.clone(), spawned.pty);
-            app.pane_procs.insert(
-                key.clone(),
-                PaneProc {
-                    pid,
-                    label: label.clone(),
-                    cwd: cwd.to_string_lossy().into_owned(),
-                },
-            );
-            // Auto track: a resumed session is already named, so sleep/resume
-            // can find it later without another CLI call.
-            if let (Some(agent), Some(session)) = (agent.as_deref(), session.as_deref()) {
-                let _ = workspace::track(&app.root, &cwd, agent, session, &cwd, &key);
-            }
-            if let (Some(agent), Some(sid)) = (agent.as_deref(), generated_session.as_deref()) {
-                let _ = workspace::track(&app.root, &cwd, agent, sid, &cwd, &key);
-            }
-            let handoff = as_str(&args, "handoff").unwrap_or_default();
-            let title = as_str(&args, "title").unwrap_or_else(|| label.clone());
-            let meta = PaneMeta {
-                label: label.clone(),
-                title: title.chars().filter(|c| !c.is_control()).take(80).collect(),
-                cwd: cwd.to_string_lossy().into_owned(),
-                agent: as_str(&args, "agent").unwrap_or_default(),
-                handoff: handoff.clone(),
-                parent: as_str(&args, "parent").unwrap_or_default(),
-                session_id: generated_session
-                    .clone()
-                    .or_else(|| as_str(&args, "sessionId"))
-                    .unwrap_or_default(),
-                status: "working".into(),
-                exit_code: None,
-                orchestrator: as_bool(&args, "orchestrator"),
-                updated_at: crate::control::epoch(),
-            };
-            if !handoff.is_empty() {
-                crate::control::event(
-                    "agent-started",
-                    json!({ "pane": key.clone(), "handoff": handoff, "agent": meta.agent.clone() }),
-                );
-            }
-            app.panes.insert(key.clone(), meta);
-            if let Some(text) = initial_prompt {
-                app.pending_prompts.insert(key.clone(), text);
-                let timer_key = key.clone();
-                let timer_tx = tx.clone();
-                let timer_proxy = proxy.clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(Duration::from_millis(2500));
-                    let _ = timer_tx.send(Msg::PromptDue(timer_key));
-                    let _ = timer_proxy.send_event(UserEvent::Wake);
-                });
-            }
-            persist_panes(app);
-            Ok(json!({ "paneKey": key, "pid": pid }))
-        })(),
+        "ptySpawn" => pty_spawn(app, &args, tx, proxy),
         "ptyWrite" => (|| {
             let key = as_str(&args, "paneKey").ok_or_else(|| anyhow!("paneKey is required"))?;
             let data = args.get("data").and_then(Value::as_str).unwrap_or("");
@@ -2185,6 +2187,7 @@ fn control_request(
             );
             Ok(json!({ "paneKey": key, "state": crate::control::machine_state(&state, None) }))
         }
+        "ptySpawn" => pty_spawn(app, req, tx, proxy),
         "spawnHandoff" => {
             let record = req.get("record").cloned().unwrap_or(Value::Null);
             let name = record
