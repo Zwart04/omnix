@@ -287,18 +287,31 @@ pub fn agent_ready(text: &str) -> bool {
     if let Some(signal) = agent_signal(text) {
         return matches!(signal.state.as_str(), "idle" | "done");
     }
-    text.contains("Ask Codex to do anything") || text.contains("? for shortcuts")
+    let visible = visible_words(text);
+    visible.contains("Ask Codex to do anything")
+        || visible.contains("? for shortcuts")
+        || visible.contains("bypass permissions on")
+        || visible.contains("accept edits on")
+        || visible.contains("Try \"")
+        || visible.contains("shift+tab")
 }
 
 /// Remove CSI/OSC sequences so an echo comparison sees text, not the terminal
 /// control frames a TUI or harness adds around it.
 pub fn strip_terminal_escapes(text: &str) -> String {
+    strip_escapes(text, false)
+}
+
+fn strip_escapes(text: &str, escape_is_space: bool) -> String {
     let mut out = String::with_capacity(text.len());
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch != '\x1b' {
             out.push(ch);
             continue;
+        }
+        if escape_is_space {
+            out.push(' ');
         }
         match chars.peek() {
             Some('[') => {
@@ -348,7 +361,17 @@ pub fn needs_trust_answer(text: &str) -> bool {
         "trust this workspace",
         "Trust and continue",
     ];
-    MARKERS.iter().any(|marker| text.contains(marker))
+    let visible = visible_words(text);
+    MARKERS.iter().any(|marker| visible.contains(marker))
+}
+
+/// TUI redraws split one phrase across cursor moves and line breaks. Collapse
+/// all whitespace after removing escapes so marker matching sees the screen.
+fn visible_words(text: &str) -> String {
+    strip_escapes(text, true)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Target matching for `agent send|wait`: a pane key is unique, then the
@@ -584,6 +607,15 @@ mod tests {
         ));
         assert!(!needs_trust_answer("? for shortcuts"));
         assert!(agent_ready("> Ask Codex to do anything"));
+        assert!(agent_ready("bypass permissions on (shift+tab to cycle)"));
+        assert!(agent_ready("> Try \"create a util logging.py that...\""));
+        assert!(agent_ready(
+            "\x1b[2mTry \x1b[1m\"fix typecheck errors\"\x1b[0m"
+        ));
+        assert!(agent_ready("Try\r\n\x1b[2m\"fix typecheck errors\""));
+        assert!(agent_ready("Try\x1b[2m\"how do I log an error?\""));
+        assert!(needs_trust_answer("Trust \x1b[1mthis\r\nfolder?\x1b[0m"));
+        assert!(needs_trust_answer("Trust\x1b[1mthis folder?"));
     }
 
     #[test]

@@ -205,6 +205,7 @@ struct App {
     pane_quota_reported: HashSet<String>,
     pending_prompts: HashMap<String, String>,
     prompt_trust_answered: HashSet<String>,
+    prompt_ready_since: HashMap<String, u64>,
     pending_sends: HashMap<String, PendingSend>,
     waiting_handoffs: HashMap<String, crate::handoff::Handoff>,
     signal_buf: HashMap<String, String>,
@@ -784,6 +785,7 @@ fn process_agent_chunk(
         let tail = app.pane_tails.get(key).cloned().unwrap_or_default();
         if crate::control::needs_trust_answer(&tail) && !app.prompt_trust_answered.contains(key) {
             app.prompt_trust_answered.insert(key.to_string());
+            app.prompt_ready_since.remove(key);
             if let Some(session) = app.ptys.get_mut(key) {
                 use std::io::Write;
                 let _ = session.writer.write_all(b"\r");
@@ -792,18 +794,27 @@ fn process_agent_chunk(
             return;
         }
         if crate::control::agent_ready(&tail) {
-            if let Some(prompt) = app.pending_prompts.remove(key) {
-                let token = send_token();
-                if let Err(err) =
-                    write_agent_input(app, key, &prompt, "handoff-prompt", token, tx, proxy)
-                {
-                    emit(
-                        &app.ui,
-                        "toast",
-                        &json!({"level": "error", "message": format!("Prompt not written: {err}")}),
-                    );
+            let now = crate::control::epoch();
+            let since = *app.prompt_ready_since.entry(key.to_string()).or_insert(now);
+            // Codex can draw an empty composer before its trust modal and needs
+            // a few seconds after the modal closes before it accepts a paste.
+            if now.saturating_sub(since) >= 5 {
+                app.prompt_ready_since.remove(key);
+                if let Some(prompt) = app.pending_prompts.remove(key) {
+                    let token = send_token();
+                    if let Err(err) =
+                        write_agent_input(app, key, &prompt, "handoff-prompt", token, tx, proxy)
+                    {
+                        emit(
+                            &app.ui,
+                            "toast",
+                            &json!({"level": "error", "message": format!("Prompt not written: {err}")}),
+                        );
+                    }
                 }
             }
+        } else {
+            app.prompt_ready_since.remove(key);
         }
     }
 }
@@ -841,12 +852,17 @@ fn attach_reader(
     });
 }
 
-fn schedule_prompt_fallback(key: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
+fn schedule_prompt_fallback(
+    key: &str,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+    delay_ms: u64,
+) {
     let timer_key = key.to_string();
     let timer_tx = tx.clone();
     let timer_proxy = proxy.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_millis(8000));
+        std::thread::sleep(Duration::from_millis(delay_ms));
         let _ = timer_tx.send(Msg::PromptDue(timer_key));
         let _ = timer_proxy.send_event(UserEvent::Wake);
     });
@@ -927,7 +943,7 @@ fn start_handoff_agent(
             app.pending_prompts.insert(key.to_string(), text);
         }
     }
-    schedule_prompt_fallback(key, tx, proxy);
+    schedule_prompt_fallback(key, tx, proxy, 8000);
     if open {
         emit(&app.ui, "paneOpen", &meta.json(key));
     }
@@ -2057,6 +2073,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             app.pending_prompts.remove(&key);
             app.pending_sends.remove(&key);
             app.waiting_handoffs.remove(&key);
+            app.prompt_ready_since.remove(&key);
             app.signal_buf.remove(&key);
             app.last_signal.remove(&key);
             persist_panes(app);
@@ -2868,6 +2885,7 @@ fn control_request(
             app.prompt_trust_answered.remove(&key);
             app.pending_sends.remove(&key);
             app.waiting_handoffs.remove(&key);
+            app.prompt_ready_since.remove(&key);
             app.signal_buf.remove(&key);
             app.last_signal.remove(&key);
             persist_panes(app);
@@ -2905,27 +2923,46 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                             let _ = session.writer.write_all(b"\r");
                             let _ = session.writer.flush();
                         }
-                        schedule_prompt_fallback(&key, tx, proxy);
-                    } else if let Some(text) = app.pending_prompts.remove(&key) {
-                        let kind = if app
+                        schedule_prompt_fallback(&key, tx, proxy, 2000);
+                    } else {
+                        let now = crate::control::epoch();
+                        let ready = crate::control::agent_ready(&tail);
+                        let age = app
                             .panes
                             .get(&key)
-                            .map(|meta| meta.handoff.is_empty())
-                            .unwrap_or(true)
-                        {
-                            "message"
+                            .map(|meta| now.saturating_sub(meta.started_at))
+                            .unwrap_or(99);
+                        let stable = if ready {
+                            now.saturating_sub(
+                                *app.prompt_ready_since.entry(key.clone()).or_insert(now),
+                            ) >= 5
                         } else {
-                            "handoff-prompt"
+                            app.prompt_ready_since.remove(&key);
+                            false
                         };
-                        let token = send_token();
-                        if let Err(err) =
-                            write_agent_input(app, &key, &text, kind, token, tx, proxy)
-                        {
-                            emit(
-                                &app.ui,
-                                "toast",
-                                &json!({"level": "error", "message": format!("Prompt not written: {err}")}),
-                            );
+                        if !stable && age < 60 {
+                            schedule_prompt_fallback(&key, tx, proxy, 2000);
+                        } else if let Some(text) = app.pending_prompts.remove(&key) {
+                            let kind = if app
+                                .panes
+                                .get(&key)
+                                .map(|meta| meta.handoff.is_empty())
+                                .unwrap_or(true)
+                            {
+                                "message"
+                            } else {
+                                "handoff-prompt"
+                            };
+                            let token = send_token();
+                            if let Err(err) =
+                                write_agent_input(app, &key, &text, kind, token, tx, proxy)
+                            {
+                                emit(
+                                    &app.ui,
+                                    "toast",
+                                    &json!({"level": "error", "message": format!("Prompt not written: {err}")}),
+                                );
+                            }
                         }
                     }
                 }
@@ -3000,6 +3037,7 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
             }
             Msg::HandoffCancelled(key) => {
                 app.waiting_handoffs.remove(&key);
+                app.prompt_ready_since.remove(&key);
                 app.signal_buf.remove(&key);
                 app.last_signal.remove(&key);
                 if let Some(mut wait) = app.ptys.remove(&key) {
@@ -3294,6 +3332,7 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
         app.pending_prompts.remove(&key);
         app.pending_sends.remove(&key);
         app.waiting_handoffs.remove(&key);
+        app.prompt_ready_since.remove(&key);
         app.signal_buf.remove(&key);
         app.last_signal.remove(&key);
         let old = app
@@ -3472,6 +3511,7 @@ pub fn run() -> Result<()> {
         pane_quota_reported: HashSet::new(),
         pending_prompts: HashMap::new(),
         prompt_trust_answered: HashSet::new(),
+        prompt_ready_since: HashMap::new(),
         pending_sends: HashMap::new(),
         waiting_handoffs: HashMap::new(),
         signal_buf: HashMap::new(),
