@@ -794,6 +794,12 @@ body.is-resizing * { cursor: col-resize !important; user-select: none !important
 .work-dot.is-failed,
 .tab-status.is-failed { background: var(--bad); }
 
+.work-dot.is-stalled,
+.tab-status.is-stalled { background: var(--warn); opacity: .75; }
+
+.work-dot.is-queued,
+.tab-status.is-queued { background: transparent; border: 1.5px dashed var(--line-strong); }
+
 .work-dot.is-done,
 .tab-status.is-done {
   position: relative;

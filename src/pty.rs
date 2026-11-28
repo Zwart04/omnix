@@ -205,6 +205,16 @@ pub fn spawn_command(line: &str, cwd: &Path) -> Result<Spawned> {
     open(cmd, cwd)
 }
 
+/// Spawn one program with exact argv entries. No shell parsing, so a worktree
+/// path with spaces survives untouched.
+pub fn spawn_program(bin: &str, args: &[&str], cwd: &Path) -> Result<Spawned> {
+    let mut cmd = CommandBuilder::new(bin);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    open(cmd, cwd)
+}
+
 /// Resolve the binary and the full argv/env for an agent launch: saved extra
 /// arguments first, then per-handoff flags, then resume flags, then the saved
 /// environment.

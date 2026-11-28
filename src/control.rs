@@ -235,11 +235,73 @@ pub fn machine_state(status: &str, exit_code: Option<i64>) -> &'static str {
         "working" => "working",
         "approval" => "needs-approval",
         "done" => "turn-done",
+        "stalled" => "stalled",
+        "queued" => "queued",
         "quota" => "quota",
         "failed" => "exited",
         "idle" => "unknown",
         _ => "unknown",
     }
+}
+
+/// One `OSC 7501` status frame written by an agent TUI (or a harness shim):
+/// `ESC ] 7501 ; state=working:app=codex ST`. Unknown fields are ignored so
+/// older TUIs keep working. The last frame in a read wins.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSignal {
+    pub state: String,
+    pub app: String,
+}
+
+pub fn agent_signal(text: &str) -> Option<AgentSignal> {
+    let mut found = None;
+    let mut rest = text;
+    while let Some(start) = rest.find("\x1b]7501;") {
+        rest = &rest[start + "\x1b]7501;".len()..];
+        let end = rest
+            .find('\x07')
+            .or_else(|| rest.find("\x1b\\"))
+            .unwrap_or(rest.len());
+        let body = &rest[..end];
+        let mut state = String::new();
+        let mut app = String::new();
+        for part in body.split(':') {
+            if let Some(value) = part.strip_prefix("state=") {
+                state = value.trim().to_string();
+            } else if let Some(value) = part.strip_prefix("app=") {
+                app = value.trim().to_string();
+            }
+        }
+        if !state.is_empty() {
+            found = Some(AgentSignal { state, app });
+        }
+        rest = &rest[end..];
+    }
+    found
+}
+
+/// True when the visible tail looks like an agent waiting for the next turn.
+/// Codex and Claude both draw `? for shortcuts`; the explicit signal is
+/// authoritative when present.
+pub fn agent_ready(text: &str) -> bool {
+    if let Some(signal) = agent_signal(text) {
+        return matches!(signal.state.as_str(), "idle" | "done");
+    }
+    text.contains("Ask Codex to do anything") || text.contains("? for shortcuts")
+}
+
+/// A folder-trust modal swallows a bracketed paste. Answer the default once,
+/// then wait for the composer before typing the brief.
+pub fn needs_trust_answer(text: &str) -> bool {
+    const MARKERS: [&str; 6] = [
+        "Trust this folder",
+        "trust the folder",
+        "Do you trust the files in this folder",
+        "Is this a project you trust",
+        "trust this workspace",
+        "Trust and continue",
+    ];
+    MARKERS.iter().any(|marker| text.contains(marker))
 }
 
 /// Target matching for `agent send|wait`: a pane key is unique, then the
@@ -451,7 +513,30 @@ mod tests {
         assert_eq!(machine_state("done", None), "turn-done");
         assert_eq!(machine_state("failed", Some(3)), "exited");
         assert_eq!(machine_state("done", Some(0)), "exited");
+        assert_eq!(machine_state("stalled", None), "stalled");
+        assert_eq!(machine_state("queued", None), "queued");
         assert_eq!(machine_state("idle", None), "unknown");
+    }
+
+    #[test]
+    fn agent_signals_and_readiness_are_parsed_without_regex() {
+        let idle = "noise \x1b]7501;state=idle:app=codex\x1b\\ more";
+        assert_eq!(
+            agent_signal(idle),
+            Some(AgentSignal {
+                state: "idle".into(),
+                app: "codex".into()
+            })
+        );
+        assert!(agent_ready(idle));
+        assert!(!agent_ready("\x1b]7501;state=working:app=codex\x07"));
+        let last = "\x1b]7501;state=working:app=codex\x1b\\\x1b]7501;state=done:app=claude\x1b\\";
+        assert_eq!(agent_signal(last).unwrap().state, "done");
+        assert!(needs_trust_answer(
+            "Folder access\nTrust this folder?\n> 1. Trust"
+        ));
+        assert!(!needs_trust_answer("? for shortcuts"));
+        assert!(agent_ready("> Ask Codex to do anything"));
     }
 
     #[test]

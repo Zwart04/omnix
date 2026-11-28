@@ -5,6 +5,47 @@ Notable changes to Omnix. Release notes for every tag are also on the
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-28
+
+### Fixed
+
+- **`agent send` proves the turn instead of printing a fake success.** The
+  message and Enter are separate writes, the CR waits for the paste to settle,
+  and the CLI reports `sent` only after the PTY produces output beyond the
+  echoed message. A shell, a read-only log pane, or a process that never reads
+  stdin now fails with `not-accepted` and a reason. The same acceptance rule
+  guards the initial handoff brief.
+- **Handoff panels survive trust modals.** A Codex/Claude folder-trust prompt
+  is answered once, then the brief waits for an idle composer. OSC 7501
+  (`idle` / `working` / `done` / `approval` / `stalled` / `quota`) is parsed as
+  the authoritative status, so a quiet turn no longer flickers between
+  `agent-working` and `agent-turn-done`. `stalled` is emitted after
+  `OMNIX_STALL_SECONDS` (default 600) without output.
+- **A headless handoff is visible in the sidebar.** Rows show name, agent +
+  model, live status (`working`/`stalled`/`done`/`failed`/`quota`/`queued`),
+  start time, and **Buka log**; the log opens in a read-only `tail -F` pane.
+  Subfolder repositories are placed under the parent project that owns them.
+- **Queue conditions keep the GUI panel.** `--min-free-mb`, `--at`, and
+  `--after` no longer silently force a detached run when the app is open: the
+  pane opens with the wait reason and starts the agent when the condition
+  clears. Only `--headless` or a missing GUI uses the detached worker.
+- **Default branches no longer carry the app name.** The fallback prefix is
+  `kerja/`; `worktree_for_pane` follows `.omnix/config` `branch_prefix` too.
+  A stale test binary can no longer produce a false branch result: periksa
+  rebuilds the CLI before its integration checks.
+- **An exited pane keeps its final status and scrollback.** The old exit path
+  removed the pane before writing `done`/`failed`, so the CLI and sidebar lost
+  the truth. The pane record now survives until the tab is closed.
+
+### Tests
+
+- `docs/uji-prompt-14/periksa.sh` passes 15/15 (fmt, clippy, 168 Rust tests,
+  frontend selftest, PTY protocol mock, branch CLI, home fingerprints).
+- GUI integration under Xvfb: waiting pane stays queued and non-headless;
+  `agent send` accepts a real mock reply and rejects a `sleep 60` echo; `--after`
+  starts after the dependency reports; headless `agent status`, memory rows,
+  and a read-only log pane were verified.
+
 ## [0.9.3] - 2026-11-27
 
 ### Added

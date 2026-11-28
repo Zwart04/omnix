@@ -49,6 +49,10 @@ pub struct Handoff {
     pub links: Vec<(String, String)>,
     #[serde(default)]
     pub status: Option<String>,
+    /// Live runner state (`working`, `stalled`, `done`, `failed`) kept apart
+    /// from the agent's own report status.
+    #[serde(default)]
+    pub runtime_state: Option<String>,
     #[serde(default)]
     pub report: Option<String>,
     #[serde(default)]
@@ -209,7 +213,8 @@ fn valid_branch(value: &str) -> bool {
 }
 
 /// Branch prefix from `.omnix/config` (`branch_prefix`) else derived from the
-/// role name. Plain `omnix/` stays the fallback.
+/// role name. Plain `kerja/` stays the fallback so product branches never carry
+/// the app's own name.
 fn branch_prefix(repo: &Path, role: Option<&str>) -> String {
     let configured = fs::read_to_string(repo.join(".omnix").join("config"))
         .ok()
@@ -241,12 +246,12 @@ fn branch_prefix(repo: &Path, role: Option<&str>) -> String {
         } else if role.contains("server") || role.contains("infra") {
             "server/".into()
         } else {
-            "omnix/".into()
+            "kerja/".into()
         }
     });
     let prefix = prefix.trim().trim_start_matches('/').to_string();
     if prefix.is_empty() {
-        "omnix/".into()
+        "kerja/".into()
     } else if prefix.ends_with('/') {
         prefix
     } else {
@@ -439,7 +444,7 @@ pub fn worktree_for_pane(repo: &Path, pane_key: &str, label: &str) -> Result<Pan
         format!("pindah-{label}-{}", &digest[..6])
     };
     let name = slug(&stem)?;
-    let branch = format!("omnix/{name}");
+    let branch = format!("{}{name}", branch_prefix(&repo, Some(&label)));
     let worktree = repo.join(".omnix").join("worktrees").join(&name);
     if worktree.exists() {
         bail!("worktree already exists: {}", worktree.display());
@@ -824,6 +829,7 @@ pub fn create_with(root: &Path, options: CreateOptions) -> Result<(Handoff, Path
         paths: options.paths,
         links,
         status: None,
+        runtime_state: None,
         report: None,
         updated_at: now(),
         closed: false,
@@ -926,6 +932,7 @@ pub fn mark_queued(record: &mut Handoff, reason: &str) -> Result<()> {
 /// log file; the record only points at it.
 pub fn mark_running(record: &mut Handoff, pid: u32) -> Result<()> {
     record.outcome = "working".into();
+    record.runtime_state = Some("working".into());
     record.receipt.detail = format!("headless worker running (pid {pid})");
     record.worker_pid = Some(pid);
     if let Some((started, exe)) = process_identity(pid) {
@@ -943,6 +950,7 @@ pub fn mark_headless(record: &mut Handoff, log: &Path, success: bool) -> Result<
     } else {
         "failed".into()
     };
+    record.runtime_state = Some(if success { "done" } else { "failed" }.into());
     record.receipt.mode = "headless".into();
     record.receipt.detail = format!(
         "headless run {} -> {}",
@@ -1199,7 +1207,9 @@ pub fn format_launch_preview(root: &Path, record: &Handoff) -> String {
 /// Machine status view for a headless handoff so `agent status` and `agent wait`
 /// also work when the GUI app is not running.
 pub fn headless_pane_row(record: &Handoff) -> serde_json::Value {
-    let state = if record.blocked_reason.as_deref() == Some("quota")
+    let state = if record.runtime_state.as_deref() == Some("stalled") {
+        "stalled"
+    } else if record.blocked_reason.as_deref() == Some("quota")
         || record.outcome == "blocked: quota"
     {
         "quota"
@@ -1210,9 +1220,25 @@ pub fn headless_pane_row(record: &Handoff) -> serde_json::Value {
     {
         "exited"
     } else if record.pid.is_some() {
-        "working"
+        record.runtime_state.as_deref().unwrap_or("working")
     } else {
         "unknown"
+    };
+    let status = if matches!(state, "queued" | "stalled" | "quota") {
+        state
+    } else if let Some(runtime) = record.runtime_state.as_deref() {
+        runtime
+    } else if state == "exited" {
+        if record.exit_code == Some(0)
+            || record.outcome == "delivered-headless"
+            || record.status.as_deref() == Some("done")
+        {
+            "done"
+        } else {
+            "failed"
+        }
+    } else {
+        record.status.as_deref().unwrap_or(state)
     };
     serde_json::json!({
         "paneKey": record.pane_key.clone().unwrap_or_else(|| format!("ho:{}", record.name)),
@@ -1224,15 +1250,140 @@ pub fn headless_pane_row(record: &Handoff) -> serde_json::Value {
         "handoff": record.name,
         "parent": record.parent,
         "sessionId": record.session_id.clone().unwrap_or_default(),
-        "status": record.status.clone().unwrap_or_else(|| state.to_string()),
+        "status": status,
         "state": state,
         "pid": record.pid,
         "log": record.log,
         "exitCode": record.exit_code,
         "wipCommit": record.wip_commit,
+        "startedAt": record.created_at,
+        "startedAtLocal": crate::control::local_time(record.created_at),
         "updatedAt": record.updated_at,
         "updatedAtLocal": crate::control::local_time(record.updated_at),
     })
+}
+
+/// Raw records plus the machine state the UI paints. Keeping one source avoids
+/// the sidebar and `agent status` disagreeing about a running handoff.
+pub fn ui_list() -> Vec<serde_json::Value> {
+    list_all()
+        .into_iter()
+        .map(|record| {
+            let row = headless_pane_row(&record);
+            let mut value = serde_json::to_value(&record).unwrap_or(serde_json::Value::Null);
+            if let Some(object) = value.as_object_mut() {
+                object.insert("state".into(), row["state"].clone());
+                object.insert("uiStatus".into(), row["status"].clone());
+                object.insert("logLocal".into(), row["log"].clone());
+            }
+            value
+        })
+        .collect()
+}
+
+/// Non-closed headless runs for the sidebar. Cheap enough to poll with the
+/// memory widget; no process or history query is involved.
+pub fn headless_rows() -> Vec<serde_json::Value> {
+    list_all()
+        .into_iter()
+        .filter(|record| {
+            !record.closed
+                && (record.pid.is_some()
+                    || record.log.is_some()
+                    || record.blocked_reason.is_some()
+                    || record.outcome == "queued"
+                    || record.runtime_state.is_some())
+        })
+        .map(|record| headless_pane_row(&record))
+        .collect()
+}
+
+fn free_ram_mb() -> Option<u64> {
+    let info = crate::usage::ram()?;
+    let used = info.get("usedBytes").and_then(serde_json::Value::as_u64)?;
+    let total = info.get("totalBytes").and_then(serde_json::Value::as_u64)?;
+    Some(total.saturating_sub(used) / (1024 * 1024))
+}
+
+/// Machine-readable outstanding queue conditions, shared by the detached
+/// headless worker and the GUI waiting pane.
+pub fn queue_wait_reason(record: &Handoff) -> Option<String> {
+    let mut waiting = Vec::new();
+    if let Some(after_name) = &record.after {
+        let done = list_all()
+            .into_iter()
+            .find(|h| &h.name == after_name)
+            .map(|h| {
+                h.closed
+                    || h.status.as_deref() == Some("done")
+                    || matches!(
+                        h.outcome.as_str(),
+                        "delivered-headless" | "failed" | "blocked: quota"
+                    )
+                    || h.exit_code.is_some()
+            })
+            .unwrap_or(false);
+        if !done {
+            waiting.push(format!("after:{after_name}"));
+        }
+    }
+    if let Some(at) = record.start_at {
+        if crate::control::epoch() < at {
+            waiting.push(format!("at:{}", crate::control::local_time(at)));
+        }
+    }
+    if let Some(need_mb) = record.min_free_mb {
+        if let Some(avail) = free_ram_mb() {
+            if avail < need_mb {
+                waiting.push(format!("ram:{avail}MB<{need_mb}MB"));
+            }
+        }
+    }
+    (!waiting.is_empty()).then(|| waiting.join(", "))
+}
+
+/// Human copy for the waiting pane. Recomputed on every poll so the RAM number
+/// is the current one, not the value at launch.
+pub fn queue_display(record: &Handoff) -> String {
+    let mut parts = Vec::new();
+    if let Some(after_name) = &record.after {
+        if list_all()
+            .into_iter()
+            .find(|h| &h.name == after_name)
+            .map(|h| {
+                !(h.closed
+                    || h.status.as_deref() == Some("done")
+                    || matches!(
+                        h.outcome.as_str(),
+                        "delivered-headless" | "failed" | "blocked: quota"
+                    )
+                    || h.exit_code.is_some())
+            })
+            .unwrap_or(true)
+        {
+            parts.push(format!("menunggu handoff {after_name}"));
+        }
+    }
+    if let Some(at) = record.start_at {
+        if crate::control::epoch() < at {
+            parts.push(format!(
+                "menunggu sampai {}",
+                crate::control::local_time(at)
+            ));
+        }
+    }
+    if let Some(need_mb) = record.min_free_mb {
+        if let Some(avail) = free_ram_mb() {
+            if avail < need_mb {
+                parts.push(format!("menunggu RAM ≥ {need_mb} MB (sekarang {avail} MB)"));
+            }
+        }
+    }
+    if parts.is_empty() {
+        "menunggu kondisi antrean".into()
+    } else {
+        parts.join(" · ")
+    }
 }
 
 pub fn report(repo: &Path, name: &str, status: &str, text: &str) -> Result<Handoff> {
@@ -1622,7 +1773,7 @@ mod tests {
             find_in(&dir, "probe").is_none(),
             "record must be rolled back"
         );
-        let branch = git(&dir, &["branch", "--list", "omnix/probe"]).unwrap();
+        let branch = git(&dir, &["branch", "--list", "kerja/probe"]).unwrap();
         assert!(
             branch.trim().is_empty(),
             "branch must be rolled back: {branch}"
@@ -1636,10 +1787,54 @@ mod tests {
         let (mut record, _) = create(&dir, "q", "codex", "x", None, false).unwrap();
         record.outcome = "queued".into();
         record.status = None;
+        record.runtime_state = Some("working".into());
         let row = headless_pane_row(&record);
         assert_eq!(row["state"], "queued");
         assert_eq!(row["status"], "queued");
         assert!(!row["status"].is_null());
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn headless_rows_report_stalled_and_finished_states() {
+        let dir = temp_repo("headless-state");
+        let (mut record, _) = create(&dir, "state", "codex", "x", None, false).unwrap();
+        record.pid = Some(std::process::id());
+        record.log = Some(
+            dir.join(".omnix/logs/handoff-state.log")
+                .to_string_lossy()
+                .into_owned(),
+        );
+        record.runtime_state = Some("working".into());
+        let row = headless_pane_row(&record);
+        assert_eq!(row["state"], "working");
+        assert_eq!(row["status"], "working");
+
+        record.runtime_state = Some("stalled".into());
+        let row = headless_pane_row(&record);
+        assert_eq!(row["state"], "stalled");
+        assert_eq!(row["status"], "stalled");
+
+        record.runtime_state = Some("done".into());
+        record.exit_code = Some(0);
+        record.outcome = "delivered-headless".into();
+        let row = headless_pane_row(&record);
+        assert_eq!(row["state"], "exited");
+        assert_eq!(row["status"], "done");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn queue_reason_comes_from_the_clock_and_clears_when_due() {
+        let dir = temp_repo("queue-reason");
+        let (mut record, _) = create(&dir, "q", "codex", "x", None, false).unwrap();
+        record.start_at = Some(crate::control::epoch() + 3600);
+        let reason = queue_wait_reason(&record).expect("future --at must wait");
+        assert!(reason.starts_with("at:"), "{reason}");
+        assert!(queue_display(&record).contains("menunggu sampai"));
+
+        record.start_at = Some(crate::control::epoch().saturating_sub(1));
+        assert!(queue_wait_reason(&record).is_none());
         fs::remove_dir_all(&dir).ok();
     }
 
@@ -1748,6 +1943,36 @@ mod tests {
         )
         .unwrap();
         assert_eq!(record.branch, "hotfix/c");
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn default_and_pane_worktrees_never_use_omnix() {
+        let dir = temp_repo("branch-no-omnix");
+        let (record, _) = create_with(
+            &dir,
+            CreateOptions {
+                name: "bawaan".into(),
+                agent: "codex".into(),
+                prompt: "x".into(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(record.branch, "kerja/bawaan");
+
+        let moved = worktree_for_pane(&dir, "tab:1", "Codex Akun").unwrap();
+        assert!(
+            moved.branch.starts_with("kerja/"),
+            "pane worktree must follow the default prefix: {}",
+            moved.branch
+        );
+        assert!(!moved.branch.contains("omnix"), "{}", moved.branch);
+
+        fs::create_dir_all(dir.join(".omnix")).unwrap();
+        fs::write(dir.join(".omnix/config"), "branch_prefix = tim/\n").unwrap();
+        let moved = worktree_for_pane(&dir, "tab:2", "Claude").unwrap();
+        assert!(moved.branch.starts_with("tim/"), "{}", moved.branch);
         fs::remove_dir_all(&dir).ok();
     }
 

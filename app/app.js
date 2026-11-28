@@ -834,6 +834,7 @@
     if (opts.handoff) args.handoff = opts.handoff;
     if (opts.parent) args.parent = opts.parent;
     if (opts.orchestrator) args.orchestrator = true;
+    if (opts.readOnly) args.readOnly = true;
     if (opts.model) args.model = opts.model;
     if (opts.effort) args.effort = opts.effort;
     if (opts.mode) args.mode = opts.mode;
@@ -1072,6 +1073,8 @@
       scope: normScope(opts.scope || opts.cwd || (anchor && anchor.cwd) || activeScope),
       lastOutput: 0,
       status: 'working',
+      oscState: '',
+      readOnly: !!opts.readOnly,
       statusNode: null,
       tailText: '',
       settleTimer: 0,
@@ -1183,7 +1186,7 @@
     term.onData(function (data) {
       traceLine({ kind: 'ptyData', len: data.length, pane: paneKey });
       /* typing can beat the spawn reply; hold keystrokes until the pty exists */
-      if (tab.exited) return;
+      if (tab.exited || tab.readOnly) return;
       noteInput(tab);
       if (!tab.spawned) {
         var queued = tab.pendingWrites || '';
@@ -3820,6 +3823,7 @@
       memoryBusy = false;
       if (!res) return null;
       memData = res;
+      setHeadlessRuns(res.headless);
       renderMemory();
       renderConflicts(res.conflicts);
       return res;
@@ -5012,7 +5016,7 @@
   /* A pane is working while output flows, needs approval when the CLI asks a
      yes/no question, failed on a non-zero exit, and done once a turn goes
      quiet. A project row shows the most urgent state of its panes. */
-  var STATUS_RANK = { idle: 0, done: 1, working: 2, failed: 3, approval: 4 };
+  var STATUS_RANK = { idle: 0, done: 1, working: 2, stalled: 3, failed: 4, approval: 5 };
 
   function statusRank(status) {
     return STATUS_RANK[status] || 0;
@@ -5021,6 +5025,9 @@
   function statusLabel(status, count) {
     if (status === 'approval') return 'needs approval';
     if (status === 'failed') return 'failed';
+    if (status === 'stalled') return 'stalled';
+    if (status === 'queued') return 'queued';
+    if (status === 'quota') return 'quota';
     if (status === 'working') return count > 1 ? count + ' working' : 'working';
     if (status === 'done') return 'done';
     return count > 1 ? count + ' running' : 'running';
@@ -5137,6 +5144,7 @@
 
   function noteInput(tab) {
     if (!tab || tab.kind !== 'terminal') return;
+    tab.oscState = '';
     tab.tailText = '';
     if (tab.settleTimer) {
       clearTimeout(tab.settleTimer);
@@ -5158,9 +5166,15 @@
         setTabStatus(tab, 'approval');
         return;
       }
+      /* The harness OSC is authoritative: a finished turn keeps its mark even
+         while the TUI repaints a spinner or status line. */
+      if (tab.oscState === 'done' || tab.oscState === 'stalled' ||
+          tab.oscState === 'queued') return;
       if (tab.status !== 'approval') setTabStatus(tab, 'working');
     }
     if (tab.status === 'approval') return;
+    if (tab.oscState === 'done' || tab.oscState === 'stalled' ||
+        tab.oscState === 'queued') return;
     if (tab.settleTimer) clearTimeout(tab.settleTimer);
     tab.settleTimer = setTimeout(function () {
       tab.settleTimer = 0;
@@ -5263,6 +5277,8 @@
       var expanded = !!projExpanded[key];
       var live = liveTabsAt(p.path);
       var marks = statusTabsAt(p.path);
+      var headless = headlessAt(p.path);
+      var hasKids = false;
       var running = sessions.slice();
       for (var l = 0; l < live.length; l++) {
         var lt = live[l];
@@ -5278,7 +5294,11 @@
         });
       }
 
-      var wrap = el('div', 'proj' + (live.length ? ' is-working' : '') +
+      hasKids = running.length > 0 || headless.length > 0;
+      var busyHeadless = headless.some(function (row) {
+        return row.state === 'working' || row.state === 'stalled';
+      });
+      var wrap = el('div', 'proj' + ((live.length || busyHeadless) ? ' is-working' : '') +
         (key === activeScope ? ' is-active' : ''));
       var row = el('div', 'proj-row');
       row.tabIndex = 0;
@@ -5291,7 +5311,7 @@
       var chev = el('span', 'proj-chev', '\u25b8');
       chev.setAttribute('aria-hidden', 'true');
       chev.classList.add('is-empty');
-      if (running.length) {
+      if (hasKids) {
         chev.classList.remove('is-empty');
         chev.setAttribute('role', 'button');
         chev.title = expanded ? 'Hide sessions' : 'Show sessions';
@@ -5344,7 +5364,7 @@
         if (ev.key === 'Enter' || ev.key === ' ') {
           ev.preventDefault();
           openProject(p);
-        } else if (ev.key === 'ArrowRight' && sessions.length && !projExpanded[key]) {
+        } else if (ev.key === 'ArrowRight' && hasKids && !projExpanded[key]) {
           ev.preventDefault();
           projExpanded[key] = true;
           saveProjExpanded();
@@ -5358,7 +5378,7 @@
       }));
       wrap.appendChild(row);
 
-      if (running.length) {
+      if (hasKids) {
         var kids = el('div', 'proj-kids');
         kids.hidden = !expanded;
         if (ws && ws.branch) kids.appendChild(el('div', 'proj-branch', ws.branch));
@@ -5387,6 +5407,9 @@
             }));
             kids.appendChild(line);
           })(running[s]);
+        }
+        for (var h = 0; h < headless.length; h++) {
+          kids.appendChild(headlessRow(headless[h]));
         }
         wrap.appendChild(kids);
       }
@@ -6694,6 +6717,85 @@
 
   var workersQueued = [];
   var workerSendTarget = null;
+  var headlessRuns = [];
+  var headlessSig = '';
+
+  function setHeadlessRuns(list) {
+    headlessRuns = Array.isArray(list) ? list : [];
+    var sig = headlessRuns.map(function (row) {
+      return [row.paneKey, row.status, row.state, row.updatedAt, row.log].join(':');
+    }).join('|');
+    if (sig === headlessSig) return;
+    headlessSig = sig;
+    if (savedProjects.length) renderProjects(savedProjects);
+  }
+
+  function headlessAt(path) {
+    var owner = normPath(path);
+    var out = [];
+    for (var i = 0; i < headlessRuns.length; i++) {
+      var row = headlessRuns[i];
+      if (!row || !row.cwd) continue;
+      if (projectForPath(row.cwd) !== owner) continue;
+      out.push(row);
+    }
+    return out;
+  }
+
+  function openHeadlessLog(row) {
+    if (!row || !row.name) return Promise.resolve(null);
+    return call('openLog', { name: row.name }).then(function (res) {
+      if (!res || !res.paneKey) return null;
+      var tab = byPaneKey(res.paneKey);
+      if (tab) {
+        activate(tab);
+        return tab;
+      }
+      tab = createTerminal({
+        paneKey: res.paneKey,
+        attach: true,
+        title: res.title || ('log:' + row.name),
+        handoff: row.name,
+        readOnly: true
+      });
+      return tab;
+    });
+  }
+
+  function headlessRow(row) {
+    var status = row.uiStatus || row.state || 'working';
+    var line = el('div', 'sess-row is-headless');
+    line.setAttribute('role', 'listitem');
+    line.title = row.queued_reason || row.report || row.log || row.name;
+    line.appendChild(iconNode(row.agent || 'terminal'));
+    line.appendChild(el('span', 'inv-title', row.name || 'handoff'));
+    var meta = el('span', 'worker-meta');
+    var badge = profileBadge(row.agent || '', 'worker-profile');
+    if (badge) meta.appendChild(badge);
+    meta.appendChild(document.createTextNode(
+      (row.agent || 'agent') + (row.model ? ':' + row.model : '')));
+    line.appendChild(meta);
+    line.appendChild(workingGlyph(statusLabel(status, 1), status));
+    line.appendChild(el('span', 'proj-time',
+      row.startedAtLocal || relTime(row.startedAt || row.updatedAt || 0)));
+    if (row.log) {
+      var open = el('button', 'worker-btn', 'Buka log');
+      open.type = 'button';
+      open.title = row.log;
+      open.addEventListener('click', guard(function (ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        openHeadlessLog(row);
+      }));
+      line.appendChild(open);
+    }
+    if (row.log) {
+      line.addEventListener('click', guard(function (ev) {
+        if (ev && ev.stopPropagation) ev.stopPropagation();
+        openHeadlessLog(row);
+      }));
+    }
+    return line;
+  }
 
   function workerAgentMeta(agent) {
     var node = el('span', 'worker-meta');
@@ -6831,7 +6933,11 @@
     }).then(function (res) {
       if (!res) return;
       hideModal($('agent-send-modal'));
-      toast('ok', 'Message sent to ' + (tab.handoff || tab.title));
+      if (res.accepted === 'pending') {
+        toast('info', 'Message queued; waiting for the agent to accept it.');
+      } else {
+        toast('ok', 'Message accepted by ' + (tab.handoff || tab.title));
+      }
     });
   }
 
@@ -6856,6 +6962,20 @@
   }
 
   /* ---------- events from host ---------- */
+
+  /* Backend-authoritative state (OSC 7501, stall timer, exit). This handler
+     only paints; it never publishes back, so it cannot ping-pong. */
+  EVENTS.paneState = function (payload) {
+    if (!payload || !payload.paneKey) return;
+    var tab = byPaneKey(payload.paneKey);
+    if (!tab || tab.kind !== 'terminal' || tab.closed) return;
+    tab.oscState = payload.status || '';
+    if (tab.status === payload.status) return;
+    tab.status = payload.status || 'idle';
+    paintTabStatus(tab);
+    refreshBusyDots();
+    renderWorkers();
+  };
 
   EVENTS.ptyData = function (payload) {
     var tab = byPaneKey(payload.paneKey);
@@ -6904,10 +7024,12 @@
       cwd: payload.cwd || null,
       handoff: payload.handoff || null,
       parent: payload.parent || null,
-      orchestrator: !!payload.orchestrator
+      orchestrator: !!payload.orchestrator,
+      readOnly: !!payload.readOnly
     });
     if (!tab) return;
     tab.status = payload.status || 'working';
+    tab.oscState = payload.status || '';
     paintTabStatus(tab);
     publishPane(tab);
     renderWorkers();

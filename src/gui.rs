@@ -1,10 +1,10 @@
 use crate::{browser, history, procs, projects, pty, sources, update, usage, workspace};
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Duration;
 use tao::dpi::LogicalSize;
@@ -45,6 +45,10 @@ enum Msg {
     Ui(String),
     Control(Value, Sender<Value>),
     PromptDue(String),
+    PromptEnter(String),
+    Tick,
+    HandoffReady(String),
+    HandoffCancelled(String),
     Probe(String),
     StartTest,
     Finish(bool),
@@ -74,7 +78,25 @@ struct PaneMeta {
     status: String,
     exit_code: Option<i64>,
     orchestrator: bool,
+    read_only: bool,
+    last_output_at: u64,
+    started_at: u64,
     updated_at: u64,
+}
+
+/// A message written but not yet proved accepted. `entered_at` stays zero
+/// until Enter is a separate write, so composer echo before submission never
+/// counts as a started turn.
+#[derive(Clone)]
+struct PendingSend {
+    token: String,
+    handoff: String,
+    kind: &'static str,
+    entered_at: u64,
+    bytes: usize,
+    wire: String,
+    body: String,
+    seen: String,
 }
 
 impl PaneMeta {
@@ -97,6 +119,9 @@ impl PaneMeta {
             "state": crate::control::machine_state(status, self.exit_code),
             "exitCode": self.exit_code,
             "orchestrator": self.orchestrator,
+            "readOnly": self.read_only,
+            "lastOutputAt": self.last_output_at,
+            "startedAt": self.started_at,
             "updatedAt": self.updated_at,
             "updatedAtLocal": crate::control::local_time(self.updated_at),
         })
@@ -175,6 +200,9 @@ struct App {
     pane_tails: HashMap<String, String>,
     pane_quota_reported: HashSet<String>,
     pending_prompts: HashMap<String, String>,
+    prompt_trust_answered: HashSet<String>,
+    pending_sends: HashMap<String, PendingSend>,
+    waiting_handoffs: HashMap<String, crate::handoff::Handoff>,
     ctrl: Option<crate::control::Server>,
     quit: bool,
 }
@@ -502,6 +530,446 @@ fn find_pane_key(app: &App, target: &str) -> Option<String> {
         .map(|(key, _)| key.clone())
 }
 
+static SEND_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn send_token() -> String {
+    format!(
+        "{}-{}",
+        crate::control::epoch(),
+        SEND_SEQ.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
+fn publish_status(app: &App, key: &str, meta: &PaneMeta, old: &str, new: &str) {
+    if old == new {
+        return;
+    }
+    log_state(app, key, meta, old, new);
+    emit(&app.ui, "paneState", &meta.json(key));
+    persist_panes(app);
+}
+
+fn schedule_enter(key: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
+    let key = key.to_string();
+    let tx = tx.clone();
+    let proxy = proxy.clone();
+    std::thread::spawn(move || {
+        // Long bracketed pastes need a beat before CR means "submit".
+        std::thread::sleep(Duration::from_millis(500));
+        let _ = tx.send(Msg::PromptEnter(key));
+        let _ = proxy.send_event(UserEvent::Wake);
+    });
+}
+
+/// Write the paste (and only the paste), then press Enter in a second write.
+/// A strict TUI treats a paste terminator followed by CR in one read as paste
+/// content and leaves the brief in its composer.
+fn write_agent_input(
+    app: &mut App,
+    key: &str,
+    text: &str,
+    kind: &'static str,
+    token: String,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+) -> Result<()> {
+    let handoff = app
+        .panes
+        .get(key)
+        .map(|meta| meta.handoff.clone())
+        .unwrap_or_default();
+    let session = app
+        .ptys
+        .get_mut(key)
+        .ok_or_else(|| anyhow!("pane '{key}' has no live process"))?;
+    use std::io::Write;
+    let paste = if text.contains('\n') {
+        format!("\x1b[200~{}\x1b[201~", text.trim_end())
+    } else {
+        text.to_string()
+    };
+    session.writer.write_all(paste.as_bytes())?;
+    session.writer.flush()?;
+    app.pending_sends.insert(
+        key.to_string(),
+        PendingSend {
+            token,
+            handoff,
+            kind,
+            entered_at: 0,
+            bytes: text.len(),
+            wire: paste,
+            body: text.trim_end().to_string(),
+            seen: String::new(),
+        },
+    );
+    schedule_enter(key, tx, proxy);
+    Ok(())
+}
+
+fn plain_echo(text: &str) -> String {
+    text.replace('\r', "").trim().to_string()
+}
+
+/// A PTY in canonical mode echoes the paste back even when the child never
+/// reads stdin (`sleep 60`). Echo alone is not a started turn: require output
+/// that goes beyond both the visible body and the raw paste wire.
+fn maybe_accept_pending_send(app: &mut App, key: &str, text: &str) {
+    let proven = if let Some(pending) = app.pending_sends.get_mut(key) {
+        if pending.entered_at == 0 {
+            false
+        } else {
+            pending.seen.push_str(text);
+            let seen = plain_echo(&pending.seen);
+            let body = plain_echo(&pending.body);
+            let wire = plain_echo(&pending.wire);
+            !seen.is_empty()
+                && seen != body
+                && seen != wire
+                && !body.starts_with(&seen)
+                && !wire.starts_with(&seen)
+        }
+    } else {
+        false
+    };
+    if proven {
+        accept_pending_send(app, key);
+    }
+}
+
+fn accept_pending_send(app: &mut App, key: &str) {
+    let Some(pending) = app.pending_sends.remove(key) else {
+        return;
+    };
+    let old = app
+        .panes
+        .get(key)
+        .map(|meta| meta.status.clone())
+        .unwrap_or_default();
+    if let Some(meta) = app.panes.get_mut(key) {
+        if !matches!(meta.status.as_str(), "approval" | "quota" | "failed") {
+            meta.status = "working".into();
+            meta.last_output_at = crate::control::epoch();
+            meta.updated_at = crate::control::epoch();
+        }
+    }
+    if let Some(meta) = app.panes.get(key).cloned() {
+        publish_status(app, key, &meta, &old, &meta.status);
+    }
+    let kind = if pending.kind == "handoff-prompt" {
+        "handoff-prompt-sent"
+    } else {
+        "agent-message-sent"
+    };
+    crate::control::event(
+        kind,
+        json!({
+            "pane": key,
+            "handoff": pending.handoff,
+            "bytes": pending.bytes,
+            "sendId": pending.token,
+            "accepted": true,
+        }),
+    );
+    emit(
+        &app.ui,
+        "toast",
+        &json!({
+            "level": "ok",
+            "message": if pending.kind == "handoff-prompt" {
+                "Handoff prompt accepted"
+            } else {
+                "Message accepted"
+            }
+        }),
+    );
+}
+
+/// Readiness, trust, and acceptance are driven by PTY bytes. The fixed timer
+/// remains only as a fallback for TUIs that never draw a composer marker.
+fn process_agent_chunk(
+    app: &mut App,
+    key: &str,
+    text: &str,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+) {
+    let now = crate::control::epoch();
+    let mut transition = None;
+    if let Some(meta) = app.panes.get_mut(key) {
+        meta.last_output_at = now;
+        meta.updated_at = now;
+        let old = meta.status.clone();
+        if let Some(signal) = crate::control::agent_signal(text) {
+            let next = match signal.state.as_str() {
+                "idle" | "done" => Some("done"),
+                "working" => Some("working"),
+                "approval" | "needs-approval" => Some("approval"),
+                "stalled" => Some("stalled"),
+                "quota" => Some("quota"),
+                _ => None,
+            };
+            if let Some(next) = next {
+                meta.status = next.to_string();
+            }
+        } else if old == "stalled" {
+            meta.status = "working".into();
+        }
+        if old != meta.status {
+            transition = Some((meta.clone(), old));
+        }
+    }
+    if let Some((meta, old)) = transition {
+        publish_status(app, key, &meta, &old, &meta.status);
+    }
+    maybe_accept_pending_send(app, key, text);
+
+    if app.pending_prompts.contains_key(key) {
+        let tail = app.pane_tails.get(key).cloned().unwrap_or_default();
+        if crate::control::needs_trust_answer(&tail) && !app.prompt_trust_answered.contains(key) {
+            app.prompt_trust_answered.insert(key.to_string());
+            if let Some(session) = app.ptys.get_mut(key) {
+                use std::io::Write;
+                let _ = session.writer.write_all(b"\r");
+                let _ = session.writer.flush();
+            }
+            return;
+        }
+        if crate::control::agent_ready(&tail) {
+            if let Some(prompt) = app.pending_prompts.remove(key) {
+                let token = send_token();
+                if let Err(err) =
+                    write_agent_input(app, key, &prompt, "handoff-prompt", token, tx, proxy)
+                {
+                    emit(
+                        &app.ui,
+                        "toast",
+                        &json!({"level": "error", "message": format!("Prompt not written: {err}")}),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn attach_reader(
+    mut reader: Box<dyn Read + Send>,
+    key: &str,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+) {
+    let tx_data = tx.clone();
+    let proxy_data = proxy.clone();
+    let key_thread = key.to_string();
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(n) => {
+                    if tx_data
+                        .send(Msg::PtyData {
+                            key: key_thread.clone(),
+                            data: buf[..n].to_vec(),
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                    let _ = proxy_data.send_event(UserEvent::Wake);
+                }
+            }
+        }
+        let _ = tx_data.send(Msg::PtyExit { key: key_thread });
+        let _ = proxy_data.send_event(UserEvent::Wake);
+    });
+}
+
+fn schedule_prompt_fallback(key: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
+    let timer_key = key.to_string();
+    let timer_tx = tx.clone();
+    let timer_proxy = proxy.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(8000));
+        let _ = timer_tx.send(Msg::PromptDue(timer_key));
+        let _ = timer_proxy.send_event(UserEvent::Wake);
+    });
+}
+
+fn start_handoff_agent(
+    app: &mut App,
+    record: &crate::handoff::Handoff,
+    key: &str,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+    open: bool,
+) -> Result<u32> {
+    let cwd = PathBuf::from(&record.worktree);
+    if !cwd.is_dir() {
+        bail!("worktree is missing: {}", cwd.display());
+    }
+    let agent = record.agent.as_str();
+    let options = crate::agent::LaunchOptions {
+        model: record.model.clone(),
+        effort: record.effort.clone(),
+        mode: matches!(crate::agent::base_agent(agent), "antigravity" | "claude")
+            .then(|| record.mode.clone())
+            .flatten(),
+        prompt: None,
+    };
+    let mut extra = crate::agent::extra_args(agent, &options)?;
+    let generated_session = if crate::agent::base_agent(agent) == "claude" {
+        let sid = crate::agent::new_session_id();
+        extra.extend(crate::agent::new_session_args(agent, &sid));
+        Some(sid)
+    } else {
+        None
+    };
+    if let Some(sid) = &generated_session {
+        if let Some(mut rec) = crate::handoff::find_any(&record.name) {
+            rec.session_id = Some(sid.clone());
+            let _ = crate::handoff::save(&rec);
+        }
+    }
+    let extra_env = crate::agent::model_env(agent, options.model.as_deref());
+    let spawned = pty::spawn_agent_with(&app.root, agent, None, &cwd, &extra, &extra_env)?;
+    let pid = spawned.pid;
+    attach_reader(spawned.reader, key, tx, proxy);
+    app.ptys.insert(key.to_string(), spawned.pty);
+    app.pane_procs.insert(
+        key.to_string(),
+        PaneProc {
+            pid,
+            label: record.name.clone(),
+            cwd: cwd.to_string_lossy().into_owned(),
+        },
+    );
+    let now = crate::control::epoch();
+    let meta = PaneMeta {
+        label: record.name.clone(),
+        title: record.name.clone(),
+        cwd: cwd.to_string_lossy().into_owned(),
+        agent: agent.to_string(),
+        handoff: record.name.clone(),
+        parent: record.parent.clone().unwrap_or_default(),
+        session_id: generated_session
+            .clone()
+            .or_else(|| record.session_id.clone())
+            .unwrap_or_default(),
+        status: "working".into(),
+        exit_code: None,
+        orchestrator: record.orchestrator,
+        read_only: false,
+        last_output_at: now,
+        started_at: now,
+        updated_at: now,
+    };
+    app.panes.insert(key.to_string(), meta.clone());
+    if let Ok(text) = std::fs::read_to_string(&record.brief) {
+        if text.len() <= 256 * 1024 {
+            app.pending_prompts.insert(key.to_string(), text);
+        }
+    }
+    schedule_prompt_fallback(key, tx, proxy);
+    if open {
+        emit(&app.ui, "paneOpen", &meta.json(key));
+    }
+    crate::control::event(
+        "agent-started",
+        json!({ "pane": key, "handoff": record.name, "agent": agent, "root": "control" }),
+    );
+    persist_panes(app);
+    Ok(pid)
+}
+
+fn spawn_handoff_waiting(
+    app: &mut App,
+    record: &crate::handoff::Handoff,
+    key: &str,
+    reason: &str,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+) -> Result<Value> {
+    let cwd = PathBuf::from(&record.worktree);
+    if !cwd.is_dir() {
+        bail!("worktree is missing: {}", cwd.display());
+    }
+    let spawned = pty::spawn_command("sleep 604800", &cwd)?;
+    let pid = spawned.pid;
+    app.ptys.insert(key.to_string(), spawned.pty);
+    app.pane_procs.insert(
+        key.to_string(),
+        PaneProc {
+            pid,
+            label: record.name.clone(),
+            cwd: cwd.to_string_lossy().into_owned(),
+        },
+    );
+    let now = crate::control::epoch();
+    let meta = PaneMeta {
+        label: record.name.clone(),
+        title: record.name.clone(),
+        cwd: cwd.to_string_lossy().into_owned(),
+        agent: record.agent.clone(),
+        handoff: record.name.clone(),
+        parent: record.parent.clone().unwrap_or_default(),
+        session_id: record.session_id.clone().unwrap_or_default(),
+        status: "queued".into(),
+        exit_code: None,
+        orchestrator: record.orchestrator,
+        read_only: false,
+        last_output_at: now,
+        started_at: now,
+        updated_at: now,
+    };
+    app.panes.insert(key.to_string(), meta.clone());
+    app.waiting_handoffs.insert(key.to_string(), record.clone());
+    emit(&app.ui, "paneOpen", &meta.json(key));
+    let text = format!(
+        "\x1b[2J\x1b[H\x1b[38;5;244m[omnix]\x1b[0m {}\r\n\r\nPanel ini akan mulai otomatis.\r\n",
+        crate::handoff::queue_display(record)
+    );
+    emit(
+        &app.ui,
+        "ptyData",
+        &json!({ "paneKey": key, "dataBase64": base64(text.as_bytes()) }),
+    );
+    persist_panes(app);
+
+    let key_thread = key.to_string();
+    let record_path = crate::handoff::record_path(record);
+    let tx = tx.clone();
+    let proxy = proxy.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            let Ok(bytes) = std::fs::read(&record_path) else {
+                continue;
+            };
+            let Ok(fresh) = serde_json::from_slice::<crate::handoff::Handoff>(&bytes) else {
+                continue;
+            };
+            if fresh.closed {
+                let _ = tx.send(Msg::HandoffCancelled(key_thread));
+                let _ = proxy.send_event(UserEvent::Wake);
+                break;
+            }
+            if crate::handoff::queue_wait_reason(&fresh).is_none() {
+                let _ = tx.send(Msg::HandoffReady(key_thread));
+                let _ = proxy.send_event(UserEvent::Wake);
+                break;
+            }
+        }
+    });
+    Ok(json!({
+        "paneKey": key,
+        "pid": pid,
+        "waiting": true,
+        "reason": reason,
+        "message": crate::handoff::queue_display(record),
+    }))
+}
+
 fn log_state(app: &App, key: &str, meta: &PaneMeta, old: &str, new: &str) {
     if old == new {
         return;
@@ -511,6 +979,7 @@ fn log_state(app: &App, key: &str, meta: &PaneMeta, old: &str, new: &str) {
         "approval" => "agent-needs-approval",
         "failed" => "agent-exited",
         "working" => "agent-working",
+        "stalled" => "agent-stalled",
         _ => return,
     };
     let pane = app.ptys.contains_key(key);
@@ -704,6 +1173,9 @@ fn pty_spawn(
         status: "working".into(),
         exit_code: None,
         orchestrator: as_bool(args, "orchestrator"),
+        read_only: as_bool(args, "readOnly"),
+        last_output_at: crate::control::epoch(),
+        started_at: crate::control::epoch(),
         updated_at: crate::control::epoch(),
     };
     if !handoff.is_empty() {
@@ -726,6 +1198,74 @@ fn pty_spawn(
     }
     persist_panes(app);
     Ok(json!({ "paneKey": key, "pid": pid }))
+}
+
+fn open_log_pane(
+    app: &mut App,
+    name: &str,
+    tx: &Sender<Msg>,
+    proxy: &EventLoopProxy<UserEvent>,
+) -> Result<Value> {
+    let record =
+        crate::handoff::find_any(name).ok_or_else(|| anyhow!("no handoff named '{name}'"))?;
+    let log = record
+        .log
+        .clone()
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow!("handoff '{name}' has no log yet"))?;
+    if !log.is_file() {
+        return Err(anyhow!("log is missing: {}", log.display()));
+    }
+    let key = format!("log:{name}");
+    if app.ptys.contains_key(&key) {
+        let meta = app.panes.get(&key).cloned().unwrap_or_default();
+        return Ok(json!({ "paneKey": key, "existing": true, "title": meta.title }));
+    }
+    let cwd = if Path::new(&record.worktree).is_dir() {
+        PathBuf::from(&record.worktree)
+    } else {
+        PathBuf::from(&record.repo)
+    };
+    let log_text = log.to_string_lossy().into_owned();
+    let spawned = pty::spawn_program("tail", &["-n", "200", "-F", &log_text], &cwd)?;
+    let pid = spawned.pid;
+    attach_reader(spawned.reader, &key, tx, proxy);
+    app.ptys.insert(key.clone(), spawned.pty);
+    app.pane_procs.insert(
+        key.clone(),
+        PaneProc {
+            pid,
+            label: format!("log:{name}"),
+            cwd: cwd.to_string_lossy().into_owned(),
+        },
+    );
+    let now = crate::control::epoch();
+    let meta = PaneMeta {
+        label: format!("log:{name}"),
+        title: format!("log:{name}"),
+        cwd: cwd.to_string_lossy().into_owned(),
+        agent: String::new(),
+        handoff: name.to_string(),
+        parent: String::new(),
+        session_id: String::new(),
+        status: "done".into(),
+        exit_code: None,
+        orchestrator: false,
+        read_only: true,
+        last_output_at: now,
+        started_at: now,
+        updated_at: now,
+    };
+    app.panes.insert(key.clone(), meta.clone());
+    emit(&app.ui, "paneOpen", &meta.json(&key));
+    persist_panes(app);
+    Ok(json!({
+        "paneKey": key,
+        "pid": pid,
+        "title": meta.title,
+        "log": log_text,
+        "readOnly": true,
+    }))
 }
 
 fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<UserEvent>) {
@@ -1450,6 +1990,9 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             app.panes.remove(&key);
             app.pane_tails.remove(&key);
             app.pane_quota_reported.remove(&key);
+            app.pending_prompts.remove(&key);
+            app.pending_sends.remove(&key);
+            app.waiting_handoffs.remove(&key);
             persist_panes(app);
             Ok(json!({ "ok": true }))
         })(),
@@ -1489,7 +2032,9 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 (old, meta.status.clone())
             };
             if let Some(meta) = app.panes.get(&key) {
-                log_state(app, &key, meta, &old, &new);
+                if !meta.read_only {
+                    log_state(app, &key, meta, &old, &new);
+                }
             }
             let exit = app.panes.get(&key).and_then(|meta| meta.exit_code);
             persist_panes(app);
@@ -1549,7 +2094,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             }
             Ok(reply)
         })(),
-        "handoffList" => Ok(json!({ "handoffs": crate::handoff::list_all() })),
+        "handoffList" => Ok(json!({ "handoffs": crate::handoff::ui_list() })),
         "handoffClose" => (|| {
             let name = as_str(&args, "name").ok_or_else(|| anyhow!("name is required"))?;
             let record = crate::handoff::close(&name)?;
@@ -1609,6 +2154,7 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                     "over": limit.map(|limit| ai_rss > limit).unwrap_or(false),
                 },
                 "panes": panes,
+                "headless": crate::handoff::headless_rows(),
                 "conflicts": pane_conflicts(app),
                 "ram": usage::ram(),
             }))
@@ -1934,6 +2480,10 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             }));
             Ok(json!({ "project": root.to_string_lossy(), "members": out }))
         })(),
+        "openLog" => (|| {
+            let name = as_str(&args, "name").ok_or_else(|| anyhow!("name is required"))?;
+            open_log_pane(app, &name, tx, proxy)
+        })(),
         "selftest" => {
             if std::env::var_os("OMNIX_SELFTEST").is_none() {
                 return reply(&app.ui, id, Err(anyhow!("selftest is disabled")));
@@ -2148,9 +2698,17 @@ fn control_request(
         })),
         "panes" | "state" => Ok(json!({
             "panes": app.panes.iter().map(|(key, meta)| meta.json(key)).collect::<Vec<_>>(),
+            "headless": crate::handoff::headless_rows(),
             "memory": ai_memory(app),
         })),
-        "handoffList" => Ok(json!({ "handoffs": crate::handoff::list_all() })),
+        "handoffList" => Ok(json!({ "handoffs": crate::handoff::ui_list() })),
+        "openLog" => {
+            let name = req.get("name").and_then(Value::as_str).unwrap_or("");
+            if name.is_empty() {
+                return Err(anyhow!("name is required"));
+            }
+            open_log_pane(app, name, tx, proxy)
+        }
         "openUrl" => {
             let url = req.get("url").and_then(Value::as_str).unwrap_or("");
             if !url_allowed(url) {
@@ -2174,177 +2732,56 @@ fn control_request(
                 }
             }
             let key = find_pane_key(app, target)
-                .ok_or_else(|| anyhow!("no Omnix pane matches '{target}'"))?;
-            let state = app
+                .ok_or_else(|| anyhow!("not-accepted: no Omnix pane matches '{target}'"))?;
+            let (state, agent, read_only) = app
                 .panes
                 .get(&key)
-                .map(|meta| meta.status.clone())
+                .map(|meta| (meta.status.clone(), meta.agent.clone(), meta.read_only))
                 .unwrap_or_default();
+            if read_only {
+                return Err(anyhow!("not-accepted: '{key}' is a read-only log pane"));
+            }
+            if agent.trim().is_empty() {
+                return Err(anyhow!(
+                    "not-accepted: '{key}' is a shell or plain command, not an agent TUI"
+                ));
+            }
+            if !app.ptys.contains_key(&key) {
+                return Err(anyhow!("not-accepted: pane '{key}' has no live process"));
+            }
             if state == "approval" && !force {
                 return Err(anyhow!(
                     "pane is waiting for approval; answer it in the app or pass --force"
                 ));
             }
-            let session = app
-                .ptys
-                .get_mut(&key)
-                .ok_or_else(|| anyhow!("pane '{key}' has no live process"))?;
-            use std::io::Write;
-            let paste = if text.contains('\n') {
-                format!("\x1b[200~{}\x1b[201~\r", text.trim_end())
-            } else {
-                format!("{text}\r")
-            };
-            session.writer.write_all(paste.as_bytes())?;
-            session.writer.flush()?;
-            let handoff = app
-                .panes
-                .get(&key)
-                .map(|meta| meta.handoff.clone())
-                .unwrap_or_default();
-            crate::control::event(
-                "agent-message-sent",
-                json!({ "pane": key.clone(), "handoff": handoff, "bytes": text.len() }),
-            );
-            Ok(json!({ "paneKey": key, "state": crate::control::machine_state(&state, None) }))
+            let token = send_token();
+            write_agent_input(app, &key, text, "message", token.clone(), tx, proxy)?;
+            Ok(json!({
+                "paneKey": key,
+                "state": crate::control::machine_state(&state, None),
+                "accepted": "pending",
+                "sendId": token,
+            }))
         }
         "ptySpawn" => pty_spawn(app, req, tx, proxy),
         "spawnHandoff" => {
-            let record = req.get("record").cloned().unwrap_or(Value::Null);
-            let name = record
-                .get("name")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("handoff record has no name"))?;
-            let agent = record
-                .get("agent")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("handoff record has no agent"))?;
-            let worktree = record
-                .get("worktree")
-                .and_then(Value::as_str)
-                .ok_or_else(|| anyhow!("handoff record has no worktree"))?;
-            let cwd = PathBuf::from(worktree);
-            if !cwd.is_dir() {
-                return Err(anyhow!("worktree is missing: {}", cwd.display()));
+            let record_value = req.get("record").cloned().unwrap_or(Value::Null);
+            let record: crate::handoff::Handoff =
+                serde_json::from_value(record_value).context("handoff record is invalid")?;
+            if record.name.is_empty() || record.agent.is_empty() {
+                return Err(anyhow!("handoff record has no name or agent"));
             }
-            let key = format!("ho:{name}");
-            if app.ptys.contains_key(&key) {
+            let key = format!("ho:{}", record.name);
+            if app.ptys.contains_key(&key) || app.panes.contains_key(&key) {
                 return Err(anyhow!("handoff pane already open: {key}"));
             }
-            let options = crate::agent::LaunchOptions {
-                model: record
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                effort: record
-                    .get("effort")
-                    .and_then(Value::as_str)
-                    .map(str::to_string),
-                mode: matches!(crate::agent::base_agent(agent), "antigravity" | "claude")
-                    .then(|| {
-                        record
-                            .get("mode")
-                            .and_then(Value::as_str)
-                            .map(str::to_string)
-                    })
-                    .flatten(),
-                prompt: None,
-            };
-            let mut extra = crate::agent::extra_args(agent, &options)?;
-            let generated_session = if crate::agent::base_agent(agent) == "claude" {
-                let sid = crate::agent::new_session_id();
-                extra.extend(crate::agent::new_session_args(agent, &sid));
-                Some(sid)
-            } else {
-                None
-            };
-            if let Some(sid) = &generated_session {
-                if let Some(mut rec) = crate::handoff::find_any(name) {
-                    rec.session_id = Some(sid.clone());
-                    let _ = crate::handoff::save(&rec);
-                }
+            if !Path::new(&record.worktree).is_dir() {
+                return Err(anyhow!("worktree is missing: {}", record.worktree));
             }
-            let extra_env = crate::agent::model_env(agent, options.model.as_deref());
-            let spawned = pty::spawn_agent_with(&app.root, agent, None, &cwd, &extra, &extra_env)?;
-            let pid = spawned.pid;
-            let mut reader = spawned.reader;
-            let tx_data = tx.clone();
-            let proxy_data = proxy.clone();
-            let key_thread = key.clone();
-            std::thread::spawn(move || {
-                let mut buf = [0u8; 8192];
-                loop {
-                    match reader.read(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => {
-                            if tx_data
-                                .send(Msg::PtyData {
-                                    key: key_thread.clone(),
-                                    data: buf[..n].to_vec(),
-                                })
-                                .is_err()
-                            {
-                                break;
-                            }
-                            let _ = proxy_data.send_event(UserEvent::Wake);
-                        }
-                    }
-                }
-                let _ = tx_data.send(Msg::PtyExit { key: key_thread });
-                let _ = proxy_data.send_event(UserEvent::Wake);
-            });
-            app.ptys.insert(key.clone(), spawned.pty);
-            app.pane_procs.insert(
-                key.clone(),
-                PaneProc {
-                    pid,
-                    label: name.to_string(),
-                    cwd: worktree.to_string(),
-                },
-            );
-            let parent = record
-                .get("parent")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string();
-            let meta = PaneMeta {
-                label: name.to_string(),
-                title: name.to_string(),
-                cwd: worktree.to_string(),
-                agent: agent.to_string(),
-                handoff: name.to_string(),
-                parent,
-                session_id: generated_session.clone().unwrap_or_default(),
-                status: "working".into(),
-                exit_code: None,
-                orchestrator: record
-                    .get("orchestrator")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                updated_at: crate::control::epoch(),
-            };
-            app.panes.insert(key.clone(), meta.clone());
-            if let Some(brief) = record.get("brief").and_then(Value::as_str) {
-                if let Ok(text) = std::fs::read_to_string(brief) {
-                    if text.len() <= 256 * 1024 {
-                        app.pending_prompts.insert(key.clone(), text);
-                    }
-                }
+            if let Some(reason) = crate::handoff::queue_wait_reason(&record) {
+                return spawn_handoff_waiting(app, &record, &key, &reason, tx, proxy);
             }
-            let timer_key = key.clone();
-            let timer_tx = tx.clone();
-            let timer_proxy = proxy.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(3500));
-                let _ = timer_tx.send(Msg::PromptDue(timer_key));
-                let _ = timer_proxy.send_event(UserEvent::Wake);
-            });
-            emit(&app.ui, "paneOpen", &meta.json(&key));
-            crate::control::event(
-                "agent-started",
-                json!({ "pane": key.clone(), "handoff": name, "agent": agent, "root": "control" }),
-            );
-            persist_panes(app);
+            let pid = start_handoff_agent(app, &record, &key, tx, proxy, true)?;
             Ok(json!({ "paneKey": key, "pid": pid }))
         }
         "closePane" => {
@@ -2358,6 +2795,10 @@ fn control_request(
             app.panes.remove(&key);
             app.pane_tails.remove(&key);
             app.pane_quota_reported.remove(&key);
+            app.pending_prompts.remove(&key);
+            app.prompt_trust_answered.remove(&key);
+            app.pending_sends.remove(&key);
+            app.waiting_handoffs.remove(&key);
             persist_panes(app);
             emit(&app.ui, "paneClosed", &json!({ "paneKey": key.clone() }));
             Ok(json!({ "paneKey": key }))
@@ -2382,28 +2823,185 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                 let _ = reply_tx.send(response);
             }
             Msg::PromptDue(key) => {
-                if let Some(text) = app.pending_prompts.remove(&key) {
-                    if let Some(session) = app.ptys.get_mut(&key) {
-                        use std::io::Write;
-                        let paste = format!("\x1b[200~{}\x1b[201~\r", text.trim_end());
-                        if session.writer.write_all(paste.as_bytes()).is_ok() {
+                if app.pending_prompts.contains_key(&key) {
+                    let tail = app.pane_tails.get(&key).cloned().unwrap_or_default();
+                    if crate::control::needs_trust_answer(&tail)
+                        && !app.prompt_trust_answered.contains(&key)
+                    {
+                        app.prompt_trust_answered.insert(key.clone());
+                        if let Some(session) = app.ptys.get_mut(&key) {
+                            use std::io::Write;
+                            let _ = session.writer.write_all(b"\r");
                             let _ = session.writer.flush();
-                            let name = app
-                                .panes
-                                .get(&key)
-                                .map(|meta| meta.handoff.clone())
-                                .unwrap_or_default();
-                            crate::control::event(
-                                "handoff-prompt-sent",
-                                json!({ "pane": key, "handoff": name }),
-                            );
+                        }
+                        schedule_prompt_fallback(&key, tx, proxy);
+                    } else if let Some(text) = app.pending_prompts.remove(&key) {
+                        let kind = if app
+                            .panes
+                            .get(&key)
+                            .map(|meta| meta.handoff.is_empty())
+                            .unwrap_or(true)
+                        {
+                            "message"
+                        } else {
+                            "handoff-prompt"
+                        };
+                        let token = send_token();
+                        if let Err(err) =
+                            write_agent_input(app, &key, &text, kind, token, tx, proxy)
+                        {
                             emit(
                                 &app.ui,
                                 "toast",
-                                &json!({"level": "ok", "message": "Handoff prompt sent"}),
+                                &json!({"level": "error", "message": format!("Prompt not written: {err}")}),
                             );
                         }
                     }
+                }
+            }
+            Msg::PromptEnter(key) => {
+                let mut failed = false;
+                if let Some(pending) = app.pending_sends.get_mut(&key) {
+                    if pending.entered_at == 0 {
+                        if let Some(session) = app.ptys.get_mut(&key) {
+                            use std::io::Write;
+                            if session.writer.write_all(b"\r").is_ok()
+                                && session.writer.flush().is_ok()
+                            {
+                                pending.entered_at = crate::control::epoch();
+                            } else {
+                                failed = true;
+                            }
+                        } else {
+                            failed = true;
+                        }
+                    }
+                }
+                if failed {
+                    app.pending_sends.remove(&key);
+                }
+            }
+            Msg::HandoffReady(key) => {
+                if let Some(record) = app.waiting_handoffs.remove(&key) {
+                    if !app.panes.contains_key(&key) {
+                        continue;
+                    }
+                    if let Some(mut wait) = app.ptys.remove(&key) {
+                        let _ = wait.child.kill();
+                        let _ = wait.child.wait();
+                    }
+                    app.pane_procs.remove(&key);
+                    let fresh = std::fs::read(crate::handoff::record_path(&record))
+                        .ok()
+                        .and_then(|bytes| {
+                            serde_json::from_slice::<crate::handoff::Handoff>(&bytes).ok()
+                        })
+                        .unwrap_or(record);
+                    match start_handoff_agent(app, &fresh, &key, tx, proxy, false) {
+                        Ok(_) => {
+                            if let Some(meta) = app.panes.get(&key) {
+                                emit(&app.ui, "paneState", &meta.json(&key));
+                            }
+                        }
+                        Err(err) => {
+                            let now = crate::control::epoch();
+                            let old = app
+                                .panes
+                                .get(&key)
+                                .map(|meta| meta.status.clone())
+                                .unwrap_or_default();
+                            if let Some(meta) = app.panes.get_mut(&key) {
+                                meta.status = "failed".into();
+                                meta.updated_at = now;
+                            }
+                            if let Some(meta) = app.panes.get(&key).cloned() {
+                                publish_status(app, &key, &meta, &old, "failed");
+                            }
+                            emit(
+                                &app.ui,
+                                "toast",
+                                &json!({"level": "error", "message": format!("Handoff failed to start: {err}")}),
+                            );
+                            persist_panes(app);
+                        }
+                    }
+                }
+            }
+            Msg::HandoffCancelled(key) => {
+                app.waiting_handoffs.remove(&key);
+                if let Some(mut wait) = app.ptys.remove(&key) {
+                    let _ = wait.child.kill();
+                    let _ = wait.child.wait();
+                }
+                app.pane_procs.remove(&key);
+                if let Some(meta) = app.panes.get_mut(&key) {
+                    meta.status = "failed".into();
+                    meta.updated_at = crate::control::epoch();
+                }
+                if let Some(meta) = app.panes.get(&key).cloned() {
+                    publish_status(app, &key, &meta, "queued", "failed");
+                }
+                persist_panes(app);
+            }
+            Msg::Tick => {
+                let now = crate::control::epoch();
+                let stall_secs = std::env::var("OMNIX_STALL_SECONDS")
+                    .ok()
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .unwrap_or(600);
+                let mut stalled = Vec::new();
+                for (key, meta) in &mut app.panes {
+                    if meta.status == "working"
+                        && !meta.agent.is_empty()
+                        && !meta.read_only
+                        && now.saturating_sub(meta.last_output_at) >= stall_secs
+                    {
+                        let old = meta.status.clone();
+                        meta.status = "stalled".into();
+                        meta.updated_at = now;
+                        stalled.push((key.clone(), old, meta.clone()));
+                    }
+                }
+                for (key, old, meta) in stalled {
+                    publish_status(app, &key, &meta, &old, "stalled");
+                }
+                let expired: Vec<String> = app
+                    .pending_sends
+                    .iter()
+                    .filter(|(_, pending)| {
+                        pending.entered_at > 0 && now.saturating_sub(pending.entered_at) >= 4
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect();
+                for key in expired {
+                    if let Some(pending) = app.pending_sends.remove(&key) {
+                        let kind = if pending.kind == "handoff-prompt" {
+                            "handoff-prompt-not-accepted"
+                        } else {
+                            "agent-message-not-accepted"
+                        };
+                        crate::control::event(
+                            kind,
+                            json!({
+                                "pane": key,
+                                "handoff": pending.handoff,
+                                "sendId": pending.token,
+                                "accepted": false,
+                                "reason": "no output after Enter within 4s",
+                            }),
+                        );
+                        emit(
+                            &app.ui,
+                            "toast",
+                            &json!({
+                                "level": "warn",
+                                "message": "Message not accepted by the agent (no output after Enter)"
+                            }),
+                        );
+                    }
+                }
+                if !app.pending_sends.is_empty() || !app.waiting_handoffs.is_empty() {
+                    persist_panes(app);
                 }
             }
             Msg::PtyData { key, data } => {
@@ -2538,7 +3136,7 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                                         handoff_name.as_str()
                                     };
                                     let notice = format!(
-                                        "\x1b[200~[omnix] worker {who} ({agent_name}) kehabisan kuota{}.{} Periksa `omnix events --kind agent-quota-exhausted` dan teruskan ke cadangan.\x1b[201~\r",
+                                        "\x1b[200~[omnix] worker {who} ({agent_name}) kehabisan kuota{}.{} Periksa `omnix events --kind agent-quota-exhausted` dan teruskan ke cadangan.\x1b[201~",
                                         ex.reset_local
                                             .as_deref()
                                             .map(|r| format!(" (pulih {r})"))
@@ -2549,6 +3147,9 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                                             .unwrap_or_default(),
                                     );
                                     let _ = orch_pty.writer.write_all(notice.as_bytes());
+                                    let _ = orch_pty.writer.flush();
+                                    std::thread::sleep(Duration::from_millis(150));
+                                    let _ = orch_pty.writer.write_all(b"\r");
                                     let _ = orch_pty.writer.flush();
                                     crate::control::event(
                                         "agent-quota-action",
@@ -2566,6 +3167,15 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                             }
                         }
                     }
+                }
+                let is_agent = app
+                    .panes
+                    .get(&key)
+                    .map(|meta| !meta.agent.trim().is_empty())
+                    .unwrap_or(false);
+                if is_agent {
+                    let text_data = String::from_utf8_lossy(&data).into_owned();
+                    process_agent_chunk(app, &key, &text_data, tx, proxy);
                 }
                 chunks.entry(key).or_default().extend_from_slice(&data);
             }
@@ -2605,16 +3215,21 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
             }
         }
         app.pane_procs.remove(&key);
-        app.panes.remove(&key);
         app.pane_tails.remove(&key);
         app.pane_quota_reported.remove(&key);
         app.pending_prompts.remove(&key);
+        app.pending_sends.remove(&key);
+        app.waiting_handoffs.remove(&key);
+        let old = app
+            .panes
+            .get(&key)
+            .map(|meta| meta.status.clone())
+            .unwrap_or_default();
         if let Some(meta) = app.panes.get_mut(&key) {
             meta.status = if code == 0 { "done" } else { "failed" }.into();
             meta.exit_code = Some(code);
             meta.updated_at = crate::control::epoch();
             let snapshot = meta.clone();
-            let pane = app.ptys.contains_key(&key);
             crate::control::event(
                 "agent-exited",
                 json!({
@@ -2623,9 +3238,12 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                     "agent": snapshot.agent,
                     "title": snapshot.title,
                     "code": code,
-                    "live": pane,
+                    "live": false,
                 }),
             );
+        }
+        if let Some(meta) = app.panes.get(&key).cloned() {
+            publish_status(app, &key, &meta, &old, &meta.status);
         }
         persist_panes(app);
         emit(&app.ui, "ptyExit", &json!({ "paneKey": key, "code": code }));
@@ -2666,6 +3284,20 @@ pub fn run() -> Result<()> {
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
     let (tx, rx) = channel::<Msg>();
+
+    // One slow heartbeat drives stall detection and the acceptance timeout.
+    // It wakes the loop; it never polls the filesystem.
+    let tick_tx = tx.clone();
+    let tick_proxy = proxy.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            if tick_tx.send(Msg::Tick).is_err() {
+                break;
+            }
+            let _ = tick_proxy.send_event(UserEvent::Wake);
+        }
+    });
 
     let builder = WindowBuilder::new()
         .with_title("Omnix")
@@ -2763,6 +3395,9 @@ pub fn run() -> Result<()> {
         pane_tails: HashMap::new(),
         pane_quota_reported: HashSet::new(),
         pending_prompts: HashMap::new(),
+        prompt_trust_answered: HashSet::new(),
+        pending_sends: HashMap::new(),
+        waiting_handoffs: HashMap::new(),
         ctrl: None,
         quit: false,
     };

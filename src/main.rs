@@ -392,6 +392,42 @@ fn filter_panes(panes: &[Value], handoff: Option<&str>, workspace: Option<&str>)
         .collect()
 }
 
+/// `agent send` only reports success after the GUI saw output from the turn it
+/// just submitted. The event carries a unique send id, so a stale event from
+/// an earlier message can never be mistaken for this one.
+fn wait_send_event(send_id: &str, timeout: std::time::Duration) -> Result<Value> {
+    let started = std::time::Instant::now();
+    loop {
+        let raw = std::fs::read_to_string(control::events_path()).unwrap_or_default();
+        for line in raw.lines().rev().take(400) {
+            let Ok(row) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            if row.get("sendId").and_then(Value::as_str) != Some(send_id) {
+                continue;
+            }
+            match row.get("kind").and_then(Value::as_str) {
+                Some("agent-message-sent") => return Ok(row),
+                Some("agent-message-not-accepted") => {
+                    let reason = row
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("agent did not accept the message");
+                    bail!("not-accepted: {reason}");
+                }
+                _ => {}
+            }
+        }
+        if started.elapsed() >= timeout {
+            bail!(
+                "not-accepted: no output from the agent within {}s",
+                timeout.as_secs()
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(120));
+    }
+}
+
 fn cmd_agent(args: &[String]) -> Result<()> {
     match args.first().map(String::as_str) {
         Some("track") => {
@@ -590,14 +626,24 @@ fn cmd_agent(args: &[String]) -> Result<()> {
                     "force": has(args, "--force"),
                 }),
             )?;
-            println!(
-                "sent to {} ({})",
-                reply.get("paneKey").and_then(Value::as_str).unwrap_or("?"),
-                reply
-                    .get("state")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-            );
+            let pane = reply.get("paneKey").and_then(Value::as_str).unwrap_or("?");
+            if let Some(send_id) = reply.get("sendId").and_then(Value::as_str) {
+                let accepted = wait_send_event(send_id, std::time::Duration::from_secs(5))?;
+                println!(
+                    "sent to {} (accepted, {} bytes)",
+                    pane,
+                    accepted.get("bytes").and_then(Value::as_u64).unwrap_or(0)
+                );
+            } else {
+                println!(
+                    "sent to {} ({})",
+                    pane,
+                    reply
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                );
+            }
         }
         Some("adopt") => {
             let agent = value(args, "--agent").context("--agent is required")?;
@@ -1056,11 +1102,10 @@ fn cmd_handoff(args: &[String]) -> Result<()> {
                     return Ok(());
                 }
                 let gui_up = control::read_control(&control::runtime_dir()).is_some();
-                let force_headless = has(args, "--headless")
-                    || !gui_up
-                    || record.after.is_some()
-                    || record.start_at.is_some()
-                    || record.min_free_mb.is_some();
+                // Queue conditions are handled inside the GUI pane: the panel
+                // stays open, explains the wait, then starts the agent. Only an
+                // explicit --headless or a missing GUI forces a detached run.
+                let force_headless = has(args, "--headless") || !gui_up;
                 if force_headless {
                     if has(args, "--foreground") {
                         run_headless_worker(&record_path, has(args, "--force"))?;
@@ -2310,13 +2355,6 @@ fn wait_state_hit(state: &str, exit_code: Option<i64>, until: &[String]) -> bool
     }
 }
 
-fn free_ram_mb() -> Option<u64> {
-    let info = usage::ram()?;
-    let used = info.get("usedBytes").and_then(Value::as_u64)?;
-    let total = info.get("totalBytes").and_then(Value::as_u64)?;
-    Some(total.saturating_sub(used) / (1024 * 1024))
-}
-
 fn wait_for_queue_conditions(record: &mut handoff::Handoff, record_path: &Path) -> Result<()> {
     if record.after.is_none() && record.start_at.is_none() && record.min_free_mb.is_none() {
         return Ok(());
@@ -2332,44 +2370,14 @@ fn wait_for_queue_conditions(record: &mut handoff::Handoff, record_path: &Path) 
                 }
             }
         }
-        let mut waiting = Vec::new();
-        if let Some(after_name) = &record.after {
-            let done = handoff::list_all()
-                .into_iter()
-                .find(|h| &h.name == after_name)
-                .map(|h| {
-                    h.closed
-                        || h.status.as_deref() == Some("done")
-                        || matches!(
-                            h.outcome.as_str(),
-                            "delivered-headless" | "failed" | "blocked: quota"
-                        )
-                        || h.exit_code.is_some()
-                })
-                .unwrap_or(false);
-            if !done {
-                waiting.push(format!("after:{after_name}"));
+        let reason = match handoff::queue_wait_reason(record) {
+            Some(reason) => reason,
+            None => {
+                record.queued_reason = None;
+                handoff::save(record)?;
+                return Ok(());
             }
-        }
-        if let Some(at) = record.start_at {
-            let now = control::epoch();
-            if now < at {
-                waiting.push(format!("at:{}", control::local_time(at)));
-            }
-        }
-        if let Some(need_mb) = record.min_free_mb {
-            if let Some(avail) = free_ram_mb() {
-                if avail < need_mb {
-                    waiting.push(format!("ram:{avail}MB<{need_mb}MB"));
-                }
-            }
-        }
-        if waiting.is_empty() {
-            record.queued_reason = None;
-            handoff::save(record)?;
-            return Ok(());
-        }
-        let reason = waiting.join(", ");
+        };
         if record.outcome != "queued" || record.queued_reason.as_deref() != Some(&reason) {
             handoff::mark_queued(record, &reason)?;
         }
@@ -2482,6 +2490,7 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
             record.pid_exe = Some(exe);
         }
         record.outcome = "working".into();
+        record.runtime_state = Some("working".into());
         record.blocked_reason = None;
         record.exit_code = None;
         record.updated_at = control::epoch();
@@ -2554,6 +2563,20 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
             match line_rx.recv_timeout(std::time::Duration::from_millis(250)) {
                 Ok(line) => {
                     last_output = std::time::Instant::now();
+                    if record.runtime_state.as_deref() == Some("stalled") {
+                        stall_emitted = false;
+                        record.runtime_state = Some("working".into());
+                        record.updated_at = control::epoch();
+                        let _ = handoff::save(&record);
+                        control::event(
+                            "agent-working",
+                            json!({
+                                "handoff": record.name,
+                                "pane": format!("ho:{}", record.name),
+                                "previous": "stalled",
+                            }),
+                        );
+                    }
                     let _ = writeln!(log_file, "{line}");
                     let _ = log_file.flush();
                     if record.session_id.is_none() {
@@ -2586,6 +2609,9 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
                     if !stall_emitted {
                         if let Some(stall_msg) = usage::detect_stalled_output(&line) {
                             stall_emitted = true;
+                            record.runtime_state = Some("stalled".into());
+                            record.updated_at = control::epoch();
+                            let _ = handoff::save(&record);
                             control::event(
                                 "agent-stalled",
                                 json!({
@@ -2602,6 +2628,9 @@ fn run_headless_worker(record_path: &Path, force: bool) -> Result<()> {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     if !stall_emitted && last_output.elapsed().as_secs() >= stall_secs {
                         stall_emitted = true;
+                        record.runtime_state = Some("stalled".into());
+                        record.updated_at = control::epoch();
+                        let _ = handoff::save(&record);
                         control::event(
                             "agent-stalled",
                             json!({
