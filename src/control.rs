@@ -290,6 +290,53 @@ pub fn agent_ready(text: &str) -> bool {
     text.contains("Ask Codex to do anything") || text.contains("? for shortcuts")
 }
 
+/// Remove CSI/OSC sequences so an echo comparison sees text, not the terminal
+/// control frames a TUI or harness adds around it.
+pub fn strip_terminal_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\x1b' {
+            out.push(ch);
+            continue;
+        }
+        match chars.peek() {
+            Some('[') => {
+                chars.next();
+                for next in chars.by_ref() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                chars.next();
+                while let Some(next) = chars.next() {
+                    if next == '\x07' {
+                        break;
+                    }
+                    if next == '\x1b' && chars.peek() == Some(&'\\') {
+                        chars.next();
+                        break;
+                    }
+                }
+            }
+            Some(_) => {
+                chars.next();
+            }
+            None => {}
+        }
+    }
+    out
+}
+
+/// Canonical-mode PTYs echo input even when the child never reads it. An echo
+/// (or a prefix/suffix of it split across reads) is not proof that a turn
+/// started; any byte beyond both the visible body and the raw paste wire is.
+pub fn output_beyond_echo(seen: &str, body: &str, wire: &str) -> bool {
+    !seen.is_empty() && seen != body && seen != wire && !body.contains(seen) && !wire.contains(seen)
+}
+
 /// A folder-trust modal swallows a bracketed paste. Answer the default once,
 /// then wait for the composer before typing the brief.
 pub fn needs_trust_answer(text: &str) -> bool {
@@ -537,6 +584,25 @@ mod tests {
         ));
         assert!(!needs_trust_answer("? for shortcuts"));
         assert!(agent_ready("> Ask Codex to do anything"));
+    }
+
+    #[test]
+    fn echo_alone_is_never_proof_of_an_accepted_turn() {
+        assert!(!output_beyond_echo("halo", "halo", "halo"));
+        assert!(!output_beyond_echo(
+            "dua",
+            "baris satu\nbaris dua",
+            "\x1b[200~baris satu\nbaris dua\x1b[201~"
+        ));
+        assert!(output_beyond_echo(
+            "MOCK-ACCEPTED",
+            "baris satu",
+            "\x1b[200~baris satu\x1b[201~"
+        ));
+        assert_eq!(
+            strip_terminal_escapes("\x1b]7501;state=done:app=codex\x1b\\ok\x1b[31m!\x1b[0m"),
+            "ok!"
+        );
     }
 
     #[test]

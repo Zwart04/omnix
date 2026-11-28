@@ -79,6 +79,9 @@ struct PaneMeta {
     exit_code: Option<i64>,
     orchestrator: bool,
     read_only: bool,
+    /// True once a turn has actually begun. A TUI that is merely idle at
+    /// startup must not look like a finished turn.
+    turn_started: bool,
     last_output_at: u64,
     started_at: u64,
     updated_at: u64,
@@ -120,6 +123,7 @@ impl PaneMeta {
             "exitCode": self.exit_code,
             "orchestrator": self.orchestrator,
             "readOnly": self.read_only,
+            "turnStarted": self.turn_started,
             "lastOutputAt": self.last_output_at,
             "startedAt": self.started_at,
             "updatedAt": self.updated_at,
@@ -203,6 +207,8 @@ struct App {
     prompt_trust_answered: HashSet<String>,
     pending_sends: HashMap<String, PendingSend>,
     waiting_handoffs: HashMap<String, crate::handoff::Handoff>,
+    signal_buf: HashMap<String, String>,
+    last_signal: HashMap<String, String>,
     ctrl: Option<crate::control::Server>,
     quit: bool,
 }
@@ -608,13 +614,21 @@ fn write_agent_input(
 }
 
 fn plain_echo(text: &str) -> String {
-    text.replace('\r', "").trim().to_string()
+    crate::control::strip_terminal_escapes(&text.replace('\r', ""))
+        .trim()
+        .to_string()
 }
 
 /// A PTY in canonical mode echoes the paste back even when the child never
 /// reads stdin (`sleep 60`). Echo alone is not a started turn: require output
 /// that goes beyond both the visible body and the raw paste wire.
-fn maybe_accept_pending_send(app: &mut App, key: &str, text: &str) {
+fn maybe_accept_pending_send(
+    app: &mut App,
+    key: &str,
+    text: &str,
+    signal_present: bool,
+    working_signal: bool,
+) {
     let proven = if let Some(pending) = app.pending_sends.get_mut(key) {
         if pending.entered_at == 0 {
             false
@@ -623,21 +637,17 @@ fn maybe_accept_pending_send(app: &mut App, key: &str, text: &str) {
             let seen = plain_echo(&pending.seen);
             let body = plain_echo(&pending.body);
             let wire = plain_echo(&pending.wire);
-            !seen.is_empty()
-                && seen != body
-                && seen != wire
-                && !body.starts_with(&seen)
-                && !wire.starts_with(&seen)
+            working_signal || crate::control::output_beyond_echo(&seen, &body, &wire)
         }
     } else {
         false
     };
     if proven {
-        accept_pending_send(app, key);
+        accept_pending_send(app, key, signal_present);
     }
 }
 
-fn accept_pending_send(app: &mut App, key: &str) {
+fn accept_pending_send(app: &mut App, key: &str, keep_signal_status: bool) {
     let Some(pending) = app.pending_sends.remove(key) else {
         return;
     };
@@ -646,11 +656,14 @@ fn accept_pending_send(app: &mut App, key: &str) {
         .get(key)
         .map(|meta| meta.status.clone())
         .unwrap_or_default();
-    if let Some(meta) = app.panes.get_mut(key) {
-        if !matches!(meta.status.as_str(), "approval" | "quota" | "failed") {
-            meta.status = "working".into();
-            meta.last_output_at = crate::control::epoch();
-            meta.updated_at = crate::control::epoch();
+    if !keep_signal_status {
+        if let Some(meta) = app.panes.get_mut(key) {
+            if !matches!(meta.status.as_str(), "approval" | "quota" | "failed") {
+                meta.status = "working".into();
+                meta.turn_started = true;
+                meta.last_output_at = crate::control::epoch();
+                meta.updated_at = crate::control::epoch();
+            }
         }
     }
     if let Some(meta) = app.panes.get(key).cloned() {
@@ -695,20 +708,63 @@ fn process_agent_chunk(
     proxy: &EventLoopProxy<UserEvent>,
 ) {
     let now = crate::control::epoch();
+    {
+        let buffer = app.signal_buf.entry(key.to_string()).or_default();
+        buffer.push_str(text);
+        if buffer.len() > 8192 {
+            let drop_to = buffer.len() - 4096;
+            if let Some(index) = buffer
+                .char_indices()
+                .find(|(index, _)| *index >= drop_to)
+                .map(|(index, _)| index)
+            {
+                buffer.drain(..index);
+            }
+        }
+    }
+    let parsed = app
+        .signal_buf
+        .get(key)
+        .and_then(|buffer| crate::control::agent_signal(buffer));
+    let fresh_signal = parsed.and_then(|signal| {
+        if app.last_signal.get(key) == Some(&signal.state) {
+            None
+        } else {
+            Some(signal.state)
+        }
+    });
+    if let Some(state) = fresh_signal.clone() {
+        app.last_signal.insert(key.to_string(), state);
+    }
+    let signal_present = fresh_signal.is_some();
+    let working_signal = fresh_signal.as_deref() == Some("working");
     let mut transition = None;
     if let Some(meta) = app.panes.get_mut(key) {
         meta.last_output_at = now;
         meta.updated_at = now;
         let old = meta.status.clone();
-        if let Some(signal) = crate::control::agent_signal(text) {
-            let next = match signal.state.as_str() {
-                "idle" | "done" => Some("done"),
-                "working" => Some("working"),
+        if let Some(state) = fresh_signal {
+            let mut starts_turn = false;
+            let next = match state.as_str() {
+                "idle" | "done" => {
+                    if meta.turn_started {
+                        Some("done")
+                    } else {
+                        Some("idle")
+                    }
+                }
+                "working" => {
+                    starts_turn = true;
+                    Some("working")
+                }
                 "approval" | "needs-approval" => Some("approval"),
                 "stalled" => Some("stalled"),
                 "quota" => Some("quota"),
                 _ => None,
             };
+            if starts_turn {
+                meta.turn_started = true;
+            }
             if let Some(next) = next {
                 meta.status = next.to_string();
             }
@@ -722,7 +778,7 @@ fn process_agent_chunk(
     if let Some((meta, old)) = transition {
         publish_status(app, key, &meta, &old, &meta.status);
     }
-    maybe_accept_pending_send(app, key, text);
+    maybe_accept_pending_send(app, key, text, signal_present, working_signal);
 
     if app.pending_prompts.contains_key(key) {
         let tail = app.pane_tails.get(key).cloned().unwrap_or_default();
@@ -834,7 +890,7 @@ fn start_handoff_agent(
     let extra_env = crate::agent::model_env(agent, options.model.as_deref());
     let spawned = pty::spawn_agent_with(&app.root, agent, None, &cwd, &extra, &extra_env)?;
     let pid = spawned.pid;
-    attach_reader(spawned.reader, key, tx, proxy);
+    let reader = spawned.reader;
     app.ptys.insert(key.to_string(), spawned.pty);
     app.pane_procs.insert(
         key.to_string(),
@@ -860,6 +916,7 @@ fn start_handoff_agent(
         exit_code: None,
         orchestrator: record.orchestrator,
         read_only: false,
+        turn_started: false,
         last_output_at: now,
         started_at: now,
         updated_at: now,
@@ -874,6 +931,9 @@ fn start_handoff_agent(
     if open {
         emit(&app.ui, "paneOpen", &meta.json(key));
     }
+    // Start reading only after a new tab exists, so the first TUI frame is not
+    // dropped between the spawn and paneOpen.
+    attach_reader(reader, key, tx, proxy);
     crate::control::event(
         "agent-started",
         json!({ "pane": key, "handoff": record.name, "agent": agent, "root": "control" }),
@@ -918,6 +978,7 @@ fn spawn_handoff_waiting(
         exit_code: None,
         orchestrator: record.orchestrator,
         read_only: false,
+        turn_started: false,
         last_output_at: now,
         started_at: now,
         updated_at: now,
@@ -1174,6 +1235,7 @@ fn pty_spawn(
         exit_code: None,
         orchestrator: as_bool(args, "orchestrator"),
         read_only: as_bool(args, "readOnly"),
+        turn_started: false,
         last_output_at: crate::control::epoch(),
         started_at: crate::control::epoch(),
         updated_at: crate::control::epoch(),
@@ -1229,7 +1291,7 @@ fn open_log_pane(
     let log_text = log.to_string_lossy().into_owned();
     let spawned = pty::spawn_program("tail", &["-n", "200", "-F", &log_text], &cwd)?;
     let pid = spawned.pid;
-    attach_reader(spawned.reader, &key, tx, proxy);
+    let reader = spawned.reader;
     app.ptys.insert(key.clone(), spawned.pty);
     app.pane_procs.insert(
         key.clone(),
@@ -1252,12 +1314,14 @@ fn open_log_pane(
         exit_code: None,
         orchestrator: false,
         read_only: true,
+        turn_started: false,
         last_output_at: now,
         started_at: now,
         updated_at: now,
     };
     app.panes.insert(key.clone(), meta.clone());
     emit(&app.ui, "paneOpen", &meta.json(&key));
+    attach_reader(reader, &key, tx, proxy);
     persist_panes(app);
     Ok(json!({
         "paneKey": key,
@@ -1993,6 +2057,8 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
             app.pending_prompts.remove(&key);
             app.pending_sends.remove(&key);
             app.waiting_handoffs.remove(&key);
+            app.signal_buf.remove(&key);
+            app.last_signal.remove(&key);
             persist_panes(app);
             Ok(json!({ "ok": true }))
         })(),
@@ -2002,6 +2068,9 @@ fn handle(app: &mut App, raw: &str, tx: &Sender<Msg>, proxy: &EventLoopProxy<Use
                 let meta = app.panes.entry(key.clone()).or_default();
                 let old = meta.status.clone();
                 if let Some(value) = as_str(&args, "status") {
+                    if value == "working" && !old.is_empty() && old != "working" {
+                        meta.turn_started = true;
+                    }
                     meta.status = value;
                 }
                 if let Some(value) = as_str(&args, "handoff") {
@@ -2799,6 +2868,8 @@ fn control_request(
             app.prompt_trust_answered.remove(&key);
             app.pending_sends.remove(&key);
             app.waiting_handoffs.remove(&key);
+            app.signal_buf.remove(&key);
+            app.last_signal.remove(&key);
             persist_panes(app);
             emit(&app.ui, "paneClosed", &json!({ "paneKey": key.clone() }));
             Ok(json!({ "paneKey": key }))
@@ -2929,6 +3000,8 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
             }
             Msg::HandoffCancelled(key) => {
                 app.waiting_handoffs.remove(&key);
+                app.signal_buf.remove(&key);
+                app.last_signal.remove(&key);
                 if let Some(mut wait) = app.ptys.remove(&key) {
                     let _ = wait.child.kill();
                     let _ = wait.child.wait();
@@ -2952,6 +3025,7 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
                 let mut stalled = Vec::new();
                 for (key, meta) in &mut app.panes {
                     if meta.status == "working"
+                        && meta.turn_started
                         && !meta.agent.is_empty()
                         && !meta.read_only
                         && now.saturating_sub(meta.last_output_at) >= stall_secs
@@ -3220,6 +3294,8 @@ fn drain(app: &mut App, rx: &Receiver<Msg>, tx: &Sender<Msg>, proxy: &EventLoopP
         app.pending_prompts.remove(&key);
         app.pending_sends.remove(&key);
         app.waiting_handoffs.remove(&key);
+        app.signal_buf.remove(&key);
+        app.last_signal.remove(&key);
         let old = app
             .panes
             .get(&key)
@@ -3398,6 +3474,8 @@ pub fn run() -> Result<()> {
         prompt_trust_answered: HashSet::new(),
         pending_sends: HashMap::new(),
         waiting_handoffs: HashMap::new(),
+        signal_buf: HashMap::new(),
+        last_signal: HashMap::new(),
         ctrl: None,
         quit: false,
     };

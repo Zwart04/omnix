@@ -1238,7 +1238,11 @@ pub fn headless_pane_row(record: &Handoff) -> serde_json::Value {
             "failed"
         }
     } else {
-        record.status.as_deref().unwrap_or(state)
+        match record.status.as_deref() {
+            Some("blocked") => "stalled",
+            Some(value) => value,
+            None => state,
+        }
     };
     serde_json::json!({
         "paneKey": record.pane_key.clone().unwrap_or_else(|| format!("ho:{}", record.name)),

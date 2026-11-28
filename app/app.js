@@ -5169,12 +5169,12 @@
       /* The harness OSC is authoritative: a finished turn keeps its mark even
          while the TUI repaints a spinner or status line. */
       if (tab.oscState === 'done' || tab.oscState === 'stalled' ||
-          tab.oscState === 'queued') return;
+          tab.oscState === 'idle' || tab.oscState === 'queued') return;
       if (tab.status !== 'approval') setTabStatus(tab, 'working');
     }
     if (tab.status === 'approval') return;
     if (tab.oscState === 'done' || tab.oscState === 'stalled' ||
-        tab.oscState === 'queued') return;
+        tab.oscState === 'idle' || tab.oscState === 'queued') return;
     if (tab.settleTimer) clearTimeout(tab.settleTimer);
     tab.settleTimer = setTimeout(function () {
       tab.settleTimer = 0;
@@ -6977,9 +6977,26 @@
     renderWorkers();
   };
 
+  var pendingPaneData = Object.create(null);
+
   EVENTS.ptyData = function (payload) {
     var tab = byPaneKey(payload.paneKey);
-    if (!tab) return;
+    if (!tab) {
+      /* The host may emit the first frame before the paneOpen event is
+         handled. Hold it by pane key instead of dropping the TUI's first
+         screen. */
+      var key = payload.paneKey;
+      var held = pendingPaneData[key] || [];
+      held.push(payload.dataBase64);
+      if (held.length > 128) held.shift();
+      pendingPaneData[key] = held;
+      if (held.length === 1) {
+        setTimeout(function () {
+          if (!byPaneKey(key)) delete pendingPaneData[key];
+        }, 15000);
+      }
+      return;
+    }
     var bytes = b64ToBytes(payload.dataBase64);
     if (!bytes) return;
     noteOutput(tab, bytesText(bytes));
@@ -7031,12 +7048,21 @@
     tab.status = payload.status || 'working';
     tab.oscState = payload.status || '';
     paintTabStatus(tab);
-    publishPane(tab);
+    /* The host already owns this pane's registry entry; publishing it back
+       would turn a spawn-time "working" into a started turn. */
+    var held = pendingPaneData[payload.paneKey];
+    if (held) {
+      delete pendingPaneData[payload.paneKey];
+      for (var h = 0; h < held.length; h++) {
+        EVENTS.ptyData({ paneKey: payload.paneKey, dataBase64: held[h] });
+      }
+    }
     renderWorkers();
     toast('ok', 'Worker pane opened: ' + (payload.handoff || payload.title || payload.paneKey));
   };
 
   EVENTS.paneClosed = function (payload) {
+    if (payload && payload.paneKey) delete pendingPaneData[payload.paneKey];
     var tab = payload && byPaneKey(payload.paneKey);
     if (tab && !tab.closed) closeTab(tab);
   };
