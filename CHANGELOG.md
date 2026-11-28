@@ -39,12 +39,15 @@ Notable changes to Omnix. Release notes for every tag are also on the
 
 ### Tests
 
-- `docs/uji-prompt-14/periksa.sh` passes 15/15 (fmt, clippy, 168 Rust tests,
+- `docs/uji-prompt-14/periksa.sh` passes 15/15 (fmt, clippy, 169 Rust tests,
   frontend selftest, PTY protocol mock, branch CLI, home fingerprints).
 - GUI integration under Xvfb: waiting pane stays queued and non-headless;
   `agent send` accepts a real mock reply and rejects a `sleep 60` echo; `--after`
   starts after the dependency reports; headless `agent status`, memory rows,
   and a read-only log pane were verified.
+- Real TUI runs in `docs/uji-prompt-14/bukti-nyata-20261128.md`: Codex 6 ×
+  `exec`, Claude 5 × `Bash`, and Agy 5 × `run_command`, each with a completed
+  initial brief and an accepted `agent send` continuation.
 
 ## [0.9.3] - 2026-11-27
 
